@@ -1,0 +1,49 @@
+---
+import Icon from '../components/Icon.astro';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/lora';
+import '@fontsource/jetbrains-mono/400.css';
+import '../styles/app.css';
+interface Props { title?: string; description?: string; active?: string; workspace?: boolean }
+const { title = 'QFT Markdown — a space for ideas', description = 'A thoughtful workspace for Markdown and mathematics. Write, preview, and export beautiful documents, right in your browser.', active = 'editor', workspace = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#f8f6f2" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body class:list={{ 'workspace-page': workspace }}>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header">
+      <a href="/" class="brand" aria-label="QFT Markdown home">
+        <span class="brand-symbol" aria-hidden="true">m<span>∗</span></span>
+        <span class="brand-wordmark">QFT <strong>Markdown</strong><span class="brand-caption">A SPACE FOR IDEAS</span></span>
+      </a>
+      <nav class="top-nav" aria-label="Main navigation">
+        <a href="/" class:list={{ active: active === 'editor' }} aria-current={active === 'editor' ? 'page' : undefined}>Workspace</a>
+        <a href="/guide/" class:list={{ active: active === 'guide' }} aria-current={active === 'guide' ? 'page' : undefined}>Guide</a>
+        <a href="/examples/" class:list={{ active: active === 'examples' }} aria-current={active === 'examples' ? 'page' : undefined}>Examples</a>
+      </nav>
+      <div class="header-actions">
+        <span class="local-badge"><span></span> Made for focus</span>
+        <a href="/about/" class="about-link">About</a>
+        <span class="header-divider"></span>
+        <button class="icon-button theme-button" data-theme-toggle aria-label="Switch to dark theme" title="Switch theme"><Icon name="moon" class="moon-icon" /><Icon name="sun" class="sun-icon" /></button>
+      </div>
+    </header>
+    <slot />
+    <script>
+      import '../scripts/global';
+    </script>
+  </body>
+</html>

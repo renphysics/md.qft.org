@@ -1,0 +1,50 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/Icon.astro';
+---
+<BaseLayout title="Page not found — QFT Markdown" active="not-found" description="This page could not be found. Return to the QFT Markdown workspace or open the writing guide.">
+  <main id="main-content" class="content-page not-found-page">
+    <span class="error-number" aria-hidden="true">404</span>
+    <span class="page-kicker">Page not found</span>
+    <h1>Back to a fresh page.</h1>
+    <p class="page-lead">This address doesn’t lead to a page. Return to the workspace to continue writing, or open the guide for a little inspiration.</p>
+    <div class="not-found-actions">
+      <a class="button-primary" href="/">Open the workspace <Icon name="arrow" size={16} /></a>
+      <a class="button-secondary" href="/guide/">Writing guide</a>
+    </div>
+  </main>
+  <footer class="page-footer"><span>QFT Markdown · md.qft.org</span><a href="/about/">About this workspace</a></footer>
+</BaseLayout>
+
+<style>
+  .not-found-page {
+    min-height: calc(100svh - 180px);
+    max-width: 820px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .error-number {
+    margin-bottom: 20px;
+    font: clamp(80px, 15vw, 136px) / 1 var(--font-prose);
+    color: var(--accent);
+    opacity: .25;
+    letter-spacing: -6px;
+  }
+
+  .page-lead {
+    max-width: 490px;
+    margin: 0;
+  }
+
+  .not-found-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 28px;
+  }
+</style>

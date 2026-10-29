@@ -1,0 +1,50 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/Icon.astro';
+import license from '../../LICENSE?raw';
+import notices from '../../THIRD_PARTY_NOTICES.md?raw';
+---
+<BaseLayout title="About — QFT Markdown" active="about" description="A quiet, independent workspace for Markdown and mathematics, with drafts stored in your browser.">
+  <main id="main-content" class="content-page">
+    <span class="page-kicker">Write clearly. Think freely.</span>
+    <h1>A space for ideas.</h1>
+    <p class="page-lead">QFT Markdown is an independent workspace for writing, previewing, and exporting Markdown with mathematics. Built for a quick calculation, a careful derivation, or the note you want to come back to.</p>
+
+    <section class="about-callout">
+      <h2>Your words stay with you</h2>
+      <p>The editor processes your Markdown in your browser. Drafts are stored locally with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Preferences are also stored in this browser.</p>
+      <p>Browser storage is convenient, but it is not a backup. Clearing site data, private browsing, or a browser’s storage cleanup can remove drafts. Download important work as Markdown and keep that file somewhere you trust.</p>
+    </section>
+
+    <section aria-labelledby="small-details">
+      <h2 id="small-details">The small details matter</h2>
+      <p>The editor, mathematical fonts, and interface fonts are served with the site. Writing and previewing a document does not send its source to a rendering service. The site host still receives ordinary requests needed to load the website.</p>
+      <p>External links connect to another website when you follow them. Remote images are disabled by default; enabling them in Settings lets the browser request those images from their hosts. Those hosts can then receive normal connection information such as your IP address. Embedded raster images do not need a separate image host.</p>
+      <p>Raw HTML is shown as text, and the preview does not execute scripts from documents. Local saving does not promise that the website itself will load offline; keep exported files for access independent of this site.</p>
+    </section>
+
+    <section aria-labelledby="take-your-work">
+      <h2 id="take-your-work">Take your work with you</h2>
+      <div class="guide-grid">
+        <article class="guide-card"><h2>Markdown</h2><p>Your editable source, exactly as written. A small, portable file you can open in another text editor.</p></article>
+        <article class="guide-card"><h2>A typeset document</h2><p>HTML export includes its document styles and mathematical fonts. Print / PDF uses your browser’s print dialog. Remote images in an HTML export must be embedded successfully for a fully portable copy.</p></article>
+      </div>
+    </section>
+
+    <section aria-labelledby="built-with">
+      <h2 id="built-with">Built on good foundations</h2>
+      <p>Astro provides the website, CodeMirror powers the editor, Markdown-it parses the text, and KaTeX typesets the mathematics. The independent design and workflow were inspired by the <a href="https://blackhole.org/about/markdown/" target="_blank" rel="noopener noreferrer">BlackHole.org Markdown editor</a>.</p>
+      <p>QFT Markdown is distributed under the MIT license. Its open-source libraries and fonts retain their own licenses and notices.</p>
+      <details>
+        <summary>Read the QFT Markdown license</summary>
+        <pre><code>{license}</code></pre>
+      </details>
+      <details>
+        <summary>Read third-party licenses and notices</summary>
+        <pre><code>{notices}</code></pre>
+      </details>
+    </section>
+    <p><a class="button-primary" href="/">Back to the workspace <Icon name="arrow" size={16} /></a></p>
+  </main>
+  <footer class="page-footer"><span>QFT Markdown · md.qft.org</span><a href="/guide/">Writing guide</a></footer>
+</BaseLayout>

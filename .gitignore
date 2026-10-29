@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.astro/
+.wrangler/
+.cache/
+.artifacts/
+.env
+.env.*
+!.env.example
+.DS_Store
+npm-debug.log*
+playwright-report/
+test-results/

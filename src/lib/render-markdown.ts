@@ -1,0 +1,238 @@
+import MarkdownIt, { type Token } from 'markdown-it';
+import { katex as mathPlugin } from '@mdit/plugin-katex';
+import { footnote } from '@mdit/plugin-footnote';
+import { tasklist } from '@mdit/plugin-tasklist';
+import katex, { type KatexOptions } from 'katex';
+import hljs from 'highlight.js/lib/core';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import python from 'highlight.js/lib/languages/python';
+import json from 'highlight.js/lib/languages/json';
+import bash from 'highlight.js/lib/languages/bash';
+import latex from 'highlight.js/lib/languages/latex';
+import css from 'highlight.js/lib/languages/css';
+
+for (const [name, language] of Object.entries({ javascript, typescript, python, json, bash, latex, css })) {
+  hljs.registerLanguage(name, language);
+}
+
+export const MAX_SOURCE_LENGTH = 400_000;
+export interface RenderOptions { allowRemoteImages?: boolean }
+export interface RenderIssue { message: string; line: number }
+export interface DocumentHeading { id: string; text: string; level: number; line: number }
+export interface MarkdownResult {
+  html: string;
+  errors: RenderIssue[];
+  headings: DocumentHeading[];
+  words: number;
+  mathCount: number;
+}
+
+const embeddedRaster = /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/i;
+const remoteImage = /^https?:\/\//i;
+
+export function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function sourceLines(tokens: Token[], inlineOffsets: WeakMap<Token, number>): WeakMap<Token, number> {
+  const lines = new WeakMap<Token, number>();
+  let nearestLine = 1;
+  for (const token of tokens) {
+    if (token.map) nearestLine = token.map[0] + 1;
+    lines.set(token, nearestLine);
+    if (!token.children) continue;
+    // Table-cell inline tokens inherit their row's map; they have no map
+    // of their own. Recorded parser offsets also preserve multiline code.
+    for (const child of token.children) {
+      lines.set(child, nearestLine + (inlineOffsets.get(child) ?? 0));
+    }
+  }
+  return lines;
+}
+
+function inlineText(token: Token, includeMath = true): string {
+  return (token.children ?? []).map((child) => {
+    if (child.type === 'text' || child.type === 'code_inline' || (includeMath && child.type === 'math_inline')) return child.content;
+    if (child.type === 'softbreak' || child.type === 'hardbreak') return ' ';
+    if (child.type === 'image') return child.content;
+    return '';
+  }).join('');
+}
+
+function slug(text: string): string {
+  return text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 72) || 'section';
+}
+
+function countWords(text: string): number {
+  if (typeof Intl.Segmenter === 'function') {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+    return [...segmenter.segment(text)].filter((part) => part.isWordLike).length;
+  }
+  return (text.match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu) ?? []).length;
+}
+
+/**
+ * Render plain, untrusted Markdown. User HTML and MDX are never evaluated.
+ * Each render owns fresh macro state; source is never rewritten.
+ */
+export function renderMarkdown(source: string, options: RenderOptions = {}): MarkdownResult {
+  const result: MarkdownResult = { html: '', errors: [], headings: [], words: 0, mathCount: 0 };
+  if (typeof source !== 'string') {
+    result.errors.push({ message: 'Markdown source must be text.', line: 1 });
+    return result;
+  }
+  if (source.length > MAX_SOURCE_LENGTH) {
+    result.errors.push({ message: 'This document exceeds the 400,000-character preview limit. You can still download its original Markdown.', line: 1 });
+    return result;
+  }
+
+  const md = new MarkdownIt({
+    html: false,
+    linkify: false,
+    typographer: false,
+    highlight(code, language) {
+      if (!language || !hljs.getLanguage(language)) return '';
+      try { return hljs.highlight(code, { language, ignoreIllegals: true }).value; }
+      catch { return ''; }
+    },
+  });
+  md.use(mathPlugin, { delimiters: 'all', mathFence: false, allowInlineWithSpace: false });
+  md.use(footnote);
+  md.use(tasklist, { disabled: true });
+
+  const inlineOffsets = new WeakMap<Token, number>();
+  const tokenizeInline = md.inline.tokenize;
+  md.inline.tokenize = (state) => {
+    const breaks: number[] = [];
+    for (let position = state.src.indexOf('\n'); position !== -1; position = state.src.indexOf('\n', position + 1)) breaks.push(position);
+    const push = state.push;
+    state.push = (type, tag, nesting) => {
+      const token = push.call(state, type, tag, nesting);
+      if (type === 'math_inline') {
+        let lower = 0;
+        let upper = breaks.length;
+        while (lower < upper) {
+          const middle = (lower + upper) >>> 1;
+          if (breaks[middle] < state.pos) lower = middle + 1;
+          else upper = middle;
+        }
+        inlineOffsets.set(token, lower);
+      }
+      return token;
+    };
+    try { tokenizeInline.call(md.inline, state); }
+    finally { state.push = push; }
+  };
+
+  const macros: NonNullable<KatexOptions['macros']> = Object.create(null);
+  let lines = new WeakMap<Token, number>();
+
+  const renderMath = (token: Token, displayMode: boolean): string => {
+    result.mathCount += 1;
+    try {
+      return katex.renderToString(token.content, {
+        displayMode,
+        output: 'htmlAndMathml',
+        throwOnError: true,
+        trust: false,
+        strict: 'ignore',
+        maxExpand: 1000,
+        maxSize: 20,
+        macros,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'This formula could not be typeset.';
+      const line = lines.get(token) ?? 1;
+      result.errors.push({ message, line });
+      return `<span class="math-error${displayMode ? ' math-error--display' : ''}" title="${escapeHtml(message)}">${escapeHtml(token.content)}</span>`;
+    }
+  };
+  md.renderer.rules.math_inline = (tokens, index) => renderMath(tokens[index], false);
+  md.renderer.rules.math_block = (tokens, index) => `${renderMath(tokens[index], true)}\n`;
+
+  // The plugin's footnote/footnote-ref wrappers stay namespaced and deterministic.
+  md.renderer.rules.footnote_anchor_name = (tokens, index) => `-qft-${Number(tokens[index].meta?.id ?? 0) + 1}`;
+
+  md.renderer.rules.image = (tokens, index, settings, environment, renderer) => {
+    const token = tokens[index];
+    const src = String(token.attrGet('src') ?? '');
+    const alt = renderer.renderInlineAsText(token.children ?? [], settings, environment);
+    const title = String(token.attrGet('title') ?? '');
+    if (embeddedRaster.test(src) || (options.allowRemoteImages && remoteImage.test(src))) {
+      return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${title ? ` title="${escapeHtml(title)}"` : ''} decoding="async" referrerpolicy="no-referrer">`;
+    }
+    return `<span class="image-placeholder" role="img" aria-label="${escapeHtml(alt || 'Image')} — image not loaded"><span aria-hidden="true">▧</span> ${escapeHtml(alt || 'Image')}<small>${remoteImage.test(src) ? 'Remote image · enable in Settings' : 'Image not loaded · embed a PNG, JPEG, WebP, or GIF'}</small></span>`;
+  };
+
+  const linkOpen = md.renderer.rules.link_open;
+  md.renderer.rules.link_open = (tokens, index, settings, environment, renderer) => {
+    const token = tokens[index];
+    if (/^https?:\/\//i.test(String(token.attrGet('href') ?? ''))) {
+      token.attrSet('target', '_blank');
+      token.attrSet('rel', 'noopener noreferrer');
+    }
+    return linkOpen ? linkOpen(tokens, index, settings, environment, renderer) : renderer.renderToken(tokens, index, settings);
+  };
+
+  // Source anchors are attached to outer blocks, including rendered equations.
+  for (const name of ['heading_open', 'paragraph_open', 'bullet_list_open', 'ordered_list_open', 'blockquote_open', 'table_open', 'fence', 'code_block', 'math_block', 'hr']) {
+    const original = md.renderer.rules[name];
+    md.renderer.rules[name] = (tokens, index, settings, environment, renderer) => {
+      const token = tokens[index];
+      const html = original ? original(tokens, index, settings, environment, renderer) : renderer.renderToken(tokens, index, settings);
+      if (token.level !== 0 || !token.map || token.hidden) return html;
+      return html.replace(/^<[a-z][a-z0-9]*\b/u, (opening) => `${opening} data-source-line="${token.map![0]}" data-source-end-line="${token.map![1]}"`);
+    };
+  }
+
+  try {
+    const environment = { docId: 'qft' };
+    const tokens = md.parse(source, environment);
+    lines = sourceLines(tokens, inlineOffsets);
+    const slugs = new Map<string, number>();
+    const usedIds = new Set<string>();
+    const headingLinks = new Map<string, string>();
+    const prose: string[] = [];
+
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token.type === 'inline') prose.push(inlineText(token, false));
+      if (token.type !== 'heading_open') continue;
+      const text = inlineText(tokens[index + 1]).trim();
+      const base = slug(text);
+      let count = (slugs.get(base) ?? 0) + 1;
+      let suffix = count === 1 ? '' : `-${count}`;
+      while (usedIds.has(`qft-h-${base}${suffix}`)) {
+        count += 1;
+        suffix = `-${count}`;
+      }
+      slugs.set(base, count);
+      const id = `qft-h-${base}${suffix}`;
+      usedIds.add(id);
+      token.attrSet('id', id);
+      headingLinks.set(`${base}${suffix}`, id);
+      result.headings.push({ id, text, level: Number(token.tag.slice(1)), line: (token.map?.[0] ?? 0) + 1 });
+    }
+
+    for (const token of tokens) {
+      for (const child of token.children ?? []) {
+        if (child.type !== 'link_open') continue;
+        const href = String(child.attrGet('href') ?? '');
+        if (!href.startsWith('#')) continue;
+        let target = href.slice(1);
+        try { target = decodeURIComponent(target); } catch { /* Keep a literal malformed fragment. */ }
+        const id = headingLinks.get(target);
+        if (id) child.attrSet('href', `#${id}`);
+      }
+    }
+
+    result.words = countWords(prose.join(' '));
+    result.html = md.renderer.render(tokens, md.options, environment);
+  } catch (error) {
+    result.errors.push({ message: error instanceof Error ? error.message : 'This Markdown document could not be rendered.', line: 1 });
+    result.html = `<pre>${escapeHtml(source)}</pre>`;
+  }
+  return result;
+}

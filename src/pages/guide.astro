@@ -1,0 +1,101 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/Icon.astro';
+
+const snippets = {
+  inline: String.raw`A state is $|\psi\rangle$.
+Or write \(e^{i\pi}+1=0\).`,
+  display: String.raw`$$
+i\hbar\frac{\partial\psi}{\partial t}
+=\hat H\psi
+$$
+
+\[
+\int_0^1 x^2\,dx=\frac13
+\]`,
+  aligned: String.raw`$$
+\begin{aligned}
+(a+b)^2 &= a^2+2ab+b^2 \\
+        &= (a-b)^2+4ab
+\end{aligned}
+\tag{1}
+$$`,
+  structure: '# A clear title\n\n## A useful section\n\n**Bold**, *italic*, and [a link](https://qft.org).\n\n> A thought worth keeping.\n\n1. Start with the idea.\n2. Follow the calculation.',
+  table: '| Quantity | Value |\n| :--- | ---: |\n| $n$ | 3 |\n| $E_n$ | $\\hbar\\omega(n+1/2)$ |',
+  code: '```python\nimport math\n\ndef gaussian(x):\n    return math.exp(-x * x)\n```',
+  notes: 'A useful observation.[^note]\n\n[^note]: Add the detail here.\n\n- [x] Check the assumptions\n- [ ] Finish the derivation',
+  macros: String.raw`$\gdef\RR{\mathbb R}$
+
+Let $x\in\RR$ and $v\in\RR^n$.`,
+};
+---
+<BaseLayout title="Writing guide — QFT Markdown" active="guide" description="A practical guide to Markdown, mathematical notation, and keeping your work in QFT Markdown.">
+  <main id="main-content" class="content-page">
+    <span class="page-kicker">A little syntax goes a long way</span>
+    <h1>Make room for the idea.</h1>
+    <p class="page-lead">Write in plain text, add structure with Markdown, and typeset mathematics as you go. The preview follows your source; your downloaded Markdown keeps exactly what you wrote.</p>
+
+    <div class="guide-grid">
+      <section class="guide-card">
+        <h2>Math within a sentence</h2>
+        <p>Use <code>$...$</code> or <code>{String.raw`\(...\)`}</code> for inline mathematics. Keep the formula next to its opening and closing dollar signs.</p>
+        <pre><code>{snippets.inline}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>Give an equation space</h2>
+        <p>Put <code>$$</code> or <code>{String.raw`\[`}</code> and <code>{String.raw`\]`}</code> on their own lines for a displayed equation.</p>
+        <pre><code>{snippets.display}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>A calculation, aligned</h2>
+        <p>Use <code>aligned</code>, <code>&amp;</code>, and <code>{String.raw`\\`}</code> to line up steps. Add an explicit number with <code>{String.raw`\tag{1}`}</code>. Automatic numbering, <code>{String.raw`\label`}</code>, and <code>{String.raw`\eqref`}</code> are not supported.</p>
+        <pre><code>{snippets.aligned}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>Words with structure</h2>
+        <p>Headings create the document outline. Lists, links, emphasis, and quotations give your reader a path through the page.</p>
+        <pre><code>{snippets.structure}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>Keep values together</h2>
+        <p>Separate table columns with pipes. Colons control alignment. Escape a pipe within a cell as <code>{String.raw`\|`}</code>, including inside mathematical notation.</p>
+        <pre><code>{snippets.table}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>Code stays code</h2>
+        <p>Wrap inline code in backticks, or use a fenced block with a language name. Mathematical delimiters inside code remain literal.</p>
+        <pre><code>{snippets.code}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>Notes and next steps</h2>
+        <p>Footnotes hold supporting detail. Mark tasks in the source with <code>[ ]</code> or <code>[x]</code>; preview checkboxes show their state.</p>
+        <pre><code>{snippets.notes}</code></pre>
+      </section>
+      <section class="guide-card">
+        <h2>Your own notation</h2>
+        <p>Define a macro with <code>{String.raw`\gdef`}</code> before using it later in the document. Definitions belong to this source and are rebuilt on each preview.</p>
+        <pre><code>{snippets.macros}</code></pre>
+      </section>
+    </div>
+
+    <section aria-labelledby="working-with-documents">
+      <h2 id="working-with-documents">A few things to know</h2>
+      <p>Mathematics is typeset by KaTeX, which supports a large subset of TeX math. A formula that cannot be rendered stays visible with an error; you can correct it without losing the surrounding document. Raw HTML is displayed as text. Scripts, HTML embeds, and MDX are not executed.</p>
+      <p>Remote images are off by default. Enable them in Settings when you want the browser to contact the image host. For an image contained in the source itself, use an embedded PNG, JPEG, WebP, or GIF data URL.</p>
+      <p>Drafts save in this browser. Download <strong>Markdown</strong> for an editable copy, <strong>HTML</strong> for a typeset document, or choose <strong>Print / PDF</strong> to use your browser’s print dialog. Clearing site data can remove local drafts, so keep downloaded copies of work you want to retain.</p>
+    </section>
+
+    <section aria-labelledby="keyboard-shortcuts">
+      <h2 id="keyboard-shortcuts">Stay at the keyboard</h2>
+      <p>In the workspace, use <kbd>Ctrl</kbd> on Windows or Linux and <kbd>⌘</kbd> on macOS:</p>
+      <ul>
+        <li><kbd>Ctrl / ⌘ + S</kbd> — download the current Markdown.</li>
+        <li><kbd>Ctrl / ⌘ + O</kbd> — open a Markdown file.</li>
+        <li><kbd>Ctrl / ⌘ + F</kbd> — find text in the editor.</li>
+        <li><kbd>Ctrl / ⌘ + P</kbd> — print the typeset document or save a PDF.</li>
+      </ul>
+    </section>
+    <p><a class="button-primary" href="/?example=quickstart">Try the field guide <Icon name="arrow" size={16} /></a></p>
+  </main>
+  <footer class="page-footer"><span>QFT Markdown · A space for ideas</span><a href="/about/">About &amp; privacy</a></footer>
+</BaseLayout>
