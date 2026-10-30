@@ -1,14 +1,17 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/Icon.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { siteConfig } from '../config/site';
+import { withBase } from '../lib/site-path';
 import license from '../../LICENSE?raw';
 import notices from '../../THIRD_PARTY_NOTICES.md?raw';
 ---
-<BaseLayout title="About — QFT Markdown" active="about" description="A quiet, independent workspace for Markdown and mathematics, with drafts stored in your browser.">
+<BaseLayout title={`About — ${siteConfig.name}`} active="about" description="A quiet, independent workspace for Markdown and mathematics, with drafts stored in your browser.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">Write clearly. Think freely.</span>
     <h1>A space for ideas.</h1>
-    <p class="page-lead">QFT Markdown is an independent workspace for writing, previewing, and exporting Markdown with mathematics. Built for a quick calculation, a careful derivation, or the note you want to come back to.</p>
+    <p class="page-lead">{siteConfig.name} is an independent workspace for writing, previewing, and exporting Markdown with mathematics. Built for a quick calculation, a careful derivation, or the note you want to come back to.</p>
 
     <section class="about-callout">
       <h2>Your words stay with you</h2>
@@ -33,10 +36,16 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
 
     <section aria-labelledby="built-with">
       <h2 id="built-with">Built on good foundations</h2>
-      <p>Astro provides the website, CodeMirror powers the editor, Markdown-it parses the text, and KaTeX typesets the mathematics. The independent design and workflow were inspired by the <a href="https://blackhole.org/about/markdown/" target="_blank" rel="noopener noreferrer">BlackHole.org Markdown editor</a>.</p>
-      <p>QFT Markdown is distributed under the MIT license. Its open-source libraries and fonts retain their own licenses and notices.</p>
-      <details>
-        <summary>Read the QFT Markdown license</summary>
+      <p>Astro provides the website, CodeMirror powers the editor, markdown-it parses the text, and KaTeX typesets the mathematics.</p>
+    </section>
+
+    <section aria-labelledby="make-it-yours">
+      <h2 id="make-it-yours">Open source. Make it yours.</h2>
+      <p>{siteConfig.name} is available under the MIT license. You can use, modify, rebrand, and host your own copy, including for commercial use. Keep the copyright and permission notice with copies of the software. The included libraries and fonts retain their own licenses.</p>
+      <p>Your notes belong to you. Using this editor does not place your documents under the software’s license.</p>
+      <p><a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">Get the source code on GitHub →</a></p>
+      <details id="license">
+        <summary>Read the MIT license</summary>
         <pre><code>{license}</code></pre>
       </details>
       <details>
@@ -44,7 +53,7 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
         <pre><code>{notices}</code></pre>
       </details>
     </section>
-    <p><a class="button-primary" href="/">Back to the workspace <Icon name="arrow" size={16} /></a></p>
+    <p><a class="button-primary" href={withBase()}>Back to the workspace <Icon name="arrow" size={16} /></a></p>
   </main>
-  <footer class="page-footer"><span>QFT Markdown · md.qft.org</span><a href="/guide/">Writing guide</a></footer>
+  <SiteFooter />
 </BaseLayout>

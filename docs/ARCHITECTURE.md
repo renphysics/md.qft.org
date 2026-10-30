@@ -1,6 +1,6 @@
 # Architecture
 
-QFT Markdown is a static application with local document storage. Astro builds the application shell and supporting pages; the browser owns editing, rendering, saving, and exporting. Cloudflare serves files and does not receive document text as part of those operations.
+QFT Markdown is a static application with local document storage. Astro builds the application shell and supporting pages; the browser owns editing, rendering, saving, and exporting. GitHub Pages serves files and does not receive document text as part of those operations. The same build can be served by another static host.
 
 ## Application boundaries
 
@@ -12,9 +12,9 @@ QFT Markdown is a static application with local document storage. Astro builds t
 | KaTeX | Supported TeX mathematics rendered with HTML and MathML |
 | Browser storage | Named drafts, autosave, and conflict preservation |
 | Export | Original Markdown, portable rendered HTML, and print styles |
-| Workers Static Assets | Distribution of the built `dist/` directory and response headers |
+| GitHub Pages | Distribution of the built `dist/` directory |
 
-The project has no SSR adapter, Worker request handler, remote document API, authentication service, or external database. It also has no service worker: document operations are local, while loading or reopening the app still depends on available application assets.
+The project has no SSR adapter, server request handler, remote document API, authentication service, or external database. It also has no service worker: document operations are local, while loading or reopening the app still depends on available application assets.
 
 ## Source and rendering
 
@@ -30,7 +30,9 @@ Preview and HTML export use the same rendering path. This prevents an equation f
 
 Opening a Markdown file must not turn it into executable application code. Raw HTML is disabled in the Markdown renderer. KaTeX uses untrusted input settings. Link protocols and image sources are checked rather than blindly copied into attributes.
 
-Remote images are blocked by default because loading them makes a request to the image host. A user can opt in explicitly. That opt-in does not grant permission for scripts, embedded applications, or arbitrary HTML. The CSP in `public/_headers` provides an additional browser-level boundary while permitting the styles required by CodeMirror and KaTeX.
+Remote images are blocked by default because loading them makes a request to the image host. A user can opt in explicitly. That opt-in does not grant permission for scripts, embedded applications, or arbitrary HTML. The HTML layout delivers a Content Security Policy through a `meta` element, providing an additional browser-level boundary while permitting the styles required by CodeMirror and KaTeX. It also delivers a `no-referrer` policy.
+
+GitHub Pages does not apply `_headers` files or offer arbitrary response-header configuration. A meta CSP cannot enforce `frame-ancestors`, and it does not replace headers such as `X-Content-Type-Options` or `Cross-Origin-Opener-Policy`. The application does not depend on those headers for editing or exporting. A host that supports response headers can add them separately. See the [CSP specification](https://www.w3.org/TR/CSP3/#meta-element) for meta-policy limitations.
 
 The app bundles its JavaScript, styles, and fonts. There is no analytics script or document telemetry. Hosting still involves ordinary requests for the site and its assets; enabling remote images creates requests to those image hosts. Portable HTML export makes explicit fetch requests for enabled remote images so it can embed them. The CSP permits HTTPS connections for that purpose; those requests omit credentials and referrer information, and remain subject to the image host's CORS policy.
 
@@ -42,7 +44,9 @@ Another browser tab can edit the same stored draft. The storage layer detects st
 
 Storage errors must be visible. A full or unavailable storage database must not be presented as a successful save. Downloads are the durable, portable escape route when browser persistence is unavailable or the user changes browser/profile.
 
-Storage is origin-specific. `md.qft.org`, a `workers.dev` preview, and localhost do not share drafts. Clearing browser site data can erase them. There is no cloud synchronization or cross-device recovery.
+Browser storage is origin-specific. A custom domain, a different `github.io` hostname, and localhost do not share drafts. Within an origin, this application also scopes its database, cross-tab messages, and preferences by its deployment path. This avoids accidental overlap between project sites such as `/notes/` and `/editor/`. A path namespace is not a security boundary: scripts on the same origin can access the same origin's browser storage.
+
+The root-path deployment preserves the original storage identifiers, so existing drafts at `https://md.qft.org/` remain compatible. Changing the display name does not change the storage namespace. Moving to another hostname or deployment path requires exporting and importing the notes you want to transfer. Clearing browser site data can erase them. There is no cloud synchronization or cross-device recovery.
 
 ## Export
 
@@ -54,11 +58,13 @@ Storage is origin-specific. `md.qft.org`, a `workers.dev` preview, and localhost
 
 ## Deployment and configuration
 
-`astro build` produces `dist/`. `wrangler.jsonc` points Workers Static Assets at that directory. It contains no account identifier or active domain route. Domain association is an account-level action described in [deployment](DEPLOYMENT.md).
+`astro build` produces `dist/`. The GitHub Pages workflow runs the checks and builds the static files, then deploys the artifact from a successful build. Repository Pages settings select GitHub Actions as the publishing source and hold the custom-domain association. No personal access token, runtime secret, or hosting-specific server adapter is required. Details are in [deployment](DEPLOYMENT.md).
 
-Cloudflare Workers Builds handles GitHub-connected builds and publishing. The separate GitHub workflow checks the source without deploying or requiring a Cloudflare secret.
+The workflow passes the full deployment URL from GitHub Pages metadata as `SITE_URL`. Astro derives the origin and path prefix from that URL. Internal navigation and public-asset references respect the prefix, allowing a custom domain or a project URL such as `https://example.github.io/markdown/`. An explicit `SITE_URL` also supports another static host.
 
-The Node version is pinned in `.node-version`; npm is pinned in `packageManager`; the lockfile records resolved packages. Use `npm ci`, type checking, tests, and the production build as the common local/CI/Cloudflare gate.
+`src/config/site.ts` owns the display name, tagline, description, and repository link. A fork can change those values without editing every page or export label. The [reuse guide](REUSE.md) maps other customization points and explains which license notices travel with the source and built application.
+
+The Node version is pinned in `.node-version`; npm is pinned in `packageManager`; the lockfile records resolved packages. Use `npm ci`, type checking, tests, and the production build as the common local and CI gate. The separate Check workflow validates pull requests without publishing them.
 
 ## Scope of this release
 

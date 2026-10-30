@@ -13,11 +13,13 @@ import { renderMarkdown, MAX_SOURCE_LENGTH, type MarkdownResult } from '../lib/r
 import { downloadMarkdown, exportPortableHtml, printDocument } from '../lib/export-document';
 import { connectScrollSync } from '../lib/scroll-sync';
 import { EXAMPLES } from '../lib/examples';
+import { siteConfig } from '../config/site';
+import { scopedStorageKey } from '../lib/storage-scope';
 
 type ViewMode = 'editor' | 'split' | 'preview';
 interface Preferences { fontSize: number; wrap: boolean; sync: boolean; view: ViewMode; share: number }
-const PREFERENCES_KEY = 'qft-markdown:preferences';
-const ACTIVE_KEY = 'qft-markdown:active';
+const PREFERENCES_KEY = scopedStorageKey('qft-markdown:preferences');
+const ACTIVE_KEY = scopedStorageKey('qft-markdown:active');
 const defaults: Preferences = { fontSize: 14, wrap: true, sync: true, view: 'split', share: 50 };
 
 function readLocal(key: string): string | null {
@@ -358,7 +360,7 @@ class MarkdownWorkspace extends HTMLElement {
   private updateTitle(): void {
     const title = this.current?.title ?? 'Untitled document';
     this.q('[data-document-title]').textContent = title;
-    document.title = `${title} · QFT Markdown`;
+    document.title = `${title} · ${siteConfig.name}`;
   }
 
   private updateCursor(): void {

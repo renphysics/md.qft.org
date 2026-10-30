@@ -2,8 +2,11 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/Icon.astro';
 import { EXAMPLES } from '../lib/examples';
+import SiteFooter from '../components/SiteFooter.astro';
+import { siteConfig } from '../config/site';
+import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title="Examples — QFT Markdown" active="examples" description="Start with a physics note, a mathematical derivation, or a small Markdown field guide.">
+<BaseLayout title={`Examples — ${siteConfig.name}`} active="examples" description="Start with a physics note, a mathematical derivation, or a small Markdown field guide.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">A starting point for your next thought</span>
     <h1>Ideas, in their element.</h1>
@@ -14,15 +17,15 @@ import { EXAMPLES } from '../lib/examples';
           <span class="example-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
           <h2>{example.title}</h2>
           <p>{example.description}</p>
-          <a class="button-secondary" href={`/?example=${encodeURIComponent(example.id)}`} aria-label={`Open ${example.title}`}>Open example <Icon name="arrow" size={16} /></a>
+          <a class="button-secondary" href={withBase(`?example=${encodeURIComponent(example.id)}`)} aria-label={`Open ${example.title}`}>Open example <Icon name="arrow" size={16} /></a>
         </article>
       ))}
     </div>
     <section class="about-callout">
       <h2>A page of your own</h2>
       <p>Start with an example or create a blank document in the workspace. Your drafts stay in this browser, ready for the next line. Download Markdown when you want to keep a copy or continue elsewhere.</p>
-      <a href="/guide/">Explore the writing guide →</a>
+      <a href={withBase('guide/')}>Explore the writing guide →</a>
     </section>
   </main>
-  <footer class="page-footer"><span>QFT Markdown · A space for ideas</span><a href="/about/">About &amp; privacy</a></footer>
+  <SiteFooter />
 </BaseLayout>

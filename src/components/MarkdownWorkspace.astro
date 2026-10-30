@@ -1,5 +1,7 @@
 ---
 import Icon from './Icon.astro';
+import { siteConfig } from '../config/site';
+import { withBase } from '../lib/site-path';
 import 'katex/dist/katex.min.css';
 import '../styles/document.css';
 ---
@@ -12,8 +14,9 @@ import '../styles/document.css';
     <div class="document-list" data-documents role="list" aria-label="Saved documents"><p class="loading-documents">Opening your workspace…</p></div>
     <div class="sidebar-divider"></div>
     <button class="sidebar-link" data-show-examples><span class="sidebar-link-icon"><Icon name="spark" size={17} /></span><span>Start with an example<small>A little inspiration</small></span><Icon name="chevron" size={14} /></button>
-    <a class="sidebar-link" href="/guide/"><span class="sidebar-link-icon"><Icon name="book" size={17} /></span><span>Markdown & math guide<small>Make yourself at home</small></span><Icon name="chevron" size={14} /></a>
+    <a class="sidebar-link" href={withBase('guide/')}><span class="sidebar-link-icon"><Icon name="book" size={17} /></span><span>Markdown & math guide<small>Make yourself at home</small></span><Icon name="chevron" size={14} /></a>
     <div class="sidebar-bottom"><Icon name="shield" size={17} /><p>A space of your own.<span>Your documents stay in this browser.</span></p></div>
+    <nav class="sidebar-project-links" aria-label="Project information"><a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">Source code</a><span aria-hidden="true">·</span><a href={withBase('about/#license')}>MIT license</a></nav>
   </aside>
   <button class="sidebar-scrim" data-sidebar-scrim aria-label="Close document sidebar" hidden></button>
   <main class="workspace-main">
@@ -61,7 +64,7 @@ import '../styles/document.css';
   <dialog class="app-dialog" data-delete-dialog aria-labelledby="delete-dialog-title"><form method="dialog" data-delete-form><div class="dialog-heading"><span class="eyebrow">MAKE SOME ROOM</span><button type="button" class="icon-button" data-delete-close aria-label="Close"><Icon name="close" /></button></div><h2 id="delete-dialog-title">Delete this document?</h2><p><strong data-delete-title></strong> will be removed from this browser. Download a copy first if you want to keep it.</p><div class="dialog-actions"><button type="button" class="button-secondary" data-delete-close>Keep document</button><button class="button-primary" value="delete">Delete document</button></div></form></dialog>
   <dialog class="app-dialog examples-dialog" data-examples-dialog aria-labelledby="examples-dialog-title"><div class="dialog-heading"><span class="eyebrow">A PLACE TO BEGIN</span><button class="icon-button" data-examples-close aria-label="Close examples"><Icon name="close" /></button></div><h2 id="examples-dialog-title">Start with a little inspiration.</h2><p>Open an example as a new document and make it your own.</p><div data-examples-list class="example-options"></div></dialog>
   <dialog class="app-dialog settings-dialog" data-settings-dialog aria-labelledby="settings-dialog-title"><div class="dialog-heading"><span class="eyebrow">MAKE IT YOURS</span><button class="icon-button" data-settings-close aria-label="Close settings"><Icon name="close" /></button></div><h2 id="settings-dialog-title">A comfortable place to write.</h2><div class="setting-row"><div><label for="editor-font-size">Editor text size</label><p>Give your source a little breathing room.</p></div><select id="editor-font-size" data-font-size><option value="12">12 px</option><option value="13">13 px</option><option value="14" selected>14 px</option><option value="15">15 px</option><option value="16">16 px</option><option value="18">18 px</option></select></div><div class="setting-row"><div><label for="wrap-lines">Wrap long lines</label><p>Keep the whole sentence in view.</p></div><input id="wrap-lines" type="checkbox" checked data-wrap /></div><div class="setting-row"><div><label for="remote-images">Load remote images</label><p>Off by default. Enabling contacts the image hosts in this document.</p></div><input id="remote-images" type="checkbox" data-remote-images /></div><div class="settings-note"><Icon name="shield" size={18} /><p>Drafts are saved only in this browser. Export a copy to keep a backup.</p></div><div class="shortcut-list"><span>Download Markdown <kbd>Ctrl / ⌘ S</kbd></span><span>Open a file <kbd>Ctrl / ⌘ O</kbd></span><span>Find in source <kbd>Ctrl / ⌘ F</kbd></span></div></dialog>
-  <noscript><div class="noscript-notice">Enable JavaScript to use the editor. You can still read the <a href="/guide/">Markdown & math guide</a>.</div></noscript>
+  <noscript><div class="noscript-notice">Enable JavaScript to use the editor. You can still read the <a href={withBase('guide/')}>Markdown & math guide</a>.</div></noscript>
 </qft-markdown-workspace>
 <script>
   import '../scripts/markdown-workspace';

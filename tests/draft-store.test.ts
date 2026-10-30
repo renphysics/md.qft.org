@@ -44,6 +44,26 @@ describe('local document storage', { concurrency: false }, () => {
     assert.deepEqual(await loadDrafts(), [created]);
   });
 
+  it('continues reading drafts saved in the original root-domain database', async () => {
+    const existing = { id: 'existing-note', title: 'Before the hosting update', source: '$E=mc^2$', createdAt: 1, updatedAt: 2, revision: 1 };
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('qft-markdown', 1);
+      request.onupgradeneeded = () => {
+        const store = request.result.createObjectStore('drafts', { keyPath: 'id' });
+        store.createIndex('updatedAt', 'updatedAt');
+      };
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction('drafts', 'readwrite');
+        transaction.objectStore('drafts').put(existing);
+        transaction.oncomplete = () => { database.close(); resolve(); };
+        transaction.onerror = () => { database.close(); reject(transaction.error); };
+      };
+    });
+    assert.deepEqual(await loadDrafts(), [existing]);
+  });
+
   it('updates revisions and recency while preserving creation time', async (context) => {
     let clock = 1000;
     context.mock.method(Date, 'now', () => { clock += 10; return clock; });

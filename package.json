@@ -12,9 +12,9 @@
     "dev": "astro dev",
     "check": "astro check",
     "test": "node --import tsx --test --test-isolation=none tests/*.test.ts",
+    "prebuild": "node scripts/clean-build.mjs",
     "build": "astro build",
-    "preview": "astro preview --host 0.0.0.0",
-    "deploy": "wrangler deploy"
+    "preview": "astro preview --host 0.0.0.0"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
@@ -43,8 +43,7 @@
     "@types/node": "24.19.2",
     "fake-indexeddb": "6.2.6",
     "tsx": "4.23.15",
-    "typescript": "6.0.3",
-    "wrangler": "4.155.0"
+    "typescript": "6.0.3"
   },
   "packageManager": "npm@11.9.0"
 }

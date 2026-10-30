@@ -1,3 +1,5 @@
+import { scopedStorageKey } from './storage-scope';
+
 /** Browser-local documents. A successful write means the IndexedDB transaction committed. */
 export interface Draft {
   id: string;
@@ -14,9 +16,9 @@ export interface DraftChangeMessage {
   revision?: number;
 }
 
-export const DRAFT_CHANNEL_NAME = 'qft-markdown-drafts';
+export const DRAFT_CHANNEL_NAME = scopedStorageKey('qft-markdown-drafts');
 export const MAX_DRAFT_SOURCE_LENGTH = 5_000_000;
-const DATABASE_NAME = 'qft-markdown';
+const DATABASE_NAME = scopedStorageKey('qft-markdown');
 const STORE_NAME = 'drafts';
 const DATABASE_VERSION = 1;
 
@@ -108,7 +110,7 @@ function openDatabase(): Promise<IDBDatabase> {
     };
     request.onblocked = () => {
       settled = true;
-      reject(new DraftStorageError('Another tab is blocking local draft storage. Close older QFT Markdown tabs and try again.'));
+      reject(new DraftStorageError('Another tab is blocking local draft storage. Close other editor tabs and try again.'));
     };
     request.onsuccess = () => {
       const db = request.result;

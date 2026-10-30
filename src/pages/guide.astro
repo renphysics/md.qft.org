@@ -1,6 +1,9 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/Icon.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { siteConfig } from '../config/site';
+import { withBase } from '../lib/site-path';
 
 const snippets = {
   inline: String.raw`A state is $|\psi\rangle$.
@@ -29,7 +32,7 @@ $$`,
 Let $x\in\RR$ and $v\in\RR^n$.`,
 };
 ---
-<BaseLayout title="Writing guide — QFT Markdown" active="guide" description="A practical guide to Markdown, mathematical notation, and keeping your work in QFT Markdown.">
+<BaseLayout title={`Writing guide — ${siteConfig.name}`} active="guide" description={`A practical guide to Markdown, mathematical notation, and keeping your work in ${siteConfig.name}.`}>
   <main id="main-content" class="content-page">
     <span class="page-kicker">A little syntax goes a long way</span>
     <h1>Make room for the idea.</h1>
@@ -95,7 +98,7 @@ Let $x\in\RR$ and $v\in\RR^n$.`,
         <li><kbd>Ctrl / ⌘ + P</kbd> — print the typeset document or save a PDF.</li>
       </ul>
     </section>
-    <p><a class="button-primary" href="/?example=quickstart">Try the field guide <Icon name="arrow" size={16} /></a></p>
+    <p><a class="button-primary" href={withBase('?example=quickstart')}>Try the field guide <Icon name="arrow" size={16} /></a></p>
   </main>
-  <footer class="page-footer"><span>QFT Markdown · A space for ideas</span><a href="/about/">About &amp; privacy</a></footer>
+  <SiteFooter />
 </BaseLayout>

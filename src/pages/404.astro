@@ -1,19 +1,22 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/Icon.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { siteConfig } from '../config/site';
+import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title="Page not found — QFT Markdown" active="not-found" description="This page could not be found. Return to the QFT Markdown workspace or open the writing guide.">
+<BaseLayout title={`Page not found — ${siteConfig.name}`} active="not-found" description={`This page could not be found. Return to the ${siteConfig.name} workspace or open the writing guide.`}>
   <main id="main-content" class="content-page not-found-page">
     <span class="error-number" aria-hidden="true">404</span>
     <span class="page-kicker">Page not found</span>
     <h1>Back to a fresh page.</h1>
     <p class="page-lead">This address doesn’t lead to a page. Return to the workspace to continue writing, or open the guide for a little inspiration.</p>
     <div class="not-found-actions">
-      <a class="button-primary" href="/">Open the workspace <Icon name="arrow" size={16} /></a>
-      <a class="button-secondary" href="/guide/">Writing guide</a>
+      <a class="button-primary" href={withBase()}>Open the workspace <Icon name="arrow" size={16} /></a>
+      <a class="button-secondary" href={withBase('guide/')}>Writing guide</a>
     </div>
   </main>
-  <footer class="page-footer"><span>QFT Markdown · md.qft.org</span><a href="/about/">About this workspace</a></footer>
+  <SiteFooter />
 </BaseLayout>
 
 <style>

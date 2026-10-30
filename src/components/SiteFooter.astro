@@ -1,0 +1,12 @@
+---
+import { siteConfig } from '../config/site';
+import { withBase } from '../lib/site-path';
+---
+<footer class="page-footer">
+  <span>{siteConfig.name} · {siteConfig.tagline}</span>
+  <nav aria-label="Project information">
+    <a href={withBase('about/')}>About &amp; privacy</a>
+    <a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">Source code</a>
+    <a href={withBase('about/#license')}>MIT license</a>
+  </nav>
+</footer>

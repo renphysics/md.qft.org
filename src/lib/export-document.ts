@@ -2,6 +2,7 @@ import katexCss from 'katex/dist/katex.min.css?raw';
 import katexLicense from 'katex/LICENSE?raw';
 import documentCss from '../styles/document.css?raw';
 import { escapeHtml, renderMarkdown, type RenderOptions } from './render-markdown';
+import { siteConfig } from '../config/site';
 
 const fontAssets = import.meta.glob('../../node_modules/katex/dist/fonts/*.woff2', {
   eager: true,
@@ -166,7 +167,7 @@ export async function exportPortableHtml(source: string, title: string, options:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="QFT Markdown">
+<meta name="generator" content="${escapeHtml(siteConfig.name)}">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; object-src 'none'">
 <title>${escapeHtml(title || 'Markdown document')}</title>
@@ -188,7 +189,7 @@ main{max-width:780px;margin:0 auto}
 <body><main>
 ${warning}
 <article class="markdown-document">${html}</article>
-<details class="source-document"><summary>Original Markdown · exported with QFT Markdown</summary><pre>${escapeHtml(source)}</pre><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details></details>
+<details class="source-document"><summary>Original Markdown · exported with ${escapeHtml(siteConfig.name)}</summary><pre>${escapeHtml(source)}</pre><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details></details>
 </main></body></html>`;
   download(exported, title, 'html', 'text/html');
 }

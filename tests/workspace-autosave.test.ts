@@ -5,6 +5,8 @@ import { describe, it } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { DraftConflictError, isDraftConflict, type Draft } from '../src/lib/draft-store.ts';
+import { scopedStorageKey } from '../src/lib/storage-scope.ts';
+import { siteConfig } from '../src/config/site.ts';
 
 // Exercise the actual controller methods, with isolated browser surfaces and
 // delayed storage dependencies. Remove imports through the TypeScript AST so
@@ -69,7 +71,7 @@ function workspace(storage: Partial<Storage> = {}) {
     Compartment: class {}, HighlightStyle: { define: () => ({}) }, tags: {},
     matchMedia: () => ({ matches: false, addEventListener: noop }),
     document: { addEventListener: noop }, window: { addEventListener: noop },
-    createDraftId: () => 'memory-draft', isDraftConflict,
+    createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
     createDraft: async (title: string, source: string) => draft('new', source, 1, title),
     saveDraft: async (value: Draft) => ({ ...value, revision: value.revision + 1 }),
     loadDrafts: async () => [], deleteDraft: async () => {},

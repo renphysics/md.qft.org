@@ -2,10 +2,6 @@
 
 QFT Markdown is distributed under the MIT license in [LICENSE](LICENSE), with copyright (c) 2026 Jie Ren. Third-party software and font files retain the licenses and copyright notices below.
 
-## BlackHole.org reference
-
-The original [BlackHole.org Markdown editor](https://blackhole.org/about/markdown/) provided the starting reference for this independent application. The [BlackHole source license](https://github.com/renphysics/blackhole/blob/main/LICENSE) is MIT, copyright (c) 2026 Jie Ren. That notice and the MIT permission text are retained in this repository's LICENSE.
-
 ## Browser libraries and fonts
 
 This inventory records the installed browser-facing dependencies and their transitive package dependencies. Some packages are used only in part after bundling. The versions come from the installed packages corresponding to package-lock.json; license texts are reproduced from their distributed license and notice files.
@@ -70,7 +66,6 @@ These tools support compilation, checking, testing, and deployment. They are not
 | `fake-indexeddb` | 6.2.6 | Apache-2.0 |
 | `tsx` | 4.23.15 | MIT |
 | `typescript` | 6.0.3 | Apache-2.0 |
-| `wrangler` | 4.155.0 | MIT OR Apache-2.0 |
 
 ## Preserved license texts
 
