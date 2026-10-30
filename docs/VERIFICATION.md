@@ -1,6 +1,12 @@
-# Document workflow verification — 2026-10-29
+# Document workflow verification — 2026-10-30
 
 This record covers the paste, organization, document-style, and PDF-setup revision. It distinguishes source/build checks from browser and native PDF checks.
+
+## Current deployment
+
+Feature commit [`4f10e027412b582d2bf47a3bd5f02ca6f126c2e7`](https://github.com/renphysics/md.qft.org/commit/4f10e027412b582d2bf47a3bd5f02ca6f126c2e7) is deployed at **[https://md.qft.org/](https://md.qft.org/)**. The GitHub **Check** and **Deploy to GitHub Pages** workflows both succeeded for this commit. The custom domain is serving the upgraded application over HTTPS; GitHub Pages setup is complete.
+
+Deployment success establishes that the built application was published. Interaction, downloaded-file, and native PDF verification are recorded separately below.
 
 ## Automated and source checks
 
@@ -18,11 +24,21 @@ New regression coverage includes conservative cleanup of complete Markdown wrapp
 
 Source review also addressed short-screen welcome and PDF-panel layouts, preview anchor collisions, failed-image diagnostics, title-length bounds during duplication, and presentation settings for conflict-recovered drafts. Vite still reports its existing large-editor-bundle advisory; builds succeed.
 
-## Deployment and browser verification
+## Current browser verification
 
-The previous revision was confirmed live at `https://md.qft.org/` over HTTPS, with its GitHub Pages deployment workflow successful. The local managed preview is unavailable because its fixed port is occupied by another project's running preview; that project was left undisturbed.
+The deployed application was exercised in Chrome at `https://md.qft.org/`. Verified:
 
-The new revision's production UI checks will be recorded after its GitHub Pages deployment. A successful build does not by itself verify browser interaction or saved PDF output.
+- A previously saved draft loaded after the deployment; creating a blank document showed the new welcome panel.
+- The paste dialog accepted a document containing an outer Markdown fence, nested code, a table, and all four mathematical delimiter styles.
+- Cleanup showed the original and proposed source, removed the enclosing wrapper, promoted headings, and created a separate formatted draft while keeping the original.
+- The formatted document rendered all four equations, its table, and its inner code block.
+- The organizer moved a complete section and Undo restored the original order.
+- Document search matched text inside drafts as well as document titles.
+- PDF setup changed the selected style, paper size, orientation, font size, margins, author, and table of contents. The preview reused the source title once and rendered its equations.
+- The preview had no duplicate DOM IDs or horizontal overflow. Its table-of-contents links scrolled inside the preview.
+- The active formatted draft and its rendered content survived a page reload.
+
+These checks cover the document workflow and typography preview. Reopened HTML downloads and an actual PDF saved through the native print dialog were not verified in this session. Mobile interaction checks were not repeated for this revision.
 
 ## PDF behavior and remaining checks
 
@@ -34,11 +50,9 @@ Native PDF checks should verify A4/Letter dimensions, portrait/landscape, margin
 
 ## Earlier deployment revision record
 
-### GitHub Pages revision verification — 2026-10-29
+The following is the historical verification record for the GitHub Pages migration at commit [`dab9687e636929a9b01cd1babeedd84babec3e2e`](https://github.com/renphysics/md.qft.org/commit/dab9687e636929a9b01cd1babeedd84babec3e2e), recorded on 2026-10-29. At that stage, the checks below were local and repository/domain setup remained to be completed. That setup was subsequently completed; the current deployment status is recorded above. These older browser checks are not claims about the new document-workflow interface.
 
-This record describes local source, build, and browser verification for the GitHub Pages revision. Live deployment results are recorded in GitHub Actions. DNS, the production certificate, and the final custom-domain behavior must be checked after the repository's Pages settings are configured.
-
-## Automated checks
+### Earlier automated checks
 
 | Check | Result |
 | --- | --- |
@@ -57,7 +71,7 @@ The built-output audit checked canonical URLs, internal navigation, example link
 
 Vite still reports a bundle-size advisory because the editor, Markdown parser, and math renderer run in the browser. Both production builds complete successfully. This revision does not suppress the advisory.
 
-## Browser checks for this revision
+### Earlier browser checks
 
 The built production files were served in the available Chrome environment, with the production CSP active. Verified:
 
@@ -72,10 +86,10 @@ The built production files were served in the available Chrome environment, with
 
 The initial release's browser checks also covered Markdown file import, document renaming and switching, the outline, light/dark themes, and 320 px/390 px layouts. Those broader checks were not all repeated for this deployment-focused revision.
 
-## Verification limits
+### Earlier verification limits
 
 The generated HTML download was not reopened independently during this revision, and native print/PDF dialogs were not exercised. The earlier download-event interface timed out, so a successful export-generation message is not treated as proof that a downloaded file was reopened successfully. Follow the download/reopen and native print checks in [DEPLOYMENT.md](DEPLOYMENT.md) in the browsers you intend to support.
 
-The local production preview does not establish that GitHub Pages is enabled, that a live deployment has succeeded, or that custom-domain DNS and HTTPS are correct. Complete those hosting checks after applying the repository settings. GitHub Pages does not deliver the former host's custom response headers; the documented CSP and referrer policies are delivered in the HTML instead.
+The local production preview at that time did not establish live deployment, DNS, or HTTPS status. Those deployment checks have since been completed, as recorded in the current deployment section. GitHub Pages delivers the documented CSP and referrer policies through the HTML rather than configurable response headers.
 
 Drafts are scoped to the browser, origin, and application base path. Notes on a project hostname/path do not automatically transfer to a custom domain. Export Markdown before changing addresses and import it at the new address.
