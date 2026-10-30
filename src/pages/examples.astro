@@ -6,11 +6,11 @@ import SiteFooter from '../components/SiteFooter.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title={`Examples — ${siteConfig.name}`} active="examples" description="Start with a physics note, a mathematical derivation, or a small Markdown field guide.">
+<BaseLayout title={`Examples — ${siteConfig.name}`} active="examples" description="Explore study notes, a project report, mathematical derivations, and a Markdown field guide. Open an example, organize it, and try a PDF style.">
   <main id="main-content" class="content-page">
-    <span class="page-kicker">A starting point for your next thought</span>
-    <h1>Ideas, in their element.</h1>
-    <p class="page-lead">A few small documents to explore what the workspace can do. Open one, follow the notation, and make it your own.</p>
+    <span class="page-kicker">A starting point for your next document</span>
+    <h1>Good ideas take many forms.</h1>
+    <p class="page-lead">A study guide, a useful update, a careful calculation. Open an example, arrange its sections, and try a document style in Save PDF. Each opens as a draft you can make your own.</p>
     <div class="example-grid">
       {EXAMPLES.map((example, index) => (
         <article class="example-card">
@@ -22,8 +22,8 @@ import { withBase } from '../lib/site-path';
       ))}
     </div>
     <section class="about-callout">
-      <h2>A page of your own</h2>
-      <p>Start with an example or create a blank document in the workspace. Your drafts stay in this browser, ready for the next line. Download Markdown when you want to keep a copy or continue elsewhere.</p>
+      <h2>Bring an idea of your own</h2>
+      <p>Paste an AI answer or your own notes into the workspace. Choose a new document or append to the one you are working on. Your drafts stay in this browser; download Markdown to keep an editable copy, or save a styled HTML document or PDF to share.</p>
       <a href={withBase('guide/')}>Explore the writing guide →</a>
     </section>
   </main>

@@ -7,15 +7,21 @@ import { withBase } from '../lib/site-path';
 import license from '../../LICENSE?raw';
 import notices from '../../THIRD_PARTY_NOTICES.md?raw';
 ---
-<BaseLayout title={`About — ${siteConfig.name}`} active="about" description="A quiet, independent workspace for Markdown and mathematics, with drafts stored in your browser.">
+<BaseLayout title={`About — ${siteConfig.name}`} active="about" description="An independent, open-source workspace for turning AI answers, notes, and mathematics into clear documents. Drafts stay in your browser.">
   <main id="main-content" class="content-page">
-    <span class="page-kicker">Write clearly. Think freely.</span>
-    <h1>A space for ideas.</h1>
-    <p class="page-lead">{siteConfig.name} is an independent workspace for writing, previewing, and exporting Markdown with mathematics. Built for a quick calculation, a careful derivation, or the note you want to come back to.</p>
+    <span class="page-kicker">Useful words deserve a good home</span>
+    <h1>Ideas, ready to share.</h1>
+    <p class="page-lead">{siteConfig.name} turns AI answers, notes, and mathematics into clear documents. Paste your text, review the formatting, arrange the sections, and choose a style for the work you want to keep or share.</p>
+
+    <section aria-labelledby="your-document-your-decisions">
+      <h2 id="your-document-your-decisions">Your document, your decisions</h2>
+      <p>Start with a blank page or bring plain text and Markdown from elsewhere. Cleanup shows its changes before creating a formatted copy and keeps your original. The section organizer moves complete sections, with Undo available when you want to change direction.</p>
+      <p>Clean, Study Notes, and Academic styles give the same source a different presentation for HTML or PDF. Formatting and organization happen locally; they do not call an AI service, rewrite your ideas, or check the claims and references in a pasted answer.</p>
+    </section>
 
     <section class="about-callout">
       <h2>Your words stay with you</h2>
-      <p>The editor processes your Markdown in your browser. Drafts are stored locally with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Preferences are also stored in this browser.</p>
+      <p>The editor processes your Markdown in your browser. Drafts are stored locally with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Editor and per-document presentation preferences are also stored in this browser, separately from your Markdown.</p>
       <p>Browser storage is convenient, but it is not a backup. Clearing site data, private browsing, or a browser’s storage cleanup can remove drafts. Download important work as Markdown and keep that file somewhere you trust.</p>
     </section>
 
@@ -30,7 +36,7 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
       <h2 id="take-your-work">Take your work with you</h2>
       <div class="guide-grid">
         <article class="guide-card"><h2>Markdown</h2><p>Your editable source, exactly as written. A small, portable file you can open in another text editor.</p></article>
-        <article class="guide-card"><h2>A typeset document</h2><p>HTML export includes its document styles and mathematical fonts. Print / PDF uses your browser’s print dialog. Remote images in an HTML export must be embedded successfully for a fully portable copy.</p></article>
+        <article class="guide-card"><h2>A styled document</h2><p>HTML export includes your chosen presentation and mathematical fonts. Save PDF lets you choose the style and page settings, then opens the browser’s print dialog. Final pagination appears in that print preview. Remote images in an HTML export must be embedded successfully for a fully portable copy.</p></article>
       </div>
     </section>
 

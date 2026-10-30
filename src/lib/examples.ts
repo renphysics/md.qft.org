@@ -2,6 +2,131 @@ export interface ExampleDocument { id: string; title: string; description: strin
 
 export const EXAMPLES: ExampleDocument[] = [
   {
+    id: 'study-notes',
+    title: 'Understanding exponential change',
+    description: 'Turn an explanation into study notes with a worked example, code, and practice questions.',
+    source: String.raw`# Understanding exponential change
+
+A short study guide to a pattern that appears whenever a quantity changes at a rate proportional to its current size.
+
+## The idea in one equation
+
+If a quantity $N(t)$ grows at a constant proportional rate $r$, then
+
+$$
+\frac{\mathrm dN}{\mathrm dt}=rN,
+\qquad N(0)=N_0.
+$$
+
+The solution is \(N(t)=N_0e^{rt}\). Positive $r$ gives growth; negative $r$ gives decay.
+
+> **Check the assumption:** the proportional rate is constant. This model does not describe unlimited growth in a resource-limited system.
+
+## A worked example
+
+Suppose a model population doubles every three hours. Its doubling time $T$ satisfies
+
+\[
+2N_0=N_0e^{rT}
+\quad\Longrightarrow\quad
+r=\frac{\ln 2}{T}.
+\]
+
+Starting with 100 individuals gives the following model predictions:
+
+| Time | Number of doublings | Population |
+| ---: | ---: | ---: |
+| 0 hours | 0 | 100 |
+| 3 hours | 1 | 200 |
+| 6 hours | 2 | 400 |
+| 9 hours | 3 | 800 |
+
+### Check it with a few lines of Python
+
+~~~python
+import math
+
+initial = 100
+doubling_time = 3.0  # hours
+rate = math.log(2) / doubling_time
+
+for hours in (0, 3, 6, 9):
+    population = initial * math.exp(rate * hours)
+    print(hours, round(population))
+~~~
+
+## Common mistakes
+
+- Keep the units of time consistent with the units of the rate.
+- Distinguish a constant increase from a constant proportional increase.
+- State when the model's assumptions are expected to fail.
+
+## Questions to take away
+
+1. How long does this model take to reach 1,600 individuals?
+2. What changes if the quantity halves every three hours?
+3. Why does the doubling time not depend on the initial population?
+
+**Answer to question 1:** four doublings, or twelve hours.
+
+---
+
+*Make these notes your own: add another example, reorder the sections, and choose Study Notes in the PDF settings.*
+`,
+  },
+  {
+    id: 'project-report',
+    title: 'A clear project update',
+    description: 'An illustrative report with decisions, progress measures, a table, and next steps.',
+    source: String.raw`# A clear project update
+
+## Summary
+
+The first version is ready for a small usability study. The next milestone is to verify that a new visitor can complete the main task without help.
+
+*All numbers in this example are illustrative.*
+
+## Progress at a glance
+
+| Workstream | Completed checks | Total checks | Next step |
+| :--- | ---: | ---: | :--- |
+| Core workflow | 18 | 20 | Resolve two confusing labels |
+| Document output | 12 | 15 | Check wide tables and long equations |
+| Accessibility | 10 | 15 | Complete keyboard and screen-reader review |
+| **Total** | **40** | **50** | **Review the remaining ten checks** |
+
+The completion fraction is
+
+$$
+\text{completion}=\frac{40}{50}=0.8=80\%.
+$$
+
+This is a count of checks, not a claim that 80% of the effort is finished: different checks can require very different amounts of work.
+
+## Decisions and their reasons
+
+1. **Keep the first task short.** Start with a document and a clear action.
+2. **Use representative examples.** Include a long table, mathematics, code, and ordinary prose.
+3. **Record observed problems.** Turn each reproducible issue into a specific improvement.
+
+## What we will measure
+
+Let $n$ be the number of participants who attempt the task and $s$ the number who finish it without help. Report the counts alongside the fraction \(s/n\), and describe the difficulties observed during the session.
+
+A small pilot is useful for finding problems; it should not be presented as a precise estimate for every future user.
+
+## Next actions
+
+- [x] Prepare the example documents.
+- [x] Write a short task description.
+- [ ] Invite participants with different levels of experience.
+- [ ] Observe where they hesitate or ask for help.
+- [ ] Revise the workflow and repeat the difficult tasks.
+
+> A useful update makes the next decision easier: what is ready, what remains uncertain, and what happens next.
+`,
+  },
+  {
     id: 'quantum',
     title: 'The language of quantum mechanics',
     description: 'A short physics note with equations, a table, and a footnote.',

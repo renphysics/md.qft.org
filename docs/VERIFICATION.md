@@ -1,4 +1,40 @@
-# GitHub Pages revision verification — 2026-10-29
+# Document workflow verification — 2026-10-29
+
+This record covers the paste, organization, document-style, and PDF-setup revision. It distinguishes source/build checks from browser and native PDF checks.
+
+## Automated and source checks
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 33 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 67 tests, 0 failures |
+| Production build for `https://md.qft.org/` | Passed: 5 static pages |
+| Production build for a GitHub project path | Passed for `https://reuse-example.github.io/reuse-check/` |
+| Built links and fonts | Both builds passed: 80 HTML links/assets and 86 font references in linked stylesheets |
+| CSP, canonical URLs, and internal URLs | Passed for domain-root and project-path builds |
+| Dependencies and licenses | `package.json`, lockfile, MIT license, and third-party notices are unchanged |
+
+New regression coverage includes conservative cleanup of complete Markdown wrappers, protected mathematical/code content, heading promotion, CRLF handling in structural helpers, whole-section movement, escaping appended headings, presentation allowlists, title reuse, table-of-contents anchors, original-draft preservation, stale append/cleanup targets, queued PDF actions, and duplicate print activation. The prior rendering, draft-conflict, autosave, and deployment tests continue to pass.
+
+Source review also addressed short-screen welcome and PDF-panel layouts, preview anchor collisions, failed-image diagnostics, title-length bounds during duplication, and presentation settings for conflict-recovered drafts. Vite still reports its existing large-editor-bundle advisory; builds succeed.
+
+## Deployment and browser verification
+
+The previous revision was confirmed live at `https://md.qft.org/` over HTTPS, with its GitHub Pages deployment workflow successful. The local managed preview is unavailable because its fixed port is occupied by another project's running preview; that project was left undisturbed.
+
+The new revision's production UI checks will be recorded after its GitHub Pages deployment. A successful build does not by itself verify browser interaction or saved PDF output.
+
+## PDF behavior and remaining checks
+
+Save PDF prepares a clean HTML/text print document with the selected style and opens the browser's print dialog. The in-app preview shows typography at the selected paper width; final pagination is determined by the browser. It is not a direct PDF downloader or an exact paginated preview.
+
+Native PDF checks should verify A4/Letter dimensions, portrait/landscape, margins, selectable/searchable prose, mathematical glyphs, long tables/code, internal links, and mixed-language text. A print-dialog action alone is not evidence that a PDF was saved successfully. Standalone HTML should also be downloaded and reopened independently to confirm its embedded fonts and images.
+
+---
+
+## Earlier deployment revision record
+
+### GitHub Pages revision verification — 2026-10-29
 
 This record describes local source, build, and browser verification for the GitHub Pages revision. Live deployment results are recorded in GitHub Actions. DNS, the production certificate, and the final custom-domain behavior must be checked after the repository's Pages settings are configured.
 

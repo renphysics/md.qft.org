@@ -32,11 +32,23 @@ $$`,
 Let $x\in\RR$ and $v\in\RR^n$.`,
 };
 ---
-<BaseLayout title={`Writing guide — ${siteConfig.name}`} active="guide" description={`A practical guide to Markdown, mathematical notation, and keeping your work in ${siteConfig.name}.`}>
+<BaseLayout title={`Writing guide — ${siteConfig.name}`} active="guide" description={`Paste, organize, and style a document in ${siteConfig.name}. A practical guide to Markdown, mathematics, and saving PDF or HTML.`}>
   <main id="main-content" class="content-page">
-    <span class="page-kicker">A little syntax goes a long way</span>
-    <h1>Make room for the idea.</h1>
-    <p class="page-lead">Write in plain text, add structure with Markdown, and typeset mathematics as you go. The preview follows your source; your downloaded Markdown keeps exactly what you wrote.</p>
+    <span class="page-kicker">From a useful answer to a lasting note</span>
+    <h1>Make a document worth keeping.</h1>
+    <p class="page-lead">Bring your notes or an AI answer into the workspace. Give the ideas a clear structure, keep the mathematics intact, and choose a style for the document you want to share.</p>
+
+    <section aria-labelledby="paste-to-document">
+      <h2 id="paste-to-document">From pasted text to PDF</h2>
+      <ol>
+        <li><strong>Bring your text.</strong> Choose <strong>Paste</strong>, then add plain text or Markdown to a new document or the current one. An optional title becomes the new document name or an appended section heading. For equations and code, copy their Markdown or TeX source when it is available.</li>
+        <li><strong>Review the formatting.</strong> <strong>Clean up</strong> can remove an outer Markdown wrapper, raise heading levels together, and trim outer blank lines. Review the original and result, then create a formatted copy. Your original stays in the document list; editor Undo is available too.</li>
+        <li><strong>Arrange your sections.</strong> <strong>Organize</strong> moves whole sections with their paragraphs, smaller headings, code, and equations. A document title and its introduction stay in place. Use <strong>Undo move</strong> to reverse a move.</li>
+        <li><strong>Choose a presentation.</strong> Open <strong>Save PDF</strong> and choose Clean, Study Notes, or Academic. Adjust paper, margins, and text size, then save through the browser’s print dialog. <strong>Download HTML</strong> uses the same style.</li>
+      </ol>
+      <p>The typography preview shows your chosen appearance; the browser’s print preview shows final page boundaries. Document details include an optional author, a table of contents, and page breaks before major sections. <strong>Add a title if missing</strong> preserves the headings in your source.</p>
+      <p>Find a saved note with the document search. Presentation settings stay with that draft in this browser and do not change the downloaded Markdown. Cleanup adjusts formatting; it leaves wording and source links as supplied.</p>
+    </section>
 
     <div class="guide-grid">
       <section class="guide-card">
@@ -84,8 +96,9 @@ Let $x\in\RR$ and $v\in\RR^n$.`,
     <section aria-labelledby="working-with-documents">
       <h2 id="working-with-documents">A few things to know</h2>
       <p>Mathematics is typeset by KaTeX, which supports a large subset of TeX math. A formula that cannot be rendered stays visible with an error; you can correct it without losing the surrounding document. Raw HTML is displayed as text. Scripts, HTML embeds, and MDX are not executed.</p>
+      <p>Live preview, pasting, and the formatting tools support up to 400,000 characters. Work with smaller documents when a longer text exceeds that limit. Changing a document style leaves its Markdown source untouched.</p>
       <p>Remote images are off by default. Enable them in Settings when you want the browser to contact the image host. For an image contained in the source itself, use an embedded PNG, JPEG, WebP, or GIF data URL.</p>
-      <p>Drafts save in this browser. Download <strong>Markdown</strong> for an editable copy, <strong>HTML</strong> for a typeset document, or choose <strong>Print / PDF</strong> to use your browser’s print dialog. Clearing site data can remove local drafts, so keep downloaded copies of work you want to retain.</p>
+      <p>Drafts save in this browser. Download <strong>Markdown</strong> for an editable copy, <strong>HTML</strong> for a styled document, or choose <strong>Save PDF</strong> to prepare your document and use your browser’s print dialog. Clearing site data can remove local drafts, so keep downloaded copies of work you want to retain.</p>
     </section>
 
     <section aria-labelledby="keyboard-shortcuts">
@@ -95,7 +108,7 @@ Let $x\in\RR$ and $v\in\RR^n$.`,
         <li><kbd>Ctrl / ⌘ + S</kbd> — download the current Markdown.</li>
         <li><kbd>Ctrl / ⌘ + O</kbd> — open a Markdown file.</li>
         <li><kbd>Ctrl / ⌘ + F</kbd> — find text in the editor.</li>
-        <li><kbd>Ctrl / ⌘ + P</kbd> — print the typeset document or save a PDF.</li>
+        <li><kbd>Ctrl / ⌘ + P</kbd> — open the PDF setup panel.</li>
       </ul>
     </section>
     <p><a class="button-primary" href={withBase('?example=quickstart')}>Try the field guide <Icon name="arrow" size={16} /></a></p>

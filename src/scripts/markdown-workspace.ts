@@ -4,6 +4,7 @@ import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { openSearchPanel } from '@codemirror/search';
+import { isolateHistory, undo } from '@codemirror/commands';
 import { tags } from '@lezer/highlight';
 import {
   createDraft, createDraftId, deleteDraft, loadDrafts, saveDraft, isDraftConflict,
@@ -11,6 +12,14 @@ import {
 } from '../lib/draft-store';
 import { renderMarkdown, MAX_SOURCE_LENGTH, type MarkdownResult } from '../lib/render-markdown';
 import { downloadMarkdown, exportPortableHtml, printDocument } from '../lib/export-document';
+import {
+  DEFAULT_DOCUMENT_SETTINGS, normalizeDocumentSettings, prepareDocumentHtml,
+  documentPresentationCss, documentPageMetrics, inspectPrintLayout, type DocumentSettings,
+} from '../lib/document-presentation';
+import {
+  getCleanupSuggestions, applyCleanup, getDocumentSections, moveDocumentSection,
+  suggestDocumentTitle, appendDocumentSection,
+} from '../lib/document-tools';
 import { connectScrollSync } from '../lib/scroll-sync';
 import { EXAMPLES } from '../lib/examples';
 import { siteConfig } from '../config/site';
@@ -20,6 +29,7 @@ type ViewMode = 'editor' | 'split' | 'preview';
 interface Preferences { fontSize: number; wrap: boolean; sync: boolean; view: ViewMode; share: number }
 const PREFERENCES_KEY = scopedStorageKey('qft-markdown:preferences');
 const ACTIVE_KEY = scopedStorageKey('qft-markdown:active');
+const presentationKey = (id: string) => scopedStorageKey(`qft-markdown:presentation:${id}`);
 const defaults: Preferences = { fontSize: 14, wrap: true, sync: true, view: 'split', share: 50 };
 
 function readLocal(key: string): string | null {
@@ -99,6 +109,15 @@ class MarkdownWorkspace extends HTMLElement {
   private rendered?: MarkdownResult;
   private remoteImages = false;
   private initialized = false;
+  private documentSearch = '';
+  private documentSettings: DocumentSettings = { ...DEFAULT_DOCUMENT_SETTINGS };
+  private dismissedWelcome = new Set<string>();
+  private cleanupSnapshot?: { id: string; title: string; source: string };
+  private organizeHistory: { id: string; before: string; after: string }[] = [];
+  private pdfSnapshot?: { id: string; title: string; source: string; allowRemoteImages: boolean };
+  private pdfRendered?: MarkdownResult;
+  private pdfPreviewToken = 0;
+  private pasteTarget?: string;
   private mobile = matchMedia('(max-width: 640px)');
   private narrow = matchMedia('(max-width: 950px)');
 
@@ -139,10 +158,8 @@ class MarkdownWorkspace extends HTMLElement {
       history.replaceState(null, '', `${query.pathname}${query.search}${query.hash}`);
     }
     let initial = this.drafts.get(readLocal(ACTIVE_KEY) ?? '') ?? drafts[0];
-    if (requestedExample || !initial) {
-      const example = requestedExample ?? EXAMPLES[0];
-      initial = await this.makeDraft(example.title, example.source);
-    }
+    if (requestedExample) initial = await this.makeDraft(requestedExample.title, requestedExample.source);
+    else if (!initial) initial = await this.makeDraft('Untitled document', '');
     this.current = initial;
     this.q('[data-editor]').replaceChildren();
     this.editor = new EditorView({ state: this.editorState(initial.source), parent: this.q('[data-editor]') });
@@ -196,6 +213,12 @@ class MarkdownWorkspace extends HTMLElement {
   private editorChanged(update: ViewUpdate): void {
     if (update.docChanged && this.current) {
       this.current = { ...this.current, source: update.state.doc.toString() };
+      if (this.current.title === 'Untitled document' && this.current.source.trim()
+        && (update.transactions.some((transaction) => transaction.isUserEvent('input.paste'))
+          || (/^#\s/m.test(this.current.source) && this.current.source.includes('\n')))) {
+        this.current.title = suggestDocumentTitle(this.current.source);
+        this.updateTitle();
+      }
       this.drafts.set(this.current.id, this.current);
       this.dirty = true;
       if (!this.storageAvailable) this.volatileDrafts.add(this.current.id);
@@ -203,6 +226,7 @@ class MarkdownWorkspace extends HTMLElement {
       clearTimeout(this.previewTimer);
       this.previewTimer = window.setTimeout(() => this.render(), 180);
       this.scheduleSave();
+      this.syncWelcome();
     }
     if (update.selectionSet || update.docChanged) this.updateCursor();
   }
@@ -238,7 +262,7 @@ class MarkdownWorkspace extends HTMLElement {
           if (error.current) this.drafts.set(error.current.id, error.current);
           else this.drafts.delete(latest.id);
           try {
-            const recovery = await createDraft(`${latest.title.replace(/ \(recovered\)$/, '')} (recovered)`, latest.source);
+            const recovery = await createDraft(`${latest.title.replace(/ \(recovered\)$/, '').slice(0, 188)} (recovered)`, latest.source);
             const newest = this.current;
             const title = newest.title === latest.title ? recovery.title : newest.title;
             this.current = { ...recovery, title, source: newest.source };
@@ -248,6 +272,7 @@ class MarkdownWorkspace extends HTMLElement {
             if (error.current) this.drafts.set(error.current.id, error.current);
             else this.drafts.delete(latest.id);
             this.drafts.set(recovery.id, this.current);
+            this.persistDocumentSettings();
             writeLocal(ACTIVE_KEY, recovery.id);
             this.updateTitle();
             this.renderDocuments();
@@ -259,6 +284,7 @@ class MarkdownWorkspace extends HTMLElement {
             else this.drafts.delete(latest.id);
             this.current = recovery;
             this.drafts.set(recovery.id, recovery);
+            this.persistDocumentSettings();
             this.volatileDrafts.add(recovery.id);
             this.ephemeralDrafts.add(recovery.id);
             this.storageFailure(recoveryError);
@@ -298,9 +324,15 @@ class MarkdownWorkspace extends HTMLElement {
 
   private activate(draft: Draft): void {
     clearTimeout(this.previewTimer);
+    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog]')) {
+      if (dialog.open) dialog.close();
+    }
     this.current = { ...draft };
     this.dirty = false;
     this.remoteImages = false;
+    try { this.documentSettings = normalizeDocumentSettings(JSON.parse(readLocal(presentationKey(draft.id)) ?? '{}')); }
+    catch { this.documentSettings = { ...DEFAULT_DOCUMENT_SETTINGS }; }
+    this.organizeHistory = [];
     this.q<HTMLInputElement>('[data-remote-images]').checked = false;
     this.editor?.setState(this.editorState(draft.source));
     this.q('[data-preview-scroll]').scrollTop = 0;
@@ -311,6 +343,7 @@ class MarkdownWorkspace extends HTMLElement {
     this.render();
     this.updateCursor();
     this.closeSidebar();
+    this.syncWelcome();
   }
 
   private async switchDocument(id: string): Promise<void> {
@@ -373,7 +406,9 @@ class MarkdownWorkspace extends HTMLElement {
   private renderDocuments(): void {
     const container = this.q('[data-documents]');
     const fragment = document.createDocumentFragment();
-    const drafts = [...this.drafts.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    const allDrafts = [...this.drafts.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    const search = this.documentSearch.trim().toLocaleLowerCase();
+    const drafts = search ? allDrafts.filter((draft) => `${draft.title}\n${draft.source}`.toLocaleLowerCase().includes(search)) : allDrafts;
     for (const draft of drafts) {
       const row = document.createElement('div');
       row.className = `document-item${draft.id === this.current?.id ? ' active' : ''}`;
@@ -408,7 +443,13 @@ class MarkdownWorkspace extends HTMLElement {
       fragment.append(row);
     }
     container.replaceChildren(fragment);
-    this.q('[data-doc-count]').textContent = String(drafts.length);
+    if (!drafts.length) {
+      const empty = document.createElement('p');
+      empty.className = 'loading-documents';
+      empty.textContent = search ? 'No matching documents.' : 'Your documents will appear here.';
+      container.append(empty);
+    }
+    this.q('[data-doc-count]').textContent = search ? `${drafts.length}/${allDrafts.length}` : String(drafts.length);
   }
 
   private render(): void {
@@ -477,6 +518,18 @@ class MarkdownWorkspace extends HTMLElement {
     clearTimeout(this.toastTimer);
     toast.textContent = message;
     toast.hidden = false;
+    const dialog = this.querySelector<HTMLDialogElement>('dialog[open]');
+    if (dialog) {
+      let notice = dialog.querySelector<HTMLElement>('[data-dialog-notice]');
+      if (!notice) {
+        notice = document.createElement('p');
+        notice.dataset.dialogNotice = '';
+        notice.className = 'dialog-inline-notice';
+        notice.setAttribute('role', 'status');
+        dialog.prepend(notice);
+      }
+      notice.textContent = message;
+    }
     this.toastTimer = window.setTimeout(() => { toast.hidden = true; }, duration);
   }
 
@@ -543,22 +596,343 @@ class MarkdownWorkspace extends HTMLElement {
     this.notify('Markdown download started.');
   }
 
+  private syncWelcome(): void {
+    const show = !!this.current && !this.current.source.trim() && !this.dismissedWelcome.has(this.current.id);
+    this.q('[data-welcome]').hidden = !show;
+    this.toggleAttribute('data-welcoming', show);
+  }
+
+  /** Keep transformations as one undoable edit instead of resetting editor history. */
+  private replaceSource(source: string): void {
+    if (!this.editor || !this.current || source === this.current.source) return;
+    this.editor.dispatch({
+      changes: { from: 0, to: this.editor.state.doc.length, insert: source },
+      selection: { anchor: 0 },
+      annotations: isolateHistory.of('full'),
+    });
+    this.render();
+  }
+
+  private openPaste(): void {
+    this.pasteTarget = this.current?.id;
+    this.q<HTMLTextAreaElement>('[data-paste-source]').value = '';
+    this.q<HTMLInputElement>('[data-paste-title]').value = '';
+    this.q<HTMLSelectElement>('[data-paste-mode]').value = 'new';
+    this.q<HTMLDialogElement>('[data-paste-dialog]').showModal();
+    this.q<HTMLTextAreaElement>('[data-paste-source]').focus();
+  }
+
+  private async pasteDocument(source: string, title: string, mode: string, target?: string): Promise<void> {
+    if (!source.trim()) throw new Error('Paste some text to start your document.');
+    if (source.length > MAX_SOURCE_LENGTH) throw new Error('The preview supports up to 400,000 characters. Please paste a smaller document.');
+    if (mode === 'append') {
+      if (!this.current || this.current.id !== target) throw new Error('The active document changed. Close this panel and choose the document to append to.');
+      const next = appendDocumentSection(this.current.source, source, title || undefined);
+      if (next.length > MAX_SOURCE_LENGTH) throw new Error('The combined document exceeds the 400,000-character preview limit. Open the pasted text as a new document.');
+      this.replaceSource(next);
+    } else {
+      const name = title.trim().slice(0, 100) || suggestDocumentTitle(source);
+      if (this.current && this.current.id === target && !this.current.source.trim() && this.current.title === 'Untitled document') {
+        this.current = { ...this.current, title: name };
+        this.updateTitle();
+        this.replaceSource(source);
+      } else await this.newDocument(name, source);
+    }
+    this.q<HTMLDialogElement>('[data-paste-dialog]').close();
+    this.syncWelcome();
+    this.editor?.focus();
+    this.notify(mode === 'append' ? 'Text appended. Use Organize to arrange your sections.' : 'Your text is ready. Try Clean up or choose a PDF style.');
+  }
+
+  private openCleanup(): void {
+    if (!this.current?.source.trim()) { this.openPaste(); return; }
+    this.cleanupSnapshot = { id: this.current.id, title: this.current.title, source: this.current.source };
+    const suggestions = getCleanupSuggestions(this.current.source);
+    const options = suggestions.map((suggestion) => {
+      const label = document.createElement('label');
+      label.className = 'cleanup-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = true;
+      checkbox.dataset.cleanupId = suggestion.id;
+      const text = document.createElement('span');
+      const heading = document.createElement('strong');
+      heading.textContent = suggestion.label;
+      const detail = document.createElement('small');
+      detail.textContent = suggestion.description;
+      text.append(heading, detail);
+      label.append(checkbox, text);
+      return label;
+    });
+    this.q('[data-cleanup-options]').replaceChildren(...options);
+    this.q('[data-cleanup-before]').textContent = this.current.source;
+    this.updateCleanupPreview();
+    this.q<HTMLDialogElement>('[data-cleanup-dialog]').showModal();
+  }
+
+  private selectedCleanup(): string[] {
+    return [...this.querySelectorAll<HTMLInputElement>('[data-cleanup-id]:checked')].map((input) => input.dataset.cleanupId!);
+  }
+
+  private updateCleanupPreview(): void {
+    if (!this.cleanupSnapshot) return;
+    const source = applyCleanup(this.cleanupSnapshot.source, this.selectedCleanup());
+    const changed = source !== this.cleanupSnapshot.source;
+    this.q('[data-cleanup-after]').textContent = source;
+    this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = !changed;
+    this.q('[data-cleanup-status]').textContent = changed
+      ? 'Ready to create a formatted copy. Equations, code, and wording are preserved.'
+      : 'No formatting changes selected. Your document is already ready to style and export.';
+  }
+
+  private async applyFormatting(): Promise<void> {
+    const snapshot = this.cleanupSnapshot;
+    if (!snapshot) return;
+    if (this.current?.id !== snapshot.id || this.current.source !== snapshot.source) {
+      this.q('[data-cleanup-status]').textContent = 'This document changed while the panel was open. Close and reopen Clean up to review the latest text.';
+      return;
+    }
+    const source = applyCleanup(snapshot.source, this.selectedCleanup());
+    if (source === snapshot.source) return;
+    const settings = { ...this.documentSettings };
+    await this.newDocument(`${snapshot.title.slice(0, 88)} (formatted)`, snapshot.source);
+    this.documentSettings = settings;
+    this.persistDocumentSettings();
+    this.replaceSource(source);
+    this.q<HTMLDialogElement>('[data-cleanup-dialog]').close();
+    this.editor?.focus();
+    this.notify('Formatted copy created. Your original is kept; Ctrl/⌘ Z also undoes these changes.');
+  }
+
+  private openOrganizer(): void {
+    if (!this.current?.source.trim()) { this.openPaste(); return; }
+    this.organizeHistory = [];
+    this.renderSections();
+    this.q<HTMLDialogElement>('[data-organize-dialog]').showModal();
+  }
+
+  private renderSections(): void {
+    const sections = getDocumentSections(this.current?.source ?? '');
+    const rows = sections.map((section, index) => {
+      const row = document.createElement('div');
+      row.className = 'section-item';
+      row.dataset.sectionId = section.id;
+      const title = document.createElement('span');
+      title.className = 'section-title';
+      const position = document.createElement('small');
+      position.textContent = String(index + 1).padStart(2, '0');
+      const text = document.createElement('strong');
+      text.textContent = section.title || 'Untitled section';
+      title.append(position, text);
+      const actions = document.createElement('div');
+      actions.className = 'section-actions';
+      for (const direction of ['up', 'down'] as const) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'icon-button';
+        button.textContent = direction === 'up' ? '↑' : '↓';
+        button.dataset.moveSection = section.id;
+        button.dataset.direction = direction;
+        button.setAttribute('aria-label', `Move ${section.title || 'section'} ${direction}`);
+        button.disabled = direction === 'up' ? index === 0 : index === sections.length - 1;
+        actions.append(button);
+      }
+      row.append(title, actions);
+      return row;
+    });
+    this.q('[data-section-list]').replaceChildren(...rows);
+    if (sections.length < 2) {
+      const message = document.createElement('p');
+      message.className = 'organize-empty';
+      message.textContent = 'Add two or more peer headings, such as ## Introduction and ## Examples, to arrange their sections here. The document title stays at the top.';
+      this.q('[data-section-list]').append(message);
+    }
+    const undoButton = this.querySelector<HTMLButtonElement>('[data-organize-undo]');
+    if (undoButton) undoButton.disabled = !this.organizeHistory.length;
+  }
+
+  private moveSection(id: string, direction: 'up' | 'down'): void {
+    if (!this.current) return;
+    const sections = getDocumentSections(this.current.source);
+    const index = sections.findIndex((section) => section.id === id);
+    if (index < 0) { this.renderSections(); return; }
+    const before = this.current.source;
+    const after = moveDocumentSection(before, id, direction);
+    if (before === after) return;
+    this.organizeHistory.push({ id: this.current.id, before, after });
+    this.replaceSource(after);
+    this.renderSections();
+    const nextIndex = index + (direction === 'up' ? -1 : 1);
+    const nextRow = this.querySelectorAll<HTMLElement>('.section-item')[nextIndex];
+    nextRow?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }
+
+  private undoSectionMove(): void {
+    const last = this.organizeHistory.at(-1);
+    if (!last || !this.current) return;
+    if (last.id !== this.current.id || last.after !== this.current.source) {
+      this.organizeHistory = [];
+      this.renderSections();
+      this.notify('The document changed. Use the editor’s Undo command to review previous edits.');
+      return;
+    }
+    this.organizeHistory.pop();
+    if (this.editor) undo(this.editor);
+    this.render();
+    this.renderSections();
+  }
+
+  private persistDocumentSettings(): void {
+    if (this.current) writeLocal(presentationKey(this.current.id), JSON.stringify(this.documentSettings));
+  }
+
+  private openPdf(): void {
+    this.closeExport();
+    if (!this.current?.source.trim()) { this.openPaste(); return; }
+    this.pdfSnapshot = { id: this.current.id, title: this.current.title, source: this.current.source, allowRemoteImages: this.remoteImages };
+    this.pdfRendered = renderMarkdown(this.current.source, { allowRemoteImages: this.remoteImages });
+    const settings = this.documentSettings;
+    for (const [selector, value] of [
+      ['[data-pdf-paper]', settings.paper], ['[data-pdf-orientation]', settings.orientation],
+      ['[data-pdf-font-size]', String(settings.fontSize)], ['[data-pdf-margins]', settings.margins],
+      ['[data-pdf-spacing]', settings.spacing], ['[data-pdf-author]', settings.author],
+    ]) this.q<HTMLInputElement | HTMLSelectElement>(selector!).value = value!;
+    this.q<HTMLInputElement>('[data-pdf-title]').checked = settings.showTitle;
+    this.q<HTMLInputElement>('[data-pdf-toc]').checked = settings.toc;
+    this.q<HTMLInputElement>('[data-pdf-breaks]').checked = settings.breakBeforeSections;
+    this.q<HTMLDialogElement>('[data-pdf-dialog]').showModal();
+    this.updatePdfPreview();
+  }
+
+  private readPdfControls(): void {
+    this.documentSettings = normalizeDocumentSettings({
+      ...this.documentSettings,
+      paper: this.q<HTMLSelectElement>('[data-pdf-paper]').value,
+      orientation: this.q<HTMLSelectElement>('[data-pdf-orientation]').value,
+      fontSize: Number(this.q<HTMLSelectElement>('[data-pdf-font-size]').value),
+      margins: this.q<HTMLSelectElement>('[data-pdf-margins]').value,
+      spacing: this.q<HTMLSelectElement>('[data-pdf-spacing]').value,
+      author: this.q<HTMLInputElement>('[data-pdf-author]').value,
+      showTitle: this.q<HTMLInputElement>('[data-pdf-title]').checked,
+      toc: this.q<HTMLInputElement>('[data-pdf-toc]').checked,
+      breakBeforeSections: this.q<HTMLInputElement>('[data-pdf-breaks]').checked,
+    });
+    if (this.current?.id === this.pdfSnapshot?.id) this.persistDocumentSettings();
+    this.updatePdfPreview();
+  }
+
+  private fitPdfPreview(): void {
+    const article = this.q('[data-pdf-preview]');
+    const stage = this.q('[data-pdf-preview-stage]');
+    const sheet = this.querySelector<HTMLElement>('[data-pdf-preview-sheet]');
+    const metrics = documentPageMetrics(this.documentSettings);
+    const width = metrics.widthMm * 96 / 25.4;
+    const scale = Math.min(1, Math.max(0.15, (stage.clientWidth - 32) / width));
+    article.style.width = `${metrics.widthMm}mm`;
+    article.style.minHeight = `${metrics.heightMm}mm`;
+    article.style.padding = `${metrics.marginMm}mm`;
+    article.style.boxSizing = 'border-box';
+    article.style.transformOrigin = 'top left';
+    article.style.transform = `scale(${scale})`;
+    if (sheet) {
+      sheet.style.width = `${width * scale}px`;
+      sheet.style.height = `${article.offsetHeight * scale}px`;
+    }
+  }
+
+  private updatePdfPreview(): void {
+    const snapshot = this.pdfSnapshot;
+    if (!snapshot) return;
+    const token = ++this.pdfPreviewToken;
+    for (const button of this.querySelectorAll<HTMLButtonElement>('[data-pdf-style]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.pdfStyle === this.documentSettings.style));
+    }
+    const result = this.pdfRendered ?? renderMarkdown(snapshot.source, { allowRemoteImages: snapshot.allowRemoteImages });
+    const article = this.q('[data-pdf-preview]');
+    this.q<HTMLStyleElement>('[data-pdf-preview-style]').textContent = documentPresentationCss(this.documentSettings, '[data-pdf-preview]');
+    article.innerHTML = prepareDocumentHtml(result.html, snapshot.title, this.documentSettings);
+    // The editor's live preview remains mounted. Keep preview anchors unique.
+    const ids = new Map<string, string>();
+    for (const element of article.querySelectorAll<HTMLElement>('[id]')) {
+      const id = `qft-layout-${element.id}`;
+      ids.set(element.id, id);
+      element.id = id;
+    }
+    for (const anchor of article.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) {
+      let target = anchor.getAttribute('href')!.slice(1);
+      try { target = decodeURIComponent(target); } catch { /* Keep the original fragment. */ }
+      const id = ids.get(target);
+      if (id) anchor.setAttribute('href', `#${id}`);
+    }
+    this.q<HTMLButtonElement>('[data-pdf-print]').disabled = !result.html;
+    this.q<HTMLButtonElement>('[data-pdf-html]').disabled = !result.html;
+    this.fitPdfPreview();
+    const showIssues = () => {
+      if (token !== this.pdfPreviewToken || !this.q<HTMLDialogElement>('[data-pdf-dialog]').open) return;
+      this.fitPdfPreview();
+      const issues = [...new Set([
+        ...result.errors.map((error) => `Line ${error.line}: ${error.message}`),
+        ...inspectPrintLayout(article, this.documentSettings),
+      ])];
+      const list = this.q('[data-pdf-issues]');
+      list.hidden = !issues.length;
+      list.replaceChildren(...issues.slice(0, 8).map((issue) => {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = issue;
+        return paragraph;
+      }));
+    };
+    requestAnimationFrame(showIssues);
+    void document.fonts.ready.then(showIssues);
+    for (const image of article.querySelectorAll('img')) {
+      image.addEventListener('load', showIssues, { once: true });
+      image.addEventListener('error', showIssues, { once: true });
+    }
+  }
+
+  private async exportStyledHtml(): Promise<void> {
+    const snapshot = this.pdfSnapshot;
+    const dialog = this.q<HTMLDialogElement>('[data-pdf-dialog]');
+    if (!snapshot || !dialog.open) return;
+    if (this.current?.id !== snapshot.id || this.current.source !== snapshot.source || this.current.title !== snapshot.title) {
+      dialog.close();
+      this.openPdf();
+      this.notify('The document changed. Review its updated presentation before exporting.');
+      return;
+    }
+    const settings = { ...this.documentSettings };
+    dialog.close();
+    this.notify('Preparing a portable document with embedded math fonts…', 30_000);
+    await exportPortableHtml(snapshot.source, snapshot.title, { allowRemoteImages: snapshot.allowRemoteImages }, settings);
+    this.notify('Your styled HTML download is ready.');
+  }
+
   private async exportHtml(): Promise<void> {
     if (!this.current) return;
     this.closeExport();
     this.notify('Preparing a portable document with embedded math fonts…', 30_000);
     const source = this.current.source;
     const title = this.current.title;
-    await exportPortableHtml(source, title, { allowRemoteImages: this.remoteImages });
+    await exportPortableHtml(source, title, { allowRemoteImages: this.remoteImages }, this.documentSettings);
     this.notify('Your standalone HTML download is ready.');
   }
 
   private async print(): Promise<void> {
     this.closeExport();
-    if (!this.current) return;
-    const result = renderMarkdown(this.current.source, { allowRemoteImages: this.remoteImages });
-    if (!result.html && this.current.source.trim()) throw new Error(result.errors[0]?.message ?? 'This document could not be rendered.');
-    await printDocument(result.html, this.current.title);
+    const snapshot = this.pdfSnapshot;
+    const dialog = this.q<HTMLDialogElement>('[data-pdf-dialog]');
+    if (!snapshot || !dialog.open) return;
+    if (this.current?.id !== snapshot.id || this.current.source !== snapshot.source || this.current.title !== snapshot.title) {
+      dialog.close();
+      this.openPdf();
+      this.notify('The document changed. Review its updated presentation before printing.');
+      return;
+    }
+    const settings = { ...this.documentSettings };
+    const result = renderMarkdown(snapshot.source, { allowRemoteImages: snapshot.allowRemoteImages });
+    if (!result.html) throw new Error(result.errors[0]?.message ?? 'This document could not be rendered.');
+    dialog.close();
+    await printDocument(result.html, snapshot.title, settings);
   }
 
   private async openFile(file: File): Promise<void> {
@@ -583,6 +957,74 @@ class MarkdownWorkspace extends HTMLElement {
     const click = (selector: string, handler: (event: MouseEvent) => void) => {
       this.querySelectorAll<HTMLElement>(selector).forEach((element) => element.addEventListener('click', handler, { signal }));
     };
+    click('[data-paste], [data-welcome-paste]', () => this.openPaste());
+    click('[data-welcome-open]', () => this.q<HTMLInputElement>('[data-file-input]').click());
+    click('[data-welcome-examples]', () => this.q<HTMLDialogElement>('[data-examples-dialog]').showModal());
+    click('[data-welcome-dismiss]', () => {
+      if (this.current) this.dismissedWelcome.add(this.current.id);
+      this.syncWelcome();
+      this.editor?.focus();
+    });
+    click('[data-paste-close]', () => this.q<HTMLDialogElement>('[data-paste-dialog]').close());
+    this.q<HTMLTextAreaElement>('[data-paste-source]').addEventListener('input', (event) => {
+      (event.target as HTMLTextAreaElement).setCustomValidity('');
+    }, { signal });
+    this.q<HTMLFormElement>('[data-paste-form]').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const input = this.q<HTMLTextAreaElement>('[data-paste-source]');
+      const source = input.value;
+      const title = this.q<HTMLInputElement>('[data-paste-title]').value;
+      const mode = this.q<HTMLSelectElement>('[data-paste-mode]').value;
+      const target = this.pasteTarget;
+      const button = this.q('[data-paste-form]').querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      button.disabled = true;
+      this.runAction(async () => {
+        try { await this.pasteDocument(source, title, mode, target); }
+        catch (error) { input.setCustomValidity(messageOf(error)); input.reportValidity(); }
+        finally { button.disabled = false; }
+      });
+    }, { signal });
+    click('[data-cleanup]', () => this.openCleanup());
+    click('[data-cleanup-close]', () => this.q<HTMLDialogElement>('[data-cleanup-dialog]').close());
+    this.q('[data-cleanup-options]').addEventListener('change', () => this.updateCleanupPreview(), { signal });
+    click('[data-cleanup-apply]', () => {
+      this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = true;
+      this.runAction(async () => {
+        try { await this.applyFormatting(); }
+        finally { this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = false; }
+      });
+    });
+    click('[data-organize]', () => this.openOrganizer());
+    click('[data-organize-close]', () => this.q<HTMLDialogElement>('[data-organize-dialog]').close());
+    click('[data-organize-undo]', () => this.undoSectionMove());
+    this.q('[data-section-list]').addEventListener('click', (event) => {
+      const button = (event.target as Element).closest<HTMLElement>('[data-move-section]');
+      if (button?.dataset.moveSection && ['up', 'down'].includes(button.dataset.direction ?? '')) {
+        this.moveSection(button.dataset.moveSection, button.dataset.direction as 'up' | 'down');
+      }
+    }, { signal });
+    this.q<HTMLInputElement>('[data-document-search]').addEventListener('input', (event) => {
+      this.documentSearch = (event.target as HTMLInputElement).value;
+      this.renderDocuments();
+    }, { signal });
+    click('[data-pdf], [data-print]', () => this.openPdf());
+    click('[data-pdf-close]', () => this.q<HTMLDialogElement>('[data-pdf-dialog]').close());
+    click('[data-pdf-style]', (event) => {
+      this.documentSettings = normalizeDocumentSettings({ ...this.documentSettings, style: (event.currentTarget as HTMLElement).dataset.pdfStyle });
+      this.readPdfControls();
+    });
+    this.q('[data-pdf-dialog]').addEventListener('change', (event) => {
+      if ((event.target as Element).matches('select,input')) this.readPdfControls();
+    }, { signal });
+    this.q<HTMLInputElement>('[data-pdf-author]').addEventListener('input', () => this.readPdfControls(), { signal });
+    click('[data-pdf-print]', () => this.runAction(() => this.print()));
+    click('[data-pdf-html]', () => this.runAction(() => this.exportStyledHtml()));
+    window.addEventListener('resize', () => {
+      if (this.q<HTMLDialogElement>('[data-pdf-dialog]').open) this.fitPdfPreview();
+    }, { signal });
+    for (const dialog of this.querySelectorAll<HTMLDialogElement>('dialog')) {
+      dialog.addEventListener('close', () => dialog.querySelector('[data-dialog-notice]')?.remove(), { signal });
+    }
     click('[data-new]', () => this.runAction(() => this.newDocument()));
     click('[data-open]', () => this.q<HTMLInputElement>('[data-file-input]').click());
     this.q<HTMLInputElement>('[data-file-input]').addEventListener('change', (event) => {
@@ -652,7 +1094,12 @@ class MarkdownWorkspace extends HTMLElement {
       });
     }, { signal });
     click('[data-duplicate]', () => this.runAction(async () => {
-      if (this.current) await this.newDocument(`${this.current.title} (copy)`, this.current.source);
+      if (this.current) {
+        const settings = { ...this.documentSettings };
+        await this.newDocument(`${this.current.title.slice(0, 193)} (copy)`, this.current.source);
+        this.documentSettings = settings;
+        this.persistDocumentSettings();
+      }
     }));
     click('[data-show-examples]', () => this.q<HTMLDialogElement>('[data-examples-dialog]').showModal());
     click('[data-examples-close]', () => this.q<HTMLDialogElement>('[data-examples-dialog]').close());
@@ -704,7 +1151,6 @@ class MarkdownWorkspace extends HTMLElement {
     });
     click('[data-export-md]', () => this.downloadSource());
     click('[data-export-html]', () => this.runAction(() => this.exportHtml()));
-    click('[data-print]', () => this.runAction(() => this.print()));
     click('[data-find]', () => {
       if (this.dataset.view === 'preview') this.setView(this.mobile.matches ? 'editor' : 'split');
       if (this.editor) openSearchPanel(this.editor);
@@ -739,11 +1185,17 @@ class MarkdownWorkspace extends HTMLElement {
     document.addEventListener('keydown', (event) => {
       if (event.defaultPrevented) return;
       if (event.key === 'Escape') { this.closeExport(); this.closeOutline(); this.closeSidebar(); }
-      if (this.querySelector('dialog[open]')) return;
+      if (this.querySelector('dialog[open]')) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p' && this.q<HTMLDialogElement>('[data-pdf-dialog]').open) {
+          event.preventDefault();
+          this.runAction(() => this.print());
+        }
+        return;
+      }
       if (event.ctrlKey || event.metaKey) {
         if (event.key.toLowerCase() === 's') { event.preventDefault(); this.downloadSource(); }
         if (event.key.toLowerCase() === 'o') { event.preventDefault(); this.q<HTMLInputElement>('[data-file-input]').click(); }
-        if (event.key.toLowerCase() === 'p') { event.preventDefault(); this.runAction(() => this.print()); }
+        if (event.key.toLowerCase() === 'p') { event.preventDefault(); this.openPdf(); }
         if (event.key.toLowerCase() === 'f') {
           event.preventDefault();
           if (this.dataset.view === 'preview') this.setView(this.mobile.matches ? 'editor' : 'split');

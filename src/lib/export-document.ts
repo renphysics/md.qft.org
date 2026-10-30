@@ -3,6 +3,10 @@ import katexLicense from 'katex/LICENSE?raw';
 import documentCss from '../styles/document.css?raw';
 import { escapeHtml, renderMarkdown, type RenderOptions } from './render-markdown';
 import { siteConfig } from '../config/site';
+import {
+  DEFAULT_DOCUMENT_SETTINGS, normalizeDocumentSettings, prepareDocumentHtml,
+  documentPresentationCss, documentPageMetrics, type DocumentSettings,
+} from './document-presentation';
 
 const fontAssets = import.meta.glob('../../node_modules/katex/dist/fonts/*.woff2', {
   eager: true,
@@ -155,7 +159,11 @@ async function embedImages(html: string): Promise<string> {
 }
 
 /** Export a standalone, script-free HTML document with embedded math fonts. */
-export async function exportPortableHtml(source: string, title: string, options: RenderOptions = {}): Promise<void> {
+export async function exportPortableHtml(
+  source: string, title: string, options: RenderOptions = {},
+  value: DocumentSettings = DEFAULT_DOCUMENT_SETTINGS,
+): Promise<void> {
+  const settings = normalizeDocumentSettings(value);
   const rendered = renderMarkdown(source, options);
   if (!rendered.html && source.trim()) throw new Error(rendered.errors[0]?.message ?? 'The document could not be rendered.');
   const [mathStyle, html] = await Promise.all([standaloneMathCss(), embedImages(rendered.html)]);
@@ -174,29 +182,32 @@ export async function exportPortableHtml(source: string, title: string, options:
 <style>
 ${mathStyle}
 ${documentCss}
-:root{color-scheme:light;background:#fffefa;color:#29282e}
+${documentPresentationCss(settings)}
+:root{color-scheme:light;background:#f1f2f2;color:#29282e}
 *{box-sizing:border-box}
-body{margin:0;padding:48px 24px}
-main{max-width:780px;margin:0 auto}
-.markdown-document{--doc-font:Georgia,'Times New Roman',serif;font-size:16px}
+body{margin:0;padding:40px 20px}
+main{max-width:${documentPageMetrics(settings).widthMm}mm;margin:0 auto;background:white;padding:${documentPageMetrics(settings).marginMm}mm;box-shadow:0 4px 28px #27313b0d}
 .source-document{margin-top:48px;border-top:1px solid #e6e1dd;padding-top:20px;color:#777;font:13px/1.6 system-ui,sans-serif}
 .source-document summary{cursor:pointer}
 .source-document pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#444;font:12px/1.7 ui-monospace,monospace}
 .export-warning{border-left:3px solid #a33548;padding:12px 16px;background:#fbe8ec;font:13px/1.6 system-ui,sans-serif}
-@media print{@page{margin:17mm}body{padding:0;background:white}.source-document{display:none}main{max-width:none}.markdown-document{font-size:10.5pt}}
+@media(max-width:600px){body{padding:0}main{padding:24px 20px;box-shadow:none}}
+@media print{body{padding:0;background:white}.source-document{display:none}main{max-width:none;margin:0;padding:0;box-shadow:none}.export-warning{break-inside:avoid}}
 </style>
 </head>
 <body><main>
 ${warning}
-<article class="markdown-document">${html}</article>
+<article class="markdown-document document-presentation">${prepareDocumentHtml(html, title, settings)}</article>
 <details class="source-document"><summary>Original Markdown · exported with ${escapeHtml(siteConfig.name)}</summary><pre>${escapeHtml(source)}</pre><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details></details>
 </main></body></html>`;
   download(exported, title, 'html', 'text/html');
 }
 
 /** Print a clean copy without moving or restyling the live editor. */
-export async function printDocument(html: string, title: string): Promise<void> {
+export async function printDocument(html: string, title: string, value: DocumentSettings = DEFAULT_DOCUMENT_SETTINGS): Promise<void> {
   if (printing) return;
+  const settings = normalizeDocumentSettings(value);
+  const metrics = documentPageMetrics(settings);
   printing = true;
   let article: HTMLElement | undefined;
   let printStyle: HTMLStyleElement | undefined;
@@ -213,9 +224,9 @@ export async function printDocument(html: string, title: string): Promise<void> 
   };
   try {
     article = document.createElement('article');
-    article.className = 'qft-print-document markdown-document';
+    article.className = 'qft-print-document markdown-document document-presentation';
     article.setAttribute('aria-hidden', 'true');
-    article.innerHTML = html;
+    article.innerHTML = prepareDocumentHtml(html, title, settings);
     article.querySelectorAll('[tabindex]').forEach((element) => element.removeAttribute('tabindex'));
     // The live preview remains in the DOM. Give the print copy distinct
     // anchors so internal PDF links resolve to the visible printed targets.
@@ -232,12 +243,15 @@ export async function printDocument(html: string, title: string): Promise<void> 
       if (id) anchor.setAttribute('href', `#${id}`);
     });
     printStyle = document.createElement('style');
-    printStyle.textContent = `.qft-print-document{position:fixed;left:-10000px;top:0;width:720px;visibility:hidden;pointer-events:none}@media print{@page{margin:17mm}html,body{height:auto!important;overflow:visible!important;background:#fff!important}body[data-qft-printing]>:not(.qft-print-document){display:none!important}.qft-print-document{display:block!important;position:static!important;visibility:visible!important;margin:0!important;padding:0!important;width:auto!important;max-width:none!important;background:#fff!important;color:#222!important;--doc-font:Georgia,'Times New Roman',serif}body[data-qft-printing]{margin:0!important;padding:0!important}.qft-print-document .katex-display{overflow:visible!important}}`;
+    printStyle.textContent = `${documentPresentationCss(settings, '.qft-print-document')}
+.qft-print-document{position:fixed;left:-10000px;top:0;width:${metrics.contentWidthMm}mm;visibility:hidden;pointer-events:none}
+@media print{html,body{height:auto!important;overflow:visible!important;background:#fff!important}body[data-qft-printing]>:not(.qft-print-document){display:none!important}.qft-print-document{display:block!important;position:static!important;visibility:visible!important;margin:0!important;padding:0!important;width:auto!important;max-width:none!important;background:#fff!important}body[data-qft-printing]{margin:0!important;padding:0!important}.qft-print-document .katex-display{overflow:visible!important}}`;
     document.head.append(printStyle);
     document.body.append(article);
     await waitForPrintAssets(article);
     document.title = title || 'Markdown document';
     document.body.dataset.qftPrinting = 'true';
+    article.removeAttribute('aria-hidden');
     window.addEventListener('afterprint', restore, { once: true });
     window.print();
     // afterprint is normally dispatched when the dialog closes. Retain a

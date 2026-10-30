@@ -7,6 +7,9 @@ import ts from 'typescript';
 import { DraftConflictError, isDraftConflict, type Draft } from '../src/lib/draft-store.ts';
 import { scopedStorageKey } from '../src/lib/storage-scope.ts';
 import { siteConfig } from '../src/config/site.ts';
+import { DEFAULT_DOCUMENT_SETTINGS, type DocumentSettings } from '../src/lib/document-presentation.ts';
+import { appendDocumentSection, suggestDocumentTitle, applyCleanup } from '../src/lib/document-tools.ts';
+import { renderMarkdown } from '../src/lib/render-markdown.ts';
 
 // Exercise the actual controller methods, with isolated browser surfaces and
 // delayed storage dependencies. Remove imports through the TypeScript AST so
@@ -41,6 +44,19 @@ interface Workspace {
   closeSidebar(): void;
   activate(draft: Draft): void;
   q(selector: string): unknown;
+  pasteDocument(source: string, title: string, mode: string, target?: string): Promise<void>;
+  applyFormatting(): Promise<void>;
+  replaceSource(source: string): void;
+  syncWelcome(): void;
+  selectedCleanup(): string[];
+  persistDocumentSettings(): void;
+  cleanupSnapshot?: { id: string; title: string; source: string };
+  print(): Promise<void>;
+  exportStyledHtml(): Promise<void>;
+  closeExport(): void;
+  openPdf(): void;
+  pdfSnapshot?: { id: string; title: string; source: string; allowRemoteImages: boolean };
+  documentSettings: DocumentSettings;
 }
 
 interface Storage {
@@ -60,7 +76,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function workspace(storage: Partial<Storage> = {}) {
+function workspace(storage: Partial<Storage> = {}, browserDependencies: Record<string, unknown> = {}) {
   let WorkspaceClass!: new () => Workspace;
   const controls = new Map<string, (event: Event) => void>();
   const notifications: string[] = [];
@@ -72,10 +88,14 @@ function workspace(storage: Partial<Storage> = {}) {
     matchMedia: () => ({ matches: false, addEventListener: noop }),
     document: { addEventListener: noop }, window: { addEventListener: noop },
     createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
+    DEFAULT_DOCUMENT_SETTINGS, appendDocumentSection, suggestDocumentTitle, applyCleanup,
+    renderMarkdown,
+    MAX_SOURCE_LENGTH: 400_000,
     createDraft: async (title: string, source: string) => draft('new', source, 1, title),
     saveDraft: async (value: Draft) => ({ ...value, revision: value.revision + 1 }),
     loadDrafts: async () => [], deleteDraft: async () => {},
     ...storage,
+    ...browserDependencies,
     customElements: {
       get: () => undefined,
       define: (_name: string, constructor: new () => Workspace) => { WorkspaceClass = constructor; },
@@ -91,6 +111,10 @@ function workspace(storage: Partial<Storage> = {}) {
   app.renderDocuments = noop;
   app.closeSidebar = noop;
   app.activate = (value) => { app.current = { ...value }; app.dirty = false; };
+  app.syncWelcome = noop;
+  app.persistDocumentSettings = noop;
+  app.closeExport = noop;
+  app.replaceSource = (source) => { edit(app, source); };
   app.q = (selector) => ({
     close: noop,
     addEventListener: (event: string, listener: (event: Event) => void) => { controls.set(`${selector}:${event}`, listener); },
@@ -112,6 +136,76 @@ function confirmDelete(app: Workspace, controls: Map<string, (event: Event) => v
 }
 
 describe('workspace draft coordination', () => {
+  it('ignores queued PDF and HTML actions after the setup panel has closed', async () => {
+    let exports = 0;
+    const { app } = workspace({}, { printDocument: async () => { exports++; }, exportPortableHtml: async () => { exports++; } });
+    app.pdfSnapshot = { ...app.current, allowRemoteImages: false };
+    app.q = () => ({ open: false });
+    await app.print();
+    await app.exportStyledHtml();
+    assert.equal(exports, 0);
+  });
+
+  it('requires a new presentation review when a queued PDF snapshot is stale', async () => {
+    let printed = 0;
+    let reopened = 0;
+    const { app } = workspace({}, { printDocument: async () => { printed++; } });
+    app.pdfSnapshot = { ...app.current, source: 'old preview', allowRemoteImages: false };
+    app.q = () => ({ open: true, close() {} });
+    app.openPdf = () => { reopened++; };
+    await app.print();
+    assert.equal(printed, 0);
+    assert.equal(reopened, 1);
+  });
+
+  it('opens only one print flow when Save PDF is activated twice', async () => {
+    let printed = 0;
+    const { app } = workspace({}, { printDocument: async () => { printed++; } });
+    app.pdfSnapshot = { ...app.current, allowRemoteImages: false };
+    const dialog = { open: true, close() { this.open = false; } };
+    app.q = () => dialog;
+    await Promise.all([app.print(), app.print()]);
+    assert.equal(printed, 1);
+  });
+
+  it('does not append pasted text to a different document after the target changes', async () => {
+    const { app } = workspace();
+    await assert.rejects(app.pasteDocument('New content', '', 'append', 'different-draft'), /active document changed/);
+    assert.equal(app.current.source, 'initial');
+  });
+
+  it('appends without replacing existing text and preserves equations literally', async () => {
+    const { app } = workspace();
+    const source = String.raw`## A result
+
+\[E=mc^2\]`;
+    await app.pasteDocument(source, '', 'append', 'old');
+    assert.ok(app.current.source.startsWith('initial'));
+    assert.ok(app.current.source.endsWith(source));
+    assert.equal(app.current.id, 'old');
+  });
+
+  it('keeps the original draft when creating a formatted copy', async () => {
+    const { app } = workspace();
+    const original = '```markdown\n## A note\n\n$E=mc^2$\n```';
+    edit(app, original, 'A note');
+    app.cleanupSnapshot = { id: 'old', title: 'A note', source: original };
+    app.selectedCleanup = () => ['unwrap-fence', 'heading-levels'];
+    await app.applyFormatting();
+    assert.equal(app.drafts.get('old')?.source, original);
+    assert.equal(app.current.id, 'new');
+    assert.equal(app.current.source, '# A note\n\n$E=mc^2$\n');
+  });
+
+  it('requires a fresh cleanup review if a document changed after the preview opened', async () => {
+    let created = 0;
+    const { app } = workspace({ createDraft: async () => { created++; return draft('unexpected'); } });
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: 'older contents' };
+    await app.applyFormatting();
+    assert.equal(created, 0);
+    assert.equal(app.current.source, 'initial');
+  });
+
   it('finishes edits and an autosave started during creation before switching documents', async () => {
     const creation = deferred<Draft>();
     const saving = deferred<Draft>();

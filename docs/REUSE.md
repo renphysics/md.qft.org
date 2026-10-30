@@ -34,11 +34,23 @@ Other customization points:
 | `public/favicon.svg` | Browser-tab icon |
 | `src/styles/app.css` | Interface colors, spacing, and responsive layout |
 | `src/styles/document.css` | Preview, export, and print typography |
+| `src/lib/document-presentation.ts` | Clean/Study Notes/Academic styles, page presets, and presentation validation |
+| `src/lib/document-tools.ts` | Conservative cleanup and source-preserving section operations |
 | `src/lib/examples.ts` | Starter documents and their descriptions |
 | `src/pages/guide.astro` | Writing guide and syntax examples |
 | `src/pages/about.astro` | About and privacy text describing your version |
 
 The default app has no analytics, remote document storage, accounts, or background synchronization. If you introduce any of these features, update the About page to describe the resulting behavior accurately.
+
+## Adapt the examples and document styles
+
+The first-use workspace opens a blank draft with actions for pasting text, opening a file, or exploring examples. The example gallery can serve a course, research group, or general audience. Add entries in `src/lib/examples.ts` with a stable `id`, a descriptive `title`, a short `description`, and ordinary Markdown in `source`. Links use `?example=<id>`; keep existing IDs if you want previously shared example links to continue working.
+
+Document styles are independent of the interface's light/dark theme. The three built-in choices share the same HTML and print presentation code. To adjust their appearance, change `src/lib/document-presentation.ts` and the base rules in `src/styles/document.css`. To introduce another choice, update the allowlisted settings type and normalizer, the style controls in `src/components/MarkdownWorkspace.astro`, and the relevant presentation tests together.
+
+Keep the typography preview labeled accurately: it shows the document's appearance, while the browser print preview determines final pagination. **Save PDF** opens the browser's print dialog. The same selected presentation is available through standalone HTML export. Neither requires a document server or an AI API key.
+
+Per-document paper and presentation preferences are stored locally and separately from the Markdown. A downloaded Markdown file contains the source text; it does not carry those application preferences to another installation. Cleanup creates a formatted copy and retains the original. Preserve this review-and-undo behavior when adapting the tool for your own audience.
 
 ## Build for another static host
 

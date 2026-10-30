@@ -11,6 +11,7 @@ import '../styles/document.css';
     <button class="new-document" data-new><Icon name="plus" size={17} /> New document <kbd>N</kbd></button>
     <button class="open-file" data-open><Icon name="upload" size={16} /> Open Markdown file</button>
     <div class="sidebar-section-title">MY DOCUMENTS <span data-doc-count>0</span></div>
+    <label class="document-search"><Icon name="search" size={15} /><span class="sr-only">Search documents</span><input type="search" data-document-search placeholder="Find a document…" autocomplete="off" /></label>
     <div class="document-list" data-documents role="list" aria-label="Saved documents"><p class="loading-documents">Opening your workspace…</p></div>
     <div class="sidebar-divider"></div>
     <button class="sidebar-link" data-show-examples><span class="sidebar-link-icon"><Icon name="spark" size={17} /></span><span>Start with an example<small>A little inspiration</small></span><Icon name="chevron" size={14} /></button>
@@ -29,16 +30,27 @@ import '../styles/document.css';
         <button class="icon-button" data-settings aria-label="Editor settings" title="Editor settings"><Icon name="sliders" size={17} /></button>
         <span class="toolbar-rule"></span>
         <div class="export-wrapper">
-          <button class="export-button" data-export-toggle aria-expanded="false" aria-controls="export-menu"><Icon name="download" size={16} /><span>Export</span><Icon name="down" size={14} /></button>
+          <button class="export-button" data-export-toggle aria-expanded="false" aria-controls="export-menu" aria-label="Download document"><Icon name="download" size={16} /><span>Download</span><Icon name="down" size={14} /></button>
           <div class="dropdown-menu export-menu" id="export-menu" data-export-menu hidden>
             <button data-export-md><Icon name="file" /><span>Markdown<small>Keep an editable copy</small></span><kbd>.md</kbd></button>
             <button data-export-html><Icon name="code" /><span>Standalone HTML<small>Math fonts included · opens offline</small></span><kbd>.html</kbd></button>
             <button data-print><Icon name="print" /><span>Print / Save PDF<small>A clean, typeset document</small></span><kbd>⌘P</kbd></button>
           </div>
         </div>
+        <button class="button-primary save-pdf-button" data-pdf><Icon name="print" size={16} /><span>Save PDF</span></button>
       </div>
     </div>
-    <div class="workspace-intro"><p><span class="intro-line"></span> Your ideas, beautifully expressed.</p><div class="view-switch" role="group" aria-label="Workspace layout"><button data-view-mode="editor" aria-pressed="false" title="Editor only"><Icon name="code" size={15} /><span>Editor</span></button><button data-view-mode="split" aria-pressed="true" title="Split view"><Icon name="split" size={15} /><span>Split</span></button><button data-view-mode="preview" aria-pressed="false" title="Preview only"><Icon name="eye" size={15} /><span>Preview</span></button></div></div>
+    <section class="workspace-welcome" data-welcome hidden aria-labelledby="workspace-welcome-title">
+      <div class="welcome-copy">
+        <span class="eyebrow">FROM ANSWER TO DOCUMENT</span>
+        <h1 id="workspace-welcome-title">A good answer deserves<br />a beautiful document.</h1>
+        <p>Bring your AI answers, notes, and equations.<br class="welcome-line-break" /> Give them structure. Make them worth keeping.</p>
+        <div class="welcome-actions"><button class="button-primary" data-welcome-paste><Icon name="clipboard" size={16} /> Paste your text</button><button class="welcome-text-button" data-welcome-open>Open a file <Icon name="arrow" size={14} /></button><button class="welcome-text-button" data-welcome-examples>Try an example</button></div>
+      </div>
+      <div class="welcome-document" aria-hidden="true"><div class="welcome-document-label">YOUR NEXT GOOD IDEA</div><div class="welcome-document-title">Notes worth keeping.</div><div class="welcome-document-rule"></div><div class="welcome-document-lines"><i></i><i></i><i></i></div><div class="welcome-document-equation">e<sup>iπ</sup> + 1 = 0</div><div class="welcome-document-lines short"><i></i><i></i></div><span class="welcome-document-caption"><Icon name="check" size={12} /> Ready to share</span></div>
+      <button class="icon-button welcome-dismiss" data-welcome-dismiss aria-label="Dismiss introduction and start writing"><Icon name="close" size={16} /></button>
+    </section>
+    <div class="workspace-intro"><div class="document-tools" role="group" aria-label="Document tools"><button data-paste><Icon name="clipboard" size={15} /><span>Paste</span></button><button data-cleanup><Icon name="tidy" size={15} /><span>Clean up</span></button><button data-organize><Icon name="sections" size={15} /><span>Organize</span></button></div><div class="view-switch" role="group" aria-label="Workspace layout"><button data-view-mode="editor" aria-pressed="false" title="Editor only"><Icon name="code" size={15} /><span>Editor</span></button><button data-view-mode="split" aria-pressed="true" title="Split view"><Icon name="split" size={15} /><span>Split</span></button><button data-view-mode="preview" aria-pressed="false" title="Preview only"><Icon name="eye" size={15} /><span>Preview</span></button></div></div>
     <div class="editor-workspace" data-panels>
       <section class="source-panel" aria-label="Markdown source">
         <div class="panel-heading"><span class="panel-title"><span class="panel-dot"></span> MARKDOWN</span><div class="panel-tools"><span class="syntax-label">Plain text. Endless possibilities.</span><button class="icon-button small" data-find aria-label="Find and replace" title="Find and replace (Ctrl/⌘ F)"><Icon name="search" size={16} /></button></div></div>
@@ -64,6 +76,69 @@ import '../styles/document.css';
   <dialog class="app-dialog" data-delete-dialog aria-labelledby="delete-dialog-title"><form method="dialog" data-delete-form><div class="dialog-heading"><span class="eyebrow">MAKE SOME ROOM</span><button type="button" class="icon-button" data-delete-close aria-label="Close"><Icon name="close" /></button></div><h2 id="delete-dialog-title">Delete this document?</h2><p><strong data-delete-title></strong> will be removed from this browser. Download a copy first if you want to keep it.</p><div class="dialog-actions"><button type="button" class="button-secondary" data-delete-close>Keep document</button><button class="button-primary" value="delete">Delete document</button></div></form></dialog>
   <dialog class="app-dialog examples-dialog" data-examples-dialog aria-labelledby="examples-dialog-title"><div class="dialog-heading"><span class="eyebrow">A PLACE TO BEGIN</span><button class="icon-button" data-examples-close aria-label="Close examples"><Icon name="close" /></button></div><h2 id="examples-dialog-title">Start with a little inspiration.</h2><p>Open an example as a new document and make it your own.</p><div data-examples-list class="example-options"></div></dialog>
   <dialog class="app-dialog settings-dialog" data-settings-dialog aria-labelledby="settings-dialog-title"><div class="dialog-heading"><span class="eyebrow">MAKE IT YOURS</span><button class="icon-button" data-settings-close aria-label="Close settings"><Icon name="close" /></button></div><h2 id="settings-dialog-title">A comfortable place to write.</h2><div class="setting-row"><div><label for="editor-font-size">Editor text size</label><p>Give your source a little breathing room.</p></div><select id="editor-font-size" data-font-size><option value="12">12 px</option><option value="13">13 px</option><option value="14" selected>14 px</option><option value="15">15 px</option><option value="16">16 px</option><option value="18">18 px</option></select></div><div class="setting-row"><div><label for="wrap-lines">Wrap long lines</label><p>Keep the whole sentence in view.</p></div><input id="wrap-lines" type="checkbox" checked data-wrap /></div><div class="setting-row"><div><label for="remote-images">Load remote images</label><p>Off by default. Enabling contacts the image hosts in this document.</p></div><input id="remote-images" type="checkbox" data-remote-images /></div><div class="settings-note"><Icon name="shield" size={18} /><p>Drafts are saved only in this browser. Export a copy to keep a backup.</p></div><div class="shortcut-list"><span>Download Markdown <kbd>Ctrl / ⌘ S</kbd></span><span>Open a file <kbd>Ctrl / ⌘ O</kbd></span><span>Find in source <kbd>Ctrl / ⌘ F</kbd></span></div></dialog>
+  <dialog class="app-dialog paste-dialog" data-paste-dialog aria-labelledby="paste-dialog-title">
+    <form data-paste-form>
+      <div class="dialog-heading"><span class="eyebrow">BRING YOUR IDEAS</span><button type="button" class="icon-button" data-paste-close aria-label="Close paste dialog"><Icon name="close" /></button></div>
+      <h2 id="paste-dialog-title">A fresh home for your text.</h2>
+      <p>Paste Markdown or plain text from any assistant, a note, or a draft. Your words stay in your browser.</p>
+      <label for="pasted-document-source">Your text</label>
+      <textarea id="pasted-document-source" data-paste-source required spellcheck="false" placeholder={'# A useful idea\n\nPaste your text here…'}></textarea>
+      <div class="paste-options">
+        <label for="pasted-document-title">Title <span>optional</span><input id="pasted-document-title" type="text" data-paste-title maxlength="100" placeholder="Use the first heading" /></label>
+        <label for="pasted-document-mode">Add to<select id="pasted-document-mode" data-paste-mode><option value="new">A new document</option><option value="append">The current document</option></select></label>
+      </div>
+      <div class="dialog-actions"><button type="button" class="button-secondary" data-paste-close>Cancel</button><button type="submit" class="button-primary">Open in workspace <Icon name="arrow" size={16} /></button></div>
+    </form>
+  </dialog>
+
+  <dialog class="app-dialog cleanup-dialog" data-cleanup-dialog aria-labelledby="cleanup-dialog-title">
+    <div class="dialog-heading"><span class="eyebrow">A LITTLE POLISH</span><button class="icon-button" data-cleanup-close aria-label="Close cleanup"><Icon name="close" /></button></div>
+    <h2 id="cleanup-dialog-title">Let the structure shine.</h2>
+    <p>Choose the formatting changes you want and review the result. Your original document is kept.</p>
+    <div class="cleanup-options" data-cleanup-options></div>
+    <p class="cleanup-status" data-cleanup-status role="status"></p>
+    <div class="cleanup-comparison"><section aria-labelledby="cleanup-before-label"><h3 id="cleanup-before-label">ORIGINAL</h3><pre data-cleanup-before tabindex="0" aria-label="Original Markdown"></pre></section><section aria-labelledby="cleanup-after-label"><h3 id="cleanup-after-label">AFTER CLEANUP</h3><pre data-cleanup-after tabindex="0" aria-label="Markdown after selected changes"></pre></section></div>
+    <div class="dialog-actions"><button class="button-secondary" data-cleanup-close>Cancel</button><button class="button-primary" data-cleanup-apply><Icon name="check" size={16} /> Create formatted copy</button></div>
+  </dialog>
+
+  <dialog class="app-dialog organize-dialog" data-organize-dialog aria-labelledby="organize-dialog-title">
+    <div class="dialog-heading"><span class="eyebrow">FIND THE FLOW</span><button class="icon-button" data-organize-close aria-label="Close section organizer"><Icon name="close" /></button></div>
+    <h2 id="organize-dialog-title">Give your ideas an order.</h2>
+    <p>Move whole sections, including the paragraphs, equations, and smaller headings inside them.</p>
+    <div class="section-list" data-section-list aria-label="Document sections"></div>
+    <div class="dialog-actions"><button class="button-secondary" data-organize-undo disabled>Undo move</button><button class="button-primary" data-organize-close>Done <Icon name="check" size={16} /></button></div>
+  </dialog>
+
+  <dialog class="app-dialog pdf-dialog" data-pdf-dialog aria-labelledby="pdf-dialog-title">
+    <div class="pdf-dialog-top"><div><span class="eyebrow">READY TO SHARE</span><h2 id="pdf-dialog-title">Make it a document.</h2><p>A thoughtful style for the ideas you want to keep.</p></div><button class="icon-button" data-pdf-close aria-label="Close PDF setup"><Icon name="close" /></button></div>
+    <div class="pdf-dialog-body">
+      <section class="pdf-options" aria-label="Document settings">
+        <fieldset class="pdf-style-fieldset"><legend>Choose your style</legend><div class="pdf-style-grid">
+          <button type="button" class="pdf-style-card" data-pdf-style="clean" aria-pressed="true"><span class="style-mini style-mini-clean" aria-hidden="true"><b>A clear idea.</b><i></i><i></i><em>01 &nbsp; THE ESSENTIALS</em><i></i><i></i></span><strong>Clean</strong><small>Simple & versatile</small></button>
+          <button type="button" class="pdf-style-card" data-pdf-style="study" aria-pressed="false"><span class="style-mini style-mini-study" aria-hidden="true"><b>Room to think.</b><i></i><i></i><em>E = mc²</em><i></i><i></i></span><strong>Study Notes</strong><small>Space to learn</small></button>
+          <button type="button" class="pdf-style-card" data-pdf-style="academic" aria-pressed="false"><span class="style-mini style-mini-academic" aria-hidden="true"><b>A closer look</b><i></i><i></i><em>1. Introduction</em><i></i><i></i></span><strong>Academic</strong><small>Made for detail</small></button>
+        </div></fieldset>
+        <div class="pdf-control-grid">
+          <label for="pdf-paper">Paper size<select id="pdf-paper" data-pdf-paper><option value="a4">A4</option><option value="letter">US Letter</option></select></label>
+          <label for="pdf-orientation">Orientation<select id="pdf-orientation" data-pdf-orientation><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+          <label for="pdf-font-size">Text size<select id="pdf-font-size" data-pdf-font-size><option value="10">10 pt</option><option value="11" selected>11 pt</option><option value="12">12 pt</option><option value="13">13 pt</option></select></label>
+          <label for="pdf-margins">Margins<select id="pdf-margins" data-pdf-margins><option value="standard">Standard</option><option value="compact">Compact</option><option value="wide">Wide</option></select></label>
+        </div>
+        <details class="pdf-more-options"><summary>Document details <Icon name="down" size={14} /></summary><div class="pdf-detail-controls">
+          <label for="pdf-spacing">Line spacing<select id="pdf-spacing" data-pdf-spacing><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+          <label for="pdf-author">Author <span>optional</span><input type="text" id="pdf-author" data-pdf-author maxlength="120" placeholder="Your name" /></label>
+          <div><label class="pdf-checkbox"><input type="checkbox" data-pdf-title aria-describedby="pdf-title-help" checked /><span>Add a title if missing</span></label><p class="pdf-field-help" id="pdf-title-help">Your Markdown headings stay visible.</p></div>
+          <label class="pdf-checkbox"><input type="checkbox" data-pdf-toc /><span>Add a table of contents</span></label>
+          <label class="pdf-checkbox"><input type="checkbox" data-pdf-breaks /><span>Page breaks between major sections</span></label>
+        </div></details>
+        <div class="pdf-issues" data-pdf-issues role="status" hidden></div>
+        <div class="pdf-local-note"><Icon name="shield" size={16} /><span>Prepared here, in your browser.</span></div>
+      </section>
+      <section class="pdf-preview-region" aria-label="Document style preview"><div class="pdf-preview-caption"><span>TYPOGRAPHY PREVIEW</span><Icon name="eye" size={15} /></div><div class="pdf-preview-stage" data-pdf-preview-stage tabindex="0" aria-label="Scroll document preview"><div class="pdf-preview-sheet" data-pdf-preview-sheet><article class="markdown-document document-presentation" data-pdf-preview></article></div></div><p class="pdf-pagination-note">Final pagination appears in your browser’s print preview.</p></section>
+    </div>
+    <footer class="pdf-dialog-footer"><p>Save PDF opens your browser’s print dialog.<br /><span>Choose “Save as PDF” as the destination.</span></p><div class="pdf-footer-actions"><button class="button-secondary" data-pdf-html><Icon name="code" size={15} /> Download HTML</button><button class="button-primary" data-pdf-print><Icon name="print" size={16} /> Save PDF</button></div></footer>
+    <style is:inline data-pdf-preview-style></style>
+  </dialog>
   <noscript><div class="noscript-notice">Enable JavaScript to use the editor. You can still read the <a href={withBase('guide/')}>Markdown & math guide</a>.</div></noscript>
 </qft-markdown-workspace>
 <script>

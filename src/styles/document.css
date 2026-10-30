@@ -67,7 +67,9 @@
   .markdown-document { color: #222; --doc-text: #222; --doc-muted: #666; --doc-border: #ccc; --doc-accent: #56333c; --doc-code-bg: #f6f6f6; font-size: 10.5pt; }
   .markdown-document :is(h1, h2, h3, h4, h5, h6) { break-after: avoid; }
   .markdown-document :is(p, li) { orphans: 3; widows: 3; }
-  .markdown-document :is(pre, blockquote, img, tr, .katex-display) { break-inside: avoid; }
+  .markdown-document :is(img, tr, .katex-display) { break-inside: avoid; }
+  /* Long quotations and programs must be allowed to continue on another page. */
+  .markdown-document :is(pre, blockquote) { break-inside: auto; box-decoration-break: clone; }
   .markdown-document pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; }
   .markdown-document pre code { white-space: pre-wrap; }
   .markdown-document table { display: table; width: auto; max-width: 100%; overflow: visible; }
