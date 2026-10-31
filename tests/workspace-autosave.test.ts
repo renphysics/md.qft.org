@@ -136,6 +136,28 @@ function confirmDelete(app: Workspace, controls: Map<string, (event: Event) => v
 }
 
 describe('workspace draft coordination', () => {
+  it('keeps the public page title for blank drafts and document titles for named drafts', () => {
+    const initialTitle = `${siteConfig.name} — ${siteConfig.title}`;
+    const page = { title: initialTitle, addEventListener() {} };
+    const { app } = workspace({}, { document: page });
+    const titleControl = { textContent: '' };
+    app.q = () => titleControl;
+    const updateTitle = Object.getPrototypeOf(app).updateTitle.bind(app);
+
+    app.current = draft('blank', '', 1, 'Untitled document');
+    updateTitle();
+    assert.equal(page.title, initialTitle);
+    assert.equal(titleControl.textContent, 'Untitled document');
+
+    app.current = draft('notes', '# Private notes', 1, 'Research notes');
+    updateTitle();
+    assert.equal(page.title, `Research notes · ${siteConfig.name}`);
+
+    app.current = draft('another-blank', '  \n', 1, 'Untitled document');
+    updateTitle();
+    assert.equal(page.title, initialTitle);
+  });
+
   it('ignores queued PDF and HTML actions after the setup panel has closed', async () => {
     let exports = 0;
     const { app } = workspace({}, { printDocument: async () => { exports++; }, exportPortableHtml: async () => { exports++; } });

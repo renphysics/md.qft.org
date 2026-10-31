@@ -1,0 +1,30 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/Icon.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { siteConfig } from '../config/site';
+import { siteFaqs } from '../lib/site-faq';
+import { withBase } from '../lib/site-path';
+---
+<BaseLayout title={`Markdown, math & PDF FAQ — ${siteConfig.name}`} active="faq" description={`Answers about ${siteConfig.name}: math syntax, saving PDFs, local drafts, privacy, AI-text formatting, Markdown and HTML exports, and MIT reuse.`} faq={siteFaqs}>
+  <main id="main-content" class="content-page">
+    <span class="page-kicker">Practical answers</span>
+    <h1>Markdown, math, and PDF: your questions.</h1>
+    <p class="page-lead">How {siteConfig.name} works, where your documents are saved, and what to expect when you export them.</p>
+
+    {siteFaqs.map((item, index) => (
+      <section aria-labelledby={`faq-question-${index + 1}`}>
+        <h2 id={`faq-question-${index + 1}`}>{item.question}</h2>
+        <p>{item.answer}</p>
+      </section>
+    ))}
+
+    <section class="about-callout" aria-labelledby="faq-next-step">
+      <h2 id="faq-next-step">Try it with a document</h2>
+      <p>The <a href={withBase('guide/')}>writing guide</a> walks through pasting, organizing, math syntax, and PDF setup. The <a href={withBase('examples/')}>example documents</a> give you study notes, a report, and mathematical derivations to explore.</p>
+      <p>For privacy details and the software’s license notices, read <a href={withBase('about/')}>About &amp; privacy</a>. The <a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">source repository</a> includes setup and reuse instructions.</p>
+    </section>
+    <p><a class="button-primary" href={withBase()}>Open the Markdown editor <Icon name="arrow" size={16} /></a></p>
+  </main>
+  <SiteFooter />
+</BaseLayout>

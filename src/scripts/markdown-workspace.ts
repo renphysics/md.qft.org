@@ -88,6 +88,7 @@ const highlight = HighlightStyle.define([
 ]);
 
 class MarkdownWorkspace extends HTMLElement {
+  private readonly workspacePageTitle = document.title;
   private abort = new AbortController();
   private editor?: EditorView;
   private wrapping = new Compartment();
@@ -393,7 +394,8 @@ class MarkdownWorkspace extends HTMLElement {
   private updateTitle(): void {
     const title = this.current?.title ?? 'Untitled document';
     this.q('[data-document-title]').textContent = title;
-    document.title = `${title} · ${siteConfig.name}`;
+    const isBlankUntitled = title === 'Untitled document' && !this.current?.source.trim();
+    document.title = isBlankUntitled ? this.workspacePageTitle : `${title} · ${siteConfig.name}`;
   }
 
   private updateCursor(): void {

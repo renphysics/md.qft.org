@@ -21,6 +21,7 @@ Edit [`src/config/site.ts`](../src/config/site.ts):
 | Setting | Purpose |
 | --- | --- |
 | `name` | The application name used by pages, the workspace, and exports |
+| `title` | The descriptive workspace title used in search and browser tabs |
 | `tagline` | The short phrase accompanying the identity |
 | `description` | Default page description |
 | `repositoryUrl` | Your source repository, used for the source-code link |
@@ -32,6 +33,7 @@ Other customization points:
 | File or directory | What to change |
 | --- | --- |
 | `public/favicon.svg` | Browser-tab icon |
+| `public/social-card.svg` and `public/social-card.png` | Editable sharing artwork and its 1200 × 630 PNG export |
 | `src/styles/app.css` | Interface colors, spacing, and responsive layout |
 | `src/styles/document.css` | Preview, export, and print typography |
 | `src/lib/document-presentation.ts` | Clean/Study Notes/Academic styles, page presets, and presentation validation |
@@ -39,8 +41,12 @@ Other customization points:
 | `src/lib/examples.ts` | Starter documents and their descriptions |
 | `src/pages/guide.astro` | Writing guide and syntax examples |
 | `src/pages/about.astro` | About and privacy text describing your version |
+| `src/lib/site-faq.ts` | Visible FAQ answers and their matching structured data |
+| `src/lib/site-seo.ts` | Public sitemap routes and static structured data |
 
 The default app has no analytics, remote document storage, accounts, or background synchronization. If you introduce any of these features, update the About page to describe the resulting behavior accurately.
+
+The [search and AI discovery guide](SEO.md) explains generated metadata, sitemaps, robots rules, and webmaster-tool setup. All generated site URLs follow the configured domain and project path; project-path robots files need the additional considerations documented there.
 
 ## Adapt the examples and document styles
 

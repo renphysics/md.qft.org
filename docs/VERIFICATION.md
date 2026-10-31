@@ -1,8 +1,24 @@
-# Document workflow verification — 2026-10-30
+# Verification history
+
+## Compact toolbars and public discovery — 2026-10-31
+
+The title/actions row is 64 px on desktop and at least 60 px on mobile. The document-tools row has a 48 px minimum height and can wrap when needed. Duplicate is a labeled document tool between Paste and Clean up, with one unchanged controller hook. The existing compact site-header heights remain unchanged.
+
+Local verification for this revision:
+
+- Astro check: 39 files, no errors, warnings, or hints.
+- Automated tests: 73 passed. New coverage checks sitemap and robots URLs under a custom domain and a project path, structured-data identities, FAQ fidelity, safe JSON-LD/XML serialization, and the blank workspace title after initialization.
+- Both production builds passed for `https://md.qft.org/` and `https://reuse-example.github.io/reuse-check/`.
+- Each built output passed an audit of six HTML pages, five canonical sitemap entries, 98 internal links/assets, matching canonical/social/schema URLs, valid FAQ data, the 404 noindex policy, and the 1200 × 630 sharing image.
+- The executable-script CSP was preserved. JSON-LD is an inert data block; private draft content is not included in build-time metadata.
+
+Deployment and CI results are recorded in GitHub Actions. Search indexing, search rankings, rich results, and citations by AI assistants are external outcomes and are not established by these checks. See [SEO.md](SEO.md) for webmaster-tool setup and reuse details.
+
+## Earlier document workflow verification — 2026-10-30
 
 This record covers the paste, organization, document-style, and PDF-setup revision. It distinguishes source/build checks from browser and native PDF checks.
 
-## Current deployment
+### Deployment of the document-workflow revision
 
 Feature commit [`4f10e027412b582d2bf47a3bd5f02ca6f126c2e7`](https://github.com/renphysics/md.qft.org/commit/4f10e027412b582d2bf47a3bd5f02ca6f126c2e7) is deployed at **[https://md.qft.org/](https://md.qft.org/)**. The GitHub **Check** and **Deploy to GitHub Pages** workflows both succeeded for this commit. The custom domain is serving the upgraded application over HTTPS; GitHub Pages setup is complete.
 

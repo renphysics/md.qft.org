@@ -17,7 +17,7 @@ import '../styles/document.css';
     <button class="sidebar-link" data-show-examples><span class="sidebar-link-icon"><Icon name="spark" size={17} /></span><span>Start with an example<small>A little inspiration</small></span><Icon name="chevron" size={14} /></button>
     <a class="sidebar-link" href={withBase('guide/')}><span class="sidebar-link-icon"><Icon name="book" size={17} /></span><span>Markdown & math guide<small>Make yourself at home</small></span><Icon name="chevron" size={14} /></a>
     <div class="sidebar-bottom"><Icon name="shield" size={17} /><p>A space of your own.<span>Your documents stay in this browser.</span></p></div>
-    <nav class="sidebar-project-links" aria-label="Project information"><a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">Source code</a><span aria-hidden="true">·</span><a href={withBase('about/#license')}>MIT license</a></nav>
+    <nav class="sidebar-project-links" aria-label="Project information"><a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">Source code</a><span aria-hidden="true">·</span><a href={withBase('about/#license')}>MIT license</a><span aria-hidden="true">·</span><a href={withBase('faq/')}>FAQ</a></nav>
   </aside>
   <button class="sidebar-scrim" data-sidebar-scrim aria-label="Close document sidebar" hidden></button>
   <main class="workspace-main">
@@ -26,7 +26,6 @@ import '../styles/document.css';
       <span class="toolbar-rule"></span>
       <div class="document-title-area"><button class="document-title" data-rename title="Rename document"><span data-document-title>Opening document</span><Icon name="edit" size={13} /></button><span class="save-state" data-save-state><span class="save-dot"></span><span data-save-label>Getting ready</span></span></div>
       <div class="document-toolbar-actions">
-        <button class="icon-button" data-duplicate aria-label="Duplicate document" title="Duplicate document"><Icon name="copy" size={17} /></button>
         <button class="icon-button" data-settings aria-label="Editor settings" title="Editor settings"><Icon name="sliders" size={17} /></button>
         <span class="toolbar-rule"></span>
         <div class="export-wrapper">
@@ -44,13 +43,13 @@ import '../styles/document.css';
       <div class="welcome-copy">
         <span class="eyebrow">FROM ANSWER TO DOCUMENT</span>
         <h1 id="workspace-welcome-title">A good answer deserves<br />a beautiful document.</h1>
-        <p>Bring your AI answers, notes, and equations.<br class="welcome-line-break" /> Give them structure. Make them worth keeping.</p>
+        <p>A free Markdown editor with live math preview.<br class="welcome-line-break" /> Organize AI answers and notes. Save PDF or HTML.</p>
         <div class="welcome-actions"><button class="button-primary" data-welcome-paste><Icon name="clipboard" size={16} /> Paste your text</button><button class="welcome-text-button" data-welcome-open>Open a file <Icon name="arrow" size={14} /></button><button class="welcome-text-button" data-welcome-examples>Try an example</button></div>
       </div>
       <div class="welcome-document" aria-hidden="true"><div class="welcome-document-label">YOUR NEXT GOOD IDEA</div><div class="welcome-document-title">Notes worth keeping.</div><div class="welcome-document-rule"></div><div class="welcome-document-lines"><i></i><i></i><i></i></div><div class="welcome-document-equation">e<sup>iπ</sup> + 1 = 0</div><div class="welcome-document-lines short"><i></i><i></i></div><span class="welcome-document-caption"><Icon name="check" size={12} /> Ready to share</span></div>
       <button class="icon-button welcome-dismiss" data-welcome-dismiss aria-label="Dismiss introduction and start writing"><Icon name="close" size={16} /></button>
     </section>
-    <div class="workspace-intro"><div class="document-tools" role="group" aria-label="Document tools"><button data-paste><Icon name="clipboard" size={15} /><span>Paste</span></button><button data-cleanup><Icon name="tidy" size={15} /><span>Clean up</span></button><button data-organize><Icon name="sections" size={15} /><span>Organize</span></button></div><div class="view-switch" role="group" aria-label="Workspace layout"><button data-view-mode="editor" aria-pressed="false" title="Editor only"><Icon name="code" size={15} /><span>Editor</span></button><button data-view-mode="split" aria-pressed="true" title="Split view"><Icon name="split" size={15} /><span>Split</span></button><button data-view-mode="preview" aria-pressed="false" title="Preview only"><Icon name="eye" size={15} /><span>Preview</span></button></div></div>
+    <div class="workspace-intro"><div class="document-tools" role="group" aria-label="Document tools"><button data-paste><Icon name="clipboard" size={15} /><span>Paste</span></button><button data-duplicate aria-label="Duplicate document" title="Duplicate document"><Icon name="copy" size={15} /><span>Duplicate</span></button><button data-cleanup><Icon name="tidy" size={15} /><span>Clean up</span></button><button data-organize><Icon name="sections" size={15} /><span>Organize</span></button></div><div class="view-switch" role="group" aria-label="Workspace layout"><button data-view-mode="editor" aria-pressed="false" title="Editor only"><Icon name="code" size={15} /><span>Editor</span></button><button data-view-mode="split" aria-pressed="true" title="Split view"><Icon name="split" size={15} /><span>Split</span></button><button data-view-mode="preview" aria-pressed="false" title="Preview only"><Icon name="eye" size={15} /><span>Preview</span></button></div></div>
     <div class="editor-workspace" data-panels>
       <section class="source-panel" aria-label="Markdown source">
         <div class="panel-heading"><span class="panel-title"><span class="panel-dot"></span> MARKDOWN</span><div class="panel-tools"><span class="syntax-label">Plain text. Endless possibilities.</span><button class="icon-button small" data-find aria-label="Find and replace" title="Find and replace (Ctrl/⌘ F)"><Icon name="search" size={16} /></button></div></div>

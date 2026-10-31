@@ -5,7 +5,7 @@ import SiteFooter from '../components/SiteFooter.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title={`Page not found — ${siteConfig.name}`} active="not-found" description={`This page could not be found. Return to the ${siteConfig.name} workspace or open the writing guide.`}>
+<BaseLayout noindex title={`Page not found — ${siteConfig.name}`} active="not-found" description={`This page could not be found. Return to the ${siteConfig.name} workspace or open the writing guide.`}>
   <main id="main-content" class="content-page not-found-page">
     <span class="error-number" aria-hidden="true">404</span>
     <span class="page-kicker">Page not found</span>

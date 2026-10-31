@@ -1,7 +1,8 @@
 /** Change these values to give your fork its own identity. */
 export const siteConfig = {
   name: 'QFT Markdown',
+  title: 'Free Markdown editor with math & PDF export',
   tagline: 'Ideas, ready to share',
-  description: 'Turn AI answers, notes, and mathematics into clear documents. Paste, organize, and style your Markdown, then save a PDF or portable HTML in your browser.',
+  description: 'Free Markdown editor with live KaTeX math preview. Organize AI answers and notes, then export Markdown, HTML, or PDF using your browser. No account needed.',
   repositoryUrl: 'https://github.com/renphysics/md.qft.org',
 };

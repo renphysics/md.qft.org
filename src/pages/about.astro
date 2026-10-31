@@ -7,11 +7,11 @@ import { withBase } from '../lib/site-path';
 import license from '../../LICENSE?raw';
 import notices from '../../THIRD_PARTY_NOTICES.md?raw';
 ---
-<BaseLayout title={`About — ${siteConfig.name}`} active="about" description="An independent, open-source workspace for turning AI answers, notes, and mathematics into clear documents. Drafts stay in your browser.">
+<BaseLayout title={`About, privacy & MIT license — ${siteConfig.name}`} active="about" description="Learn how this free Markdown editor processes text locally, stores drafts, handles remote images, and supports reuse under the MIT license.">
   <main id="main-content" class="content-page">
-    <span class="page-kicker">Useful words deserve a good home</span>
-    <h1>Ideas, ready to share.</h1>
-    <p class="page-lead">{siteConfig.name} turns AI answers, notes, and mathematics into clear documents. Paste your text, review the formatting, arrange the sections, and choose a style for the work you want to keep or share.</p>
+    <span class="page-kicker">About this project</span>
+    <h1>About {siteConfig.name}.</h1>
+    <p class="page-lead">{siteConfig.name} is a free, open-source Markdown editor that runs in your browser. It previews mathematics with KaTeX, helps you organize notes and AI answers, and prepares styled HTML or documents you can save as PDF through browser printing.</p>
 
     <section aria-labelledby="your-document-your-decisions">
       <h2 id="your-document-your-decisions">Your document, your decisions</h2>
@@ -43,6 +43,7 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
     <section aria-labelledby="built-with">
       <h2 id="built-with">Built on good foundations</h2>
       <p>Astro provides the website, CodeMirror powers the editor, markdown-it parses the text, and KaTeX typesets the mathematics.</p>
+      <p>For syntax and workflow instructions, see the <a href={withBase('guide/')}>Markdown and math guide</a>. The <a href={withBase('faq/')}>FAQ</a> answers common questions about PDFs, saved drafts, and hosting your own version.</p>
     </section>
 
     <section aria-labelledby="make-it-yours">

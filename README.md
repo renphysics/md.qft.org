@@ -72,6 +72,8 @@ Edit [`src/config/site.ts`](src/config/site.ts) for the site name, tagline, desc
 
 The [reuse guide](docs/REUSE.md) covers forks, custom domains, subdirectory deployments, customization, and the license notices to preserve. The project does not require a QFT name, logo, or promotional backlink on your version.
 
+The [search and AI discovery guide](docs/SEO.md) covers static metadata, structured data, the public FAQ, generated sitemaps, and optional webmaster-tool setup. These describe the application; users' drafts remain local.
+
 ## Mathematics
 
 ```markdown

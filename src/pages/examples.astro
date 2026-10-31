@@ -6,11 +6,11 @@ import SiteFooter from '../components/SiteFooter.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title={`Examples — ${siteConfig.name}`} active="examples" description="Explore study notes, a project report, mathematical derivations, and a Markdown field guide. Open an example, organize it, and try a PDF style.">
+<BaseLayout title={`Markdown examples: notes & equations — ${siteConfig.name}`} active="examples" description="Open editable Markdown examples: study notes, a project report, quantum mechanics, a Gaussian integral, and a syntax guide. Try styles for PDF and HTML.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">A starting point for your next document</span>
-    <h1>Good ideas take many forms.</h1>
-    <p class="page-lead">A study guide, a useful update, a careful calculation. Open an example, arrange its sections, and try a document style in Save PDF. Each opens as a draft you can make your own.</p>
+    <h1>Markdown examples to make your own.</h1>
+    <p class="page-lead">Explore editable study notes, a project report, and mathematical derivations. The examples demonstrate headings, KaTeX equations, tables, code, and footnotes. Open one as a new local draft, arrange its sections, and try a PDF or HTML style.</p>
     <div class="example-grid">
       {EXAMPLES.map((example, index) => (
         <article class="example-card">
