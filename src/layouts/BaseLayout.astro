@@ -1,5 +1,6 @@
 ---
 import Icon from '../components/Icon.astro';
+import WorkspaceExports from '../components/WorkspaceExports.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 import { serializeJsonLd, structuredData } from '../lib/site-seo';
@@ -75,6 +76,7 @@ const contentSecurityPolicy = [
         <a href={withBase('about/')} class="about-link">About</a>
         <span class="header-divider"></span>
         <button class="icon-button theme-button" data-theme-toggle aria-label="Switch to dark theme" title="Switch theme"><Icon name="moon" class="moon-icon" /><Icon name="sun" class="sun-icon" /></button>
+        {workspace && <WorkspaceExports />}
       </div>
     </header>
     <slot />

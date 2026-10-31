@@ -128,6 +128,20 @@ class MarkdownWorkspace extends HTMLElement {
     return element;
   }
 
+  // The export controls live in the site header, outside this custom element.
+  // Associate that one control group explicitly; keep all editor queries local.
+  private headerExports(): HTMLElement {
+    const controls = document.getElementById('workspace-exports');
+    if (!controls || controls.dataset.workspace !== this.id) throw new Error('Missing workspace export controls');
+    return controls;
+  }
+
+  private exportControl<T extends HTMLElement = HTMLElement>(selector: string): T {
+    const element = this.headerExports().querySelector<T>(selector);
+    if (!element) throw new Error(`Missing export control: ${selector}`);
+    return element;
+  }
+
   connectedCallback(): void {
     if (this.initialized) return;
     this.initialized = true;
@@ -582,8 +596,12 @@ class MarkdownWorkspace extends HTMLElement {
   }
 
   private closeExport(): void {
-    this.q('[data-export-menu]').hidden = true;
-    this.q('[data-export-toggle]').setAttribute('aria-expanded', 'false');
+    const menu = this.exportControl('[data-export-menu]');
+    const toggle = this.exportControl<HTMLButtonElement>('[data-export-toggle]');
+    const returnFocus = !menu.hidden && menu.contains(document.activeElement);
+    menu.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    if (returnFocus) toggle.focus();
   }
 
   private closeOutline(): void {
@@ -956,9 +974,10 @@ class MarkdownWorkspace extends HTMLElement {
 
   private bindEvents(): void {
     const { signal } = this.abort;
-    const click = (selector: string, handler: (event: MouseEvent) => void) => {
-      this.querySelectorAll<HTMLElement>(selector).forEach((element) => element.addEventListener('click', handler, { signal }));
+    const click = (selector: string, handler: (event: MouseEvent) => void, root: ParentNode = this) => {
+      root.querySelectorAll<HTMLElement>(selector).forEach((element) => element.addEventListener('click', handler, { signal }));
     };
+    const headerExports = this.headerExports();
     click('[data-paste], [data-welcome-paste]', () => this.openPaste());
     click('[data-welcome-open]', () => this.q<HTMLInputElement>('[data-file-input]').click());
     click('[data-welcome-examples]', () => this.q<HTMLDialogElement>('[data-examples-dialog]').showModal());
@@ -1009,7 +1028,7 @@ class MarkdownWorkspace extends HTMLElement {
       this.documentSearch = (event.target as HTMLInputElement).value;
       this.renderDocuments();
     }, { signal });
-    click('[data-pdf], [data-print]', () => this.openPdf());
+    click('[data-pdf], [data-print]', () => this.openPdf(), headerExports);
     click('[data-pdf-close]', () => this.q<HTMLDialogElement>('[data-pdf-dialog]').close());
     click('[data-pdf-style]', (event) => {
       this.documentSettings = normalizeDocumentSettings({ ...this.documentSettings, style: (event.currentTarget as HTMLElement).dataset.pdfStyle });
@@ -1146,13 +1165,13 @@ class MarkdownWorkspace extends HTMLElement {
     });
     click('[data-close-sidebar], [data-sidebar-scrim]', () => this.closeSidebar());
     click('[data-export-toggle]', () => {
-      const menu = this.q('[data-export-menu]');
+      const menu = this.exportControl('[data-export-menu]');
       menu.hidden = !menu.hidden;
-      this.q('[data-export-toggle]').setAttribute('aria-expanded', String(!menu.hidden));
+      this.exportControl('[data-export-toggle]').setAttribute('aria-expanded', String(!menu.hidden));
       if (!menu.hidden) menu.querySelector('button')?.focus();
-    });
-    click('[data-export-md]', () => this.downloadSource());
-    click('[data-export-html]', () => this.runAction(() => this.exportHtml()));
+    }, headerExports);
+    click('[data-export-md]', () => this.downloadSource(), headerExports);
+    click('[data-export-html]', () => this.runAction(() => this.exportHtml()), headerExports);
     click('[data-find]', () => {
       if (this.dataset.view === 'preview') this.setView(this.mobile.matches ? 'editor' : 'split');
       if (this.editor) openSearchPanel(this.editor);

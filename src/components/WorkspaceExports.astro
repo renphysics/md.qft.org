@@ -1,0 +1,14 @@
+---
+import Icon from './Icon.astro';
+---
+<div class="workspace-exports" id="workspace-exports" data-workspace="main-content" role="group" aria-label="Document downloads">
+  <div class="export-wrapper">
+    <button class="export-button" data-export-toggle aria-expanded="false" aria-controls="export-menu" aria-label="Download document" title="Download document"><Icon name="download" size={16} /><span>Download</span><Icon name="down" size={14} /></button>
+    <div class="dropdown-menu export-menu" id="export-menu" data-export-menu hidden>
+      <button data-export-md><Icon name="file" /><span>Markdown<small>Keep an editable copy</small></span><kbd>.md</kbd></button>
+      <button data-export-html><Icon name="code" /><span>Standalone HTML<small>Math fonts included · opens offline</small></span><kbd>.html</kbd></button>
+      <button data-print><Icon name="print" /><span>Print / Save PDF<small>A clean, typeset document</small></span><kbd>⌘P</kbd></button>
+    </div>
+  </div>
+  <button class="button-primary save-pdf-button" data-pdf><Icon name="print" size={16} /><span>Save PDF</span></button>
+</div>

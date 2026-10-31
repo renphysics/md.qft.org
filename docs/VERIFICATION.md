@@ -1,5 +1,15 @@
 # Verification history
 
+## Header exports and removal of the title row — 2026-10-31
+
+Download and Save PDF now live in the workspace's site header. The document title row is removed; the sidebar toggle precedes Paste, and Settings sits immediately before the Editor/Split/Preview group. The current document's rename control and autosave status are in the sidebar.
+
+- Production build passed; Astro check covered 40 files with no errors, warnings, or hints.
+- All 74 automated tests passed, including a regression for header export events, menu focus, Markdown download, PDF setup, and explicit association with the correct workspace.
+- Browser checks of the production build confirmed the Download menu, Save PDF setup, Settings, sidebar toggling, and the rename dialog. The math example remained fully rendered.
+- The desktop header remains 56 px; the document-tools row remains 48 px, with no separate title row.
+- Layout checks at 320, 375, 640, and 850 px found no horizontal page overflow. The header remains 52 px at the smaller widths and 56 px at 850 px. The tools wrap at 320 px and stay on one 48 px row at the other checked widths. At 320 px the open Download menu stays within the viewport.
+
 ## Compact toolbars and public discovery — 2026-10-31
 
 The title/actions row is 64 px on desktop and at least 60 px on mobile. The document-tools row has a 48 px minimum height and can wrap when needed. Duplicate is a labeled document tool between Paste and Clean up, with one unchanged controller hook. The existing compact site-header heights remain unchanged.

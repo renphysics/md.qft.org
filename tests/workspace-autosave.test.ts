@@ -25,6 +25,7 @@ const controller = ts.transpileModule(ts.createPrinter().printFile(isolated), {
 }).outputText;
 
 interface Workspace {
+  id: string;
   current: Draft;
   drafts: Map<string, Draft>;
   dirty: boolean;
@@ -44,6 +45,7 @@ interface Workspace {
   closeSidebar(): void;
   activate(draft: Draft): void;
   q(selector: string): unknown;
+  querySelector(selector: string): unknown;
   pasteDocument(source: string, title: string, mode: string, target?: string): Promise<void>;
   applyFormatting(): Promise<void>;
   replaceSource(source: string): void;
@@ -55,6 +57,7 @@ interface Workspace {
   exportStyledHtml(): Promise<void>;
   closeExport(): void;
   openPdf(): void;
+  updatePdfPreview(): void;
   pdfSnapshot?: { id: string; title: string; source: string; allowRemoteImages: boolean };
   documentSettings: DocumentSettings;
 }
@@ -81,12 +84,13 @@ function workspace(storage: Partial<Storage> = {}, browserDependencies: Record<s
   const controls = new Map<string, (event: Event) => void>();
   const notifications: string[] = [];
   const noop = () => {};
+  const headerExports = { dataset: { workspace: 'main-content' }, querySelectorAll: () => [] };
   const context = {
     exports: {}, AbortController, clearTimeout,
-    HTMLElement: class { dataset = {}; querySelectorAll() { return []; } addEventListener() {} },
+    HTMLElement: class { id = 'main-content'; dataset = {}; querySelectorAll() { return []; } addEventListener() {} },
     Compartment: class {}, HighlightStyle: { define: () => ({}) }, tags: {},
     matchMedia: () => ({ matches: false, addEventListener: noop }),
-    document: { addEventListener: noop }, window: { addEventListener: noop },
+    document: { addEventListener: noop, getElementById: (id: string) => id === 'workspace-exports' ? headerExports : null }, window: { addEventListener: noop },
     createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
     DEFAULT_DOCUMENT_SETTINGS, appendDocumentSection, suggestDocumentTitle, applyCleanup,
     renderMarkdown,
@@ -136,6 +140,75 @@ function confirmDelete(app: Workspace, controls: Map<string, (event: Event) => v
 }
 
 describe('workspace draft coordination', () => {
+  it('connects external header exports while keeping the PDF dialog inside its workspace', () => {
+    const downloads: { source: string; title: string }[] = [];
+    const headerClicks = new Map<string, () => void>();
+    const headerAttributes = new Map<string, string>();
+    let focused = '';
+    let previewUpdates = 0;
+    const page = {
+      activeElement: '',
+      addEventListener() {},
+      getElementById: (id: string): unknown => id === 'workspace-exports' ? header : null,
+      querySelector: () => { throw new Error('Editor controls must not be queried from the document'); },
+    };
+    const headerButtons = new Map(['[data-export-toggle]', '[data-export-md]', '[data-export-html]', '[data-print]', '[data-pdf]'].map((selector) => [selector, {
+      addEventListener: (type: string, handler: () => void) => { if (type === 'click') headerClicks.set(selector, handler); },
+      setAttribute: (name: string, value: string) => headerAttributes.set(`${selector}:${name}`, value),
+      focus: () => { focused = selector; page.activeElement = selector; },
+    }]));
+    const menu = {
+      hidden: true,
+      contains: (element: unknown) => ['[data-export-md]', '[data-export-html]', '[data-print]'].includes(String(element)),
+      querySelector: () => headerButtons.get('[data-export-md]'),
+    };
+    const header = {
+      dataset: { workspace: 'main-content' },
+      querySelector: (selector: string) => selector === '[data-export-menu]' ? menu : headerButtons.get(selector),
+      querySelectorAll: (selector: string) => selector.split(',').map((part) => headerButtons.get(part.trim())).filter(Boolean),
+    };
+    const { app } = workspace({}, {
+      document: page,
+      downloadMarkdown: (source: string, title: string) => downloads.push({ source, title }),
+    });
+    const localControls = new Map<string, { value: string; checked: boolean; open: boolean; addEventListener(): void; showModal(): void }>();
+    app.querySelector = (selector) => {
+      assert.ok(!selector.startsWith('[data-export-'), 'Header exports are outside the editor element');
+      if (!localControls.has(selector)) localControls.set(selector, {
+        value: '', checked: false, open: false, addEventListener() {}, showModal() { this.open = true; },
+      });
+      return localControls.get(selector);
+    };
+    app.q = Object.getPrototypeOf(app).q.bind(app);
+    app.closeExport = Object.getPrototypeOf(app).closeExport.bind(app);
+    app.updatePdfPreview = () => { previewUpdates++; };
+    app.current = draft('notes', '# Notes\n\n$E=mc^2$', 1, 'Research notes');
+    app.bindEvents();
+
+    headerClicks.get('[data-export-toggle]')!();
+    assert.equal(menu.hidden, false);
+    assert.equal(headerAttributes.get('[data-export-toggle]:aria-expanded'), 'true');
+    assert.equal(focused, '[data-export-md]');
+    app.closeExport();
+    assert.equal(menu.hidden, true);
+    assert.equal(headerAttributes.get('[data-export-toggle]:aria-expanded'), 'false');
+    assert.equal(focused, '[data-export-toggle]');
+
+    headerClicks.get('[data-export-toggle]')!();
+    headerClicks.get('[data-export-md]')!();
+    assert.deepEqual(downloads, [{ source: app.current.source, title: app.current.title }]);
+    assert.equal(menu.hidden, true);
+
+    headerClicks.get('[data-pdf]')!();
+    assert.equal(localControls.get('[data-pdf-dialog]')?.open, true);
+    assert.equal(app.pdfSnapshot?.source, app.current.source);
+    assert.equal(app.pdfSnapshot?.title, 'Research notes');
+    assert.equal(previewUpdates, 1);
+
+    header.dataset.workspace = 'another-workspace';
+    assert.throws(() => app.closeExport(), /Missing workspace export controls/);
+  });
+
   it('keeps the public page title for blank drafts and document titles for named drafts', () => {
     const initialTitle = `${siteConfig.name} — ${siteConfig.title}`;
     const page = { title: initialTitle, addEventListener() {} };
