@@ -1,7 +1,15 @@
 import { scopedStorageKey } from './storage-scope';
+import { validateImageAssets, type DraftImage } from './image-assets';
+
+export interface DraftOptions {
+  images?: DraftImage[];
+  mode?: 'document' | 'slides';
+  slideTheme?: 'paper' | 'midnight' | 'serif';
+  slideRatio?: '16:9' | '4:3';
+}
 
 /** Browser-local documents. A successful write means the IndexedDB transaction committed. */
-export interface Draft {
+export interface Draft extends DraftOptions {
   id: string;
   title: string;
   source: string;
@@ -40,7 +48,7 @@ export class DraftConflictError extends Error {
       : 'This document was deleted in another tab. Save your work as a new document to keep it.');
     this.name = 'DraftConflictError';
     this.draftId = draftId;
-    this.current = current ? { ...current } : undefined;
+    this.current = current ? cloneDraft(current) : undefined;
   }
 }
 
@@ -147,6 +155,34 @@ function validateText(title: string, source: string): { title: string; source: s
   return { title: title.trim() || 'Untitled document', source };
 }
 
+/** Absent metadata stays absent, so drafts created before slides/images remain unchanged. */
+export function validateDraftOptions(value: DraftOptions = {}): DraftOptions {
+  const result: DraftOptions = {};
+  if (value.mode !== undefined) {
+    if (!['document', 'slides'].includes(value.mode)) throw new DraftStorageError('The document view type is invalid.');
+    result.mode = value.mode;
+  }
+  if (value.slideTheme !== undefined) {
+    if (!['paper', 'midnight', 'serif'].includes(value.slideTheme)) throw new DraftStorageError('The slide theme is invalid.');
+    result.slideTheme = value.slideTheme;
+  }
+  if (value.slideRatio !== undefined) {
+    if (!['16:9', '4:3'].includes(value.slideRatio)) throw new DraftStorageError('The slide aspect ratio is invalid.');
+    result.slideRatio = value.slideRatio;
+  }
+  if (value.images !== undefined) {
+    try { result.images = validateImageAssets(value.images); }
+    catch (error) {
+      throw new DraftStorageError(error instanceof Error ? error.message : 'The document images could not be read.', { cause: error });
+    }
+  }
+  return result;
+}
+
+function cloneDraft(draft: Draft): Draft {
+  return { ...draft, ...(draft.images ? { images: draft.images.map((image) => ({ ...image })) } : {}) };
+}
+
 function readDraft(value: unknown): Draft | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object') throw new DraftStorageError('A saved document could not be read. Its stored data has been preserved.');
@@ -156,7 +192,7 @@ function readDraft(value: unknown): Draft | undefined {
     || !Number.isInteger(draft.revision) || (draft.revision ?? 0) < 1) {
     throw new DraftStorageError('A saved document could not be read. Its stored data has been preserved.');
   }
-  return { ...(draft as Draft) };
+  return { ...(draft as Draft), ...validateDraftOptions(draft) };
 }
 
 async function transaction<T>(
@@ -220,20 +256,22 @@ export async function getDraft(id: string): Promise<Draft | undefined> {
   });
 }
 
-export async function createDraft(title: string, source: string): Promise<Draft> {
+export async function createDraft(title: string, source: string, options: DraftOptions = {}): Promise<Draft> {
   const text = validateText(title, source);
+  const metadata = validateDraftOptions(options);
   const now = Date.now();
-  const draft: Draft = { id: createDraftId(), ...text, createdAt: now, updatedAt: now, revision: 1 };
+  const draft: Draft = { id: createDraftId(), ...text, ...metadata, createdAt: now, updatedAt: now, revision: 1 };
   const saved = await transaction<Draft>('readwrite', (store, result) => {
     store.add(draft);
     result(draft);
   });
   announce({ action: 'create', id: saved.id, revision: saved.revision });
-  return { ...saved };
+  return cloneDraft(saved);
 }
 
 export async function saveDraft(draft: Draft, expectedRevision = draft.revision): Promise<Draft> {
   const text = validateText(draft.title, draft.source);
+  const metadata = validateDraftOptions(draft);
   const id = draft.id;
   if (!id || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
     throw new DraftStorageError('The saved document revision is invalid. Save this text as a new document.');
@@ -251,6 +289,7 @@ export async function saveDraft(draft: Draft, expectedRevision = draft.revision)
         const next: Draft = {
           id,
           ...text,
+          ...metadata,
           createdAt: current.createdAt,
           updatedAt: Math.max(Date.now(), current.updatedAt + 1),
           revision: current.revision + 1,
@@ -261,7 +300,7 @@ export async function saveDraft(draft: Draft, expectedRevision = draft.revision)
     };
   });
   announce({ action: 'save', id: saved.id, revision: saved.revision });
-  return { ...saved };
+  return cloneDraft(saved);
 }
 
 export async function deleteDraft(id: string): Promise<void> {
@@ -275,5 +314,5 @@ export async function deleteDraft(id: string): Promise<void> {
 export async function duplicateDraft(draft: Draft): Promise<Draft> {
   const suffix = ' (copy)';
   const title = draft.title.slice(0, 200 - suffix.length) + suffix;
-  return createDraft(title, draft.source);
+  return createDraft(title, draft.source, draft);
 }

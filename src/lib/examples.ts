@@ -1,6 +1,85 @@
-export interface ExampleDocument { id: string; title: string; description: string; source: string }
+export interface ExampleDocument {
+  id: string;
+  title: string;
+  description: string;
+  source: string;
+  mode?: 'slides';
+  slideTheme?: 'paper' | 'midnight' | 'serif';
+  slideRatio?: '16:9' | '4:3';
+}
 
 export const EXAMPLES: ExampleDocument[] = [
+  {
+    id: 'quantum-slides',
+    title: 'Quantum phase, in five slides',
+    description: 'A ready-to-present physics deck with equations, an interference example, and a short calculation.',
+    mode: 'slides',
+    slideTheme: 'paper',
+    slideRatio: '16:9',
+    source: String.raw`# Quantum phase
+
+## From an invisible phase to a measurable signal
+
+Five slides on states, evolution, and interference.
+
+---
+
+## One energy eigenstate
+
+For $\hat H|n\rangle=E_n|n\rangle$, time evolution gives
+
+$$
+|\psi(t)\rangle=e^{-iE_nt/\hbar}|n\rangle.
+$$
+
+- The state acquires a common phase.
+- Measurement probabilities stay unchanged.
+
+---
+
+## Two states can interfere
+
+Take \(E_0=0\), \(E_1=\hbar\omega\), and prepare \(|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}\).
+
+\[
+|\psi(t)\rangle=\frac{|0\rangle+e^{-i\omega t}|1\rangle}{\sqrt{2}},
+\qquad
+P_+(t)=\cos^2\!\left(\frac{\omega t}{2}\right).
+\]
+
+A relative phase becomes a measurable probability.
+
+---
+
+## Check the prediction
+
+Sample one period with \(\omega=1\):
+
+~~~python
+import math
+
+for t in (0, math.pi / 2, math.pi, 2 * math.pi):
+    probability = math.cos(t / 2) ** 2
+    print(round(probability, 3))
+~~~
+
+The probabilities are **1, 0.5, 0, 1**.
+
+---
+
+## What to remember
+
+- A common phase leaves measurement probabilities unchanged.
+- Relative phases can change interference outcomes.
+- The energy difference sets the oscillation period:
+
+$$
+T=\frac{2\pi\hbar}{E_1-E_0}=\frac{2\pi}{\omega}.
+$$
+
+**Try it:** change the energy gap and predict the new period.
+`,
+  },
   {
     id: 'study-notes',
     title: 'Understanding exponential change',

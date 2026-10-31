@@ -8,9 +8,12 @@ import { isolateHistory, undo } from '@codemirror/commands';
 import { tags } from '@lezer/highlight';
 import {
   createDraft, createDraftId, deleteDraft, loadDrafts, saveDraft, isDraftConflict,
-  DRAFT_CHANNEL_NAME, type Draft, type DraftChangeMessage,
+  DRAFT_CHANNEL_NAME, type Draft, type DraftOptions, type DraftChangeMessage,
 } from '../lib/draft-store';
-import { renderMarkdown, MAX_SOURCE_LENGTH, type MarkdownResult } from '../lib/render-markdown';
+import { renderMarkdown, MAX_SOURCE_LENGTH, type MarkdownResult, type RenderOptions } from '../lib/render-markdown';
+import { createImageObjectUrls, prepareImageFiles, imageMarkdown } from '../lib/image-assets';
+import { renderSlides, normalizeSlideSettings, type SlideResult, type SlideSettings } from '../lib/slides';
+import type { SlidePreview, SlidePreviewState } from './slide-preview';
 import { downloadMarkdown, exportPortableHtml, printDocument } from '../lib/export-document';
 import {
   DEFAULT_DOCUMENT_SETTINGS, normalizeDocumentSettings, prepareDocumentHtml,
@@ -53,8 +56,17 @@ function readPreferences(): Preferences {
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong. Download your Markdown to keep a copy.';
 }
-function memoryDraft(title: string, source: string): Draft {
-  return { id: createDraftId(), title, source, createdAt: Date.now(), updatedAt: Date.now(), revision: 1 };
+function draftOptions(draft: DraftOptions): DraftOptions {
+  return { images: draft.images, mode: draft.mode, slideTheme: draft.slideTheme, slideRatio: draft.slideRatio };
+}
+function sameDraftContent(a: Draft, b: Draft): boolean {
+  return a.source === b.source && a.title === b.title && a.mode === b.mode
+    && a.slideTheme === b.slideTheme && a.slideRatio === b.slideRatio
+    && (a.images?.length ?? 0) === (b.images?.length ?? 0)
+    && (a.images ?? []).every((image, index) => image.id === b.images?.[index]?.id);
+}
+function memoryDraft(title: string, source: string, options: DraftOptions = {}): Draft {
+  return { id: createDraftId(), title, source, ...draftOptions(options), createdAt: Date.now(), updatedAt: Date.now(), revision: 1 };
 }
 function icon(kind: 'file' | 'delete'): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -109,13 +121,20 @@ class MarkdownWorkspace extends HTMLElement {
   private deletingId?: string;
   private rendered?: MarkdownResult;
   private remoteImages = false;
+  private imageUrls?: ReturnType<typeof createImageObjectUrls>;
+  private imageTarget?: string;
+  private slidePreview?: SlidePreview;
+  private slideLoading?: Promise<void>;
+  private slidesRendered?: SlideResult;
+  private slideGeneration = 0;
+  private slideOverflow = false;
   private initialized = false;
   private documentSearch = '';
   private documentSettings: DocumentSettings = { ...DEFAULT_DOCUMENT_SETTINGS };
   private dismissedWelcome = new Set<string>();
   private cleanupSnapshot?: { id: string; title: string; source: string };
   private organizeHistory: { id: string; before: string; after: string }[] = [];
-  private pdfSnapshot?: { id: string; title: string; source: string; allowRemoteImages: boolean };
+  private pdfSnapshot?: DraftOptions & { id: string; title: string; source: string; allowRemoteImages: boolean };
   private pdfRendered?: MarkdownResult;
   private pdfPreviewToken = 0;
   private pasteTarget?: string;
@@ -159,6 +178,9 @@ class MarkdownWorkspace extends HTMLElement {
     this.channel?.close();
     this.scrollSync?.destroy();
     this.editor?.destroy();
+    this.slideGeneration += 1;
+    this.slidePreview?.destroy();
+    this.imageUrls?.revoke();
   }
 
   private async initialize(): Promise<void> {
@@ -173,7 +195,7 @@ class MarkdownWorkspace extends HTMLElement {
       history.replaceState(null, '', `${query.pathname}${query.search}${query.hash}`);
     }
     let initial = this.drafts.get(readLocal(ACTIVE_KEY) ?? '') ?? drafts[0];
-    if (requestedExample) initial = await this.makeDraft(requestedExample.title, requestedExample.source);
+    if (requestedExample) initial = await this.makeDraft(requestedExample.title, requestedExample.source, requestedExample);
     else if (!initial) initial = await this.makeDraft('Untitled document', '');
     this.current = initial;
     this.q('[data-editor]').replaceChildren();
@@ -198,7 +220,7 @@ class MarkdownWorkspace extends HTMLElement {
         const padding = editor.documentTop - editor.scrollDOM.getBoundingClientRect().top + editor.scrollDOM.scrollTop;
         editor.scrollDOM.scrollTop = block.top + padding + (line % 1) * block.height;
       },
-      isEnabled: () => this.preferences.sync && this.dataset.view === 'split' && !this.mobile.matches,
+      isEnabled: () => this.preferences.sync && this.current?.mode !== 'slides' && this.dataset.view === 'split' && !this.mobile.matches,
     });
     try {
       this.channel = new BroadcastChannel(DRAFT_CHANNEL_NAME);
@@ -219,7 +241,7 @@ class MarkdownWorkspace extends HTMLElement {
         this.wrapping.of(this.preferences.wrap ? EditorView.lineWrapping : []),
         EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor', spellcheck: 'false', autocapitalize: 'off' }),
         EditorView.theme({ '&': { color: 'var(--text)', fontSize: 'var(--editor-font-size,14px)' } }),
-        keymap.of([{ key: 'Mod-s', run: () => { this.downloadSource(); return true; } }]),
+        keymap.of([{ key: 'Mod-s', run: () => { this.runAction(() => this.downloadSource()); return true; } }]),
         EditorView.updateListener.of((update) => this.editorChanged(update)),
       ],
     });
@@ -265,8 +287,8 @@ class MarkdownWorkspace extends HTMLElement {
       try {
         const committed = await saveDraft(snapshot, snapshot.revision);
         const latest = this.current;
-        this.current = { ...committed, title: latest.title, source: latest.source };
-        this.dirty = latest.source !== snapshot.source || latest.title !== snapshot.title;
+        this.current = { ...committed, ...draftOptions(latest), title: latest.title, source: latest.source };
+        this.dirty = !sameDraftContent(latest, snapshot);
         this.drafts.set(committed.id, this.current);
         this.volatileDrafts.delete(committed.id);
         this.setSaveState(this.dirty ? 'saving' : 'saved', this.dirty ? 'Saving in this browser…' : 'Saved in this browser');
@@ -277,11 +299,11 @@ class MarkdownWorkspace extends HTMLElement {
           if (error.current) this.drafts.set(error.current.id, error.current);
           else this.drafts.delete(latest.id);
           try {
-            const recovery = await createDraft(`${latest.title.replace(/ \(recovered\)$/, '').slice(0, 188)} (recovered)`, latest.source);
+            const recovery = await createDraft(`${latest.title.replace(/ \(recovered\)$/, '').slice(0, 188)} (recovered)`, latest.source, draftOptions(latest));
             const newest = this.current;
             const title = newest.title === latest.title ? recovery.title : newest.title;
-            this.current = { ...recovery, title, source: newest.source };
-            this.dirty = newest.source !== latest.source || newest.title !== latest.title;
+            this.current = { ...recovery, ...draftOptions(newest), title, source: newest.source };
+            this.dirty = !sameDraftContent(newest, latest);
             // Typing while the recovery was being created may have updated the
             // old map entry. Keep the other tab's committed version there.
             if (error.current) this.drafts.set(error.current.id, error.current);
@@ -294,7 +316,7 @@ class MarkdownWorkspace extends HTMLElement {
             this.setSaveState(this.dirty ? 'saving' : 'saved', this.dirty ? 'Saving in this browser…' : 'Recovered copy saved');
             this.notify('This draft changed in another tab. Your edits are safe in a recovered copy.', 12_000);
           } catch (recoveryError) {
-            const recovery = memoryDraft(`${this.current.title} (recovered)`, this.current.source);
+            const recovery = memoryDraft(`${this.current.title} (recovered)`, this.current.source, this.current);
             if (error.current) this.drafts.set(error.current.id, error.current);
             else this.drafts.delete(latest.id);
             this.current = recovery;
@@ -318,18 +340,18 @@ class MarkdownWorkspace extends HTMLElement {
     this.notify(messageOf(error), 15_000);
   }
 
-  private async makeDraft(title: string, source: string): Promise<Draft> {
+  private async makeDraft(title: string, source: string, options: DraftOptions = {}): Promise<Draft> {
     let draft: Draft;
     if (this.storageAvailable) {
-      try { draft = await createDraft(title, source); }
+      try { draft = await createDraft(title, source, options); }
       catch (error) {
         this.storageFailure(error);
-        draft = memoryDraft(title, source);
+        draft = memoryDraft(title, source, options);
         this.volatileDrafts.add(draft.id);
         this.ephemeralDrafts.add(draft.id);
       }
     } else {
-      draft = memoryDraft(title, source);
+      draft = memoryDraft(title, source, options);
       this.volatileDrafts.add(draft.id);
       this.ephemeralDrafts.add(draft.id);
     }
@@ -339,10 +361,14 @@ class MarkdownWorkspace extends HTMLElement {
 
   private activate(draft: Draft): void {
     clearTimeout(this.previewTimer);
-    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog]')) {
+    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-slide-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog]')) {
       if (dialog.open) dialog.close();
     }
     this.current = { ...draft };
+    this.slidePreview?.exitPresentation();
+    this.slidePreview?.goTo(0);
+    this.refreshImages();
+    this.syncContentMode();
     this.dirty = false;
     this.remoteImages = false;
     try { this.documentSettings = normalizeDocumentSettings(JSON.parse(readLocal(presentationKey(draft.id)) ?? '{}')); }
@@ -368,9 +394,9 @@ class MarkdownWorkspace extends HTMLElement {
     if (draft) this.activate(draft);
   }
 
-  private async newDocument(title = 'Untitled document', source = ''): Promise<void> {
+  private async newDocument(title = 'Untitled document', source = '', options: DraftOptions = {}): Promise<void> {
     await this.flush();
-    const draft = await this.makeDraft(title, source);
+    const draft = await this.makeDraft(title, source, options);
     // The old editor remains usable while IndexedDB creates this document.
     // Drain any edits made during that wait before changing the active draft.
     await this.flush();
@@ -478,9 +504,13 @@ class MarkdownWorkspace extends HTMLElement {
     const preview = this.q('[data-preview]');
     const scroller = this.q('[data-preview-scroll]');
     const previousTop = scroller.scrollTop;
-    this.rendered = renderMarkdown(this.current.source, { allowRemoteImages: this.remoteImages });
-    preview.innerHTML = this.rendered.html;
-    if (!this.current.source.trim()) {
+    const options = this.renderOptions();
+    const isSlides = this.current.mode === 'slides';
+    this.slidesRendered = isSlides ? renderSlides(this.current.source, options) : undefined;
+    this.rendered = this.slidesRendered ?? renderMarkdown(this.current.source, options);
+    preview.innerHTML = isSlides ? '' : this.rendered.html;
+    if (isSlides) void this.updateSlides();
+    if (!isSlides && !this.current.source.trim()) {
       const empty = document.createElement('p');
       empty.className = 'preview-placeholder';
       empty.textContent = 'Good ideas begin with a few words.';
@@ -505,6 +535,135 @@ class MarkdownWorkspace extends HTMLElement {
     });
     this.q('[data-error-list]').replaceChildren(...issues);
     this.scrollSync?.refresh();
+  }
+
+  private renderOptions(allowRemoteImages = this.remoteImages): RenderOptions {
+    return {
+      allowRemoteImages,
+      ...(this.imageUrls?.sources.size ? { imageSources: this.imageUrls.sources } : {}),
+    };
+  }
+
+  private refreshImages(): void {
+    const previous = this.imageUrls;
+    this.imageUrls = this.current?.images?.length ? createImageObjectUrls(this.current.images) : undefined;
+    previous?.revoke();
+  }
+
+  private markDraftChanged(): void {
+    if (!this.current) return;
+    this.drafts.set(this.current.id, this.current);
+    this.dirty = true;
+    if (!this.storageAvailable) this.volatileDrafts.add(this.current.id);
+    this.setSaveState(this.storageAvailable ? 'saving' : 'error', this.storageAvailable ? 'Saving in this browser…' : 'Not saved · download a copy');
+    this.scheduleSave();
+  }
+
+  private async insertImages(files: File[], target = this.current?.id): Promise<void> {
+    if (!this.current || this.current.id !== target || !this.editor) throw new Error('Choose the document where you want to insert these images, then try again.');
+    const prepared = await prepareImageFiles(files, this.current.images ?? []);
+    if (!prepared.length) return;
+    if (!this.current || this.current.id !== target || !this.editor) throw new Error('The active document changed before the images were ready. Please insert them again.');
+    const selection = this.editor.state.selection.main;
+    const prefix = selection.from > 0 && !this.current.source.slice(0, selection.from).endsWith('\n\n') ? '\n\n' : '';
+    const suffix = selection.to < this.current.source.length && !this.current.source.slice(selection.to).startsWith('\n\n') ? '\n\n' : '\n';
+    const markdown = `${prefix}${prepared.map((image) => imageMarkdown(image)).join('\n\n')}${suffix}`;
+    if (this.current.source.length - (selection.to - selection.from) + markdown.length > MAX_SOURCE_LENGTH) {
+      throw new Error('These image references would exceed the 400,000-character preview limit.');
+    }
+    this.current = { ...this.current, images: [...(this.current.images ?? []), ...prepared] };
+    this.refreshImages();
+    this.editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: markdown },
+      selection: { anchor: selection.from + markdown.length },
+      annotations: isolateHistory.of('full'),
+    });
+    this.markDraftChanged();
+    this.syncContentMode();
+    this.render();
+    this.editor.focus();
+    this.notify(`${prepared.length === 1 ? 'Image inserted' : `${prepared.length} images inserted`}. Download Markdown + images to keep a portable copy.`);
+  }
+
+  private slideSettings(): SlideSettings {
+    return normalizeSlideSettings({ theme: this.current?.slideTheme, ratio: this.current?.slideRatio });
+  }
+
+  private syncContentMode(): void {
+    const slides = this.current?.mode === 'slides';
+    this.dataset.contentMode = slides ? 'slides' : 'document';
+    for (const button of this.querySelectorAll<HTMLButtonElement>('[data-content-mode]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.contentMode === this.dataset.contentMode));
+    }
+    this.q('[data-preview-scroll]').hidden = slides;
+    this.q('[data-slide-stage]').hidden = !slides;
+    this.q('[data-slide-navigation]').hidden = !slides;
+    this.q('[data-slide-theme-control]').hidden = !slides;
+    this.q('[data-slide-present]').hidden = !slides;
+    this.q('[data-outline-toggle]').hidden = slides;
+    this.q('[data-reading-time]').hidden = slides;
+    this.q('[data-document-typeset]').hidden = slides;
+    this.q('[data-slide-settings]').hidden = !slides;
+    this.q<HTMLInputElement>('[data-sync]').disabled = slides;
+    this.closeOutline();
+    const settings = this.slideSettings();
+    this.q<HTMLSelectElement>('select[data-slide-theme]').value = settings.theme;
+    this.q<HTMLSelectElement>('select[data-slide-ratio]').value = settings.ratio;
+    this.q('[data-slide-stage]').style.setProperty('--slide-aspect', settings.ratio === '4:3' ? String(4 / 3) : String(16 / 9));
+    const hasImages = !!this.current?.images?.length;
+    this.exportControl('[data-markdown-download-label]').textContent = hasImages ? 'Markdown + images' : slides ? 'Markdown slide deck' : 'Markdown';
+    this.exportControl('[data-markdown-download-help]').textContent = hasImages ? 'Editable Markdown and pictures in one ZIP' : 'Keep an editable copy';
+    this.exportControl('[data-markdown-download-extension]').textContent = hasImages ? '.zip' : '.md';
+    this.exportControl('[data-export-bundle]').hidden = !slides || hasImages;
+    this.exportControl('[data-html-download-help]').textContent = slides ? 'Interactive slides · opens offline' : 'Math fonts included · opens offline';
+    this.exportControl('[data-pdf-download-help]').textContent = slides ? 'One slide per page' : 'A clean, typeset document';
+  }
+
+  private setContentMode(mode: 'document' | 'slides'): void {
+    if (!this.current || (this.current.mode ?? 'document') === mode) return;
+    if (mode === 'document') this.slidePreview?.exitPresentation();
+    this.current = { ...this.current, mode };
+    this.markDraftChanged();
+    this.syncContentMode();
+    this.render();
+  }
+
+  private changeSlideSettings(): void {
+    if (!this.current) return;
+    const settings = normalizeSlideSettings({ theme: this.q<HTMLSelectElement>('select[data-slide-theme]').value, ratio: this.q<HTMLSelectElement>('select[data-slide-ratio]').value });
+    this.current = { ...this.current, slideTheme: settings.theme, slideRatio: settings.ratio };
+    this.markDraftChanged();
+    this.q('[data-slide-stage]').style.setProperty('--slide-aspect', settings.ratio === '4:3' ? String(4 / 3) : String(16 / 9));
+    if (this.slidesRendered) void this.updateSlides();
+  }
+
+  private async updateSlides(): Promise<void> {
+    if (!this.slidesRendered || this.current?.mode !== 'slides') return;
+    if (!this.slidePreview && !this.slideLoading) {
+      const generation = this.slideGeneration;
+      this.slideLoading = (async () => {
+        const { createSlidePreview } = await import('./slide-preview');
+        if (generation !== this.slideGeneration) return;
+        const preview = await createSlidePreview(this.q('[data-slide-host]'), (state: SlidePreviewState) => this.updateSlideControls(state));
+        if (generation !== this.slideGeneration) { preview.destroy(); return; }
+        this.slidePreview = preview;
+      })();
+    }
+    try {
+      if (this.slideLoading) await this.slideLoading;
+      if (this.current?.mode === 'slides' && this.slidesRendered) this.slidePreview?.update(this.slidesRendered, this.slideSettings());
+    } catch (error) {
+      this.q('[data-slide-host]').textContent = 'Slides could not be loaded. Switch to Document and back to try again.';
+      this.notify(messageOf(error), 10_000);
+    } finally { this.slideLoading = undefined; }
+  }
+
+  private updateSlideControls(state: SlidePreviewState): void {
+    this.q('[data-slide-position]').textContent = `${state.index + 1} / ${state.total}`;
+    this.q<HTMLButtonElement>('[data-slide-previous]').disabled = state.index === 0;
+    this.q<HTMLButtonElement>('[data-slide-next]').disabled = state.index >= state.total - 1;
+    this.slideOverflow = state.overflow;
+    this.q('[data-slide-overflow]').hidden = !state.overflow;
   }
 
   private renderOutline(): void {
@@ -559,7 +718,7 @@ class MarkdownWorkspace extends HTMLElement {
     for (const button of this.querySelectorAll<HTMLButtonElement>('[data-view-mode]')) {
       button.setAttribute('aria-pressed', String(button.dataset.viewMode === this.dataset.view));
     }
-    requestAnimationFrame(() => { this.editor?.requestMeasure(); this.scrollSync?.refresh(); });
+    requestAnimationFrame(() => { this.editor?.requestMeasure(); this.scrollSync?.refresh(); this.slidePreview?.layout(); });
   }
 
   private savePreferences(): void { writeLocal(PREFERENCES_KEY, JSON.stringify(this.preferences)); }
@@ -609,15 +768,31 @@ class MarkdownWorkspace extends HTMLElement {
     this.q('[data-outline-toggle]').setAttribute('aria-expanded', 'false');
   }
 
-  private downloadSource(): void {
+  private async downloadSource(): Promise<void> {
     if (!this.current) return;
     this.closeExport();
-    downloadMarkdown(this.current.source, this.current.title);
-    this.notify('Markdown download started.');
+    const snapshot = { ...this.current };
+    if (snapshot.images?.length) {
+      const { downloadDocumentBundle } = await import('../lib/document-bundle');
+      await downloadDocumentBundle(snapshot.source, snapshot.title, snapshot.images, draftOptions(snapshot));
+      this.notify('Markdown and images downloaded together. Open the ZIP here to continue editing.');
+    } else {
+      downloadMarkdown(snapshot.source, snapshot.title);
+      this.notify('Markdown download started.');
+    }
+  }
+
+  private async downloadBundle(): Promise<void> {
+    if (!this.current) return;
+    this.closeExport();
+    const snapshot = { ...this.current };
+    const { downloadDocumentBundle } = await import('../lib/document-bundle');
+    await downloadDocumentBundle(snapshot.source, snapshot.title, snapshot.images ?? [], draftOptions(snapshot));
+    this.notify('Slide bundle downloaded. Open this ZIP to restore its Markdown, images, and slide settings.');
   }
 
   private syncWelcome(): void {
-    const show = !!this.current && !this.current.source.trim() && !this.dismissedWelcome.has(this.current.id);
+    const show = !!this.current && this.current.mode !== 'slides' && !this.current.source.trim() && !this.dismissedWelcome.has(this.current.id);
     this.q('[data-welcome]').hidden = !show;
     this.toggleAttribute('data-welcoming', show);
   }
@@ -715,7 +890,8 @@ class MarkdownWorkspace extends HTMLElement {
     const source = applyCleanup(snapshot.source, this.selectedCleanup());
     if (source === snapshot.source) return;
     const settings = { ...this.documentSettings };
-    await this.newDocument(`${snapshot.title.slice(0, 88)} (formatted)`, snapshot.source);
+    const metadata = draftOptions(this.current);
+    await this.newDocument(`${snapshot.title.slice(0, 88)} (formatted)`, snapshot.source, metadata);
     this.documentSettings = settings;
     this.persistDocumentSettings();
     this.replaceSource(source);
@@ -809,8 +985,18 @@ class MarkdownWorkspace extends HTMLElement {
   private openPdf(): void {
     this.closeExport();
     if (!this.current?.source.trim()) { this.openPaste(); return; }
-    this.pdfSnapshot = { id: this.current.id, title: this.current.title, source: this.current.source, allowRemoteImages: this.remoteImages };
-    this.pdfRendered = renderMarkdown(this.current.source, { allowRemoteImages: this.remoteImages });
+    this.pdfSnapshot = { ...draftOptions(this.current), id: this.current.id, title: this.current.title, source: this.current.source, allowRemoteImages: this.remoteImages };
+    if (this.current.mode === 'slides') {
+      const result = renderSlides(this.current.source, this.renderOptions());
+      this.q('[data-slide-pdf-count]').textContent = `${result.slides.length} ${result.slides.length === 1 ? 'slide' : 'slides'}`;
+      this.q('[data-slide-pdf-ratio]').textContent = `${this.slideSettings().ratio} · ${this.slideSettings().theme === 'serif' ? 'Academic' : this.slideSettings().theme === 'midnight' ? 'Midnight' : 'Paper'}`;
+      const warning = this.q('[data-slide-pdf-warning]');
+      warning.hidden = !this.slideOverflow && !result.errors.length;
+      warning.textContent = result.errors.length ? 'Resolve the mathematical issues shown in the editor before exporting.' : 'The current slide is too full. Shorten it or add a slide break before exporting.';
+      this.q<HTMLDialogElement>('[data-slide-pdf-dialog]').showModal();
+      return;
+    }
+    this.pdfRendered = renderMarkdown(this.current.source, this.renderOptions());
     const settings = this.documentSettings;
     for (const [selector, value] of [
       ['[data-pdf-paper]', settings.paper], ['[data-pdf-orientation]', settings.orientation],
@@ -867,7 +1053,7 @@ class MarkdownWorkspace extends HTMLElement {
     for (const button of this.querySelectorAll<HTMLButtonElement>('[data-pdf-style]')) {
       button.setAttribute('aria-pressed', String(button.dataset.pdfStyle === this.documentSettings.style));
     }
-    const result = this.pdfRendered ?? renderMarkdown(snapshot.source, { allowRemoteImages: snapshot.allowRemoteImages });
+    const result = this.pdfRendered ?? renderMarkdown(snapshot.source, this.renderOptions(snapshot.allowRemoteImages));
     const article = this.q('[data-pdf-preview]');
     this.q<HTMLStyleElement>('[data-pdf-preview-style]').textContent = documentPresentationCss(this.documentSettings, '[data-pdf-preview]');
     article.innerHTML = prepareDocumentHtml(result.html, snapshot.title, this.documentSettings);
@@ -883,6 +1069,10 @@ class MarkdownWorkspace extends HTMLElement {
       try { target = decodeURIComponent(target); } catch { /* Keep the original fragment. */ }
       const id = ids.get(target);
       if (id) anchor.setAttribute('href', `#${id}`);
+    }
+    for (const label of article.querySelectorAll<HTMLLabelElement>('label[for]')) {
+      const id = ids.get(label.htmlFor);
+      if (id) label.htmlFor = id;
     }
     this.q<HTMLButtonElement>('[data-pdf-print]').disabled = !result.html;
     this.q<HTMLButtonElement>('[data-pdf-html]').disabled = !result.html;
@@ -923,23 +1113,42 @@ class MarkdownWorkspace extends HTMLElement {
     const settings = { ...this.documentSettings };
     dialog.close();
     this.notify('Preparing a portable document with embedded math fonts…', 30_000);
-    await exportPortableHtml(snapshot.source, snapshot.title, { allowRemoteImages: snapshot.allowRemoteImages }, settings);
+    await exportPortableHtml(snapshot.source, snapshot.title, this.renderOptions(snapshot.allowRemoteImages), settings);
     this.notify('Your styled HTML download is ready.');
   }
 
   private async exportHtml(): Promise<void> {
     if (!this.current) return;
     this.closeExport();
-    this.notify('Preparing a portable document with embedded math fonts…', 30_000);
-    const source = this.current.source;
-    const title = this.current.title;
-    await exportPortableHtml(source, title, { allowRemoteImages: this.remoteImages }, this.documentSettings);
+    const snapshot = { ...this.current };
+    const options = this.renderOptions();
+    this.notify(snapshot.mode === 'slides' ? 'Preparing an offline presentation with its images and math fonts…' : 'Preparing a portable document with embedded math fonts…', 30_000);
+    if (snapshot.mode === 'slides') {
+      const { exportSlidesHtml } = await import('../lib/export-slides');
+      await exportSlidesHtml(snapshot.source, snapshot.title, options, normalizeSlideSettings({ theme: snapshot.slideTheme, ratio: snapshot.slideRatio }));
+    } else await exportPortableHtml(snapshot.source, snapshot.title, options, this.documentSettings);
     this.notify('Your standalone HTML download is ready.');
   }
 
   private async print(): Promise<void> {
     this.closeExport();
     const snapshot = this.pdfSnapshot;
+    const slidesDialog = this.q<HTMLDialogElement>('[data-slide-pdf-dialog]');
+    if (snapshot?.mode === 'slides' && slidesDialog.open) {
+      if (this.current?.id !== snapshot.id || this.current.source !== snapshot.source || this.current.title !== snapshot.title
+        || this.current.mode !== 'slides' || this.current.slideTheme !== snapshot.slideTheme || this.current.slideRatio !== snapshot.slideRatio) {
+        slidesDialog.close();
+        this.openPdf();
+        this.notify('The slides changed. Review their updated settings before printing.');
+        return;
+      }
+      const result = renderSlides(snapshot.source, this.renderOptions(snapshot.allowRemoteImages));
+      const settings = this.slideSettings();
+      const { printSlides } = await import('../lib/export-slides');
+      slidesDialog.close();
+      await printSlides(result.slides, snapshot.title, settings);
+      return;
+    }
     const dialog = this.q<HTMLDialogElement>('[data-pdf-dialog]');
     if (!snapshot || !dialog.open) return;
     if (this.current?.id !== snapshot.id || this.current.source !== snapshot.source || this.current.title !== snapshot.title) {
@@ -949,14 +1158,21 @@ class MarkdownWorkspace extends HTMLElement {
       return;
     }
     const settings = { ...this.documentSettings };
-    const result = renderMarkdown(snapshot.source, { allowRemoteImages: snapshot.allowRemoteImages });
+    const result = renderMarkdown(snapshot.source, this.renderOptions(snapshot.allowRemoteImages));
     if (!result.html) throw new Error(result.errors[0]?.message ?? 'This document could not be rendered.');
     dialog.close();
     await printDocument(result.html, snapshot.title, settings);
   }
 
   private async openFile(file: File): Promise<void> {
-    if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose a Markdown (.md or .markdown) or plain text (.txt) file.');
+    if (/\.zip$/i.test(file.name)) {
+      const { importWorkspaceBundle } = await import('../lib/document-bundle');
+      const imported = await importWorkspaceBundle(file);
+      await this.newDocument(imported.title, imported.source, imported);
+      this.notify('Opened the Markdown and its images as a new document.');
+      return;
+    }
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose a Markdown (.md), plain text (.txt), or Markdown + images (.zip) file.');
     if (file.size > MAX_SOURCE_LENGTH * 4) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
     const source = await file.text();
     if (source.length > MAX_SOURCE_LENGTH) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
@@ -979,6 +1195,39 @@ class MarkdownWorkspace extends HTMLElement {
     };
     const headerExports = this.headerExports();
     click('[data-paste], [data-welcome-paste]', () => this.openPaste());
+    click('[data-insert-image]', () => {
+      this.imageTarget = this.current?.id;
+      this.q<HTMLInputElement>('[data-image-input]').click();
+    });
+    this.q<HTMLInputElement>('[data-image-input]').addEventListener('change', (event) => {
+      const input = event.target as HTMLInputElement;
+      const files = [...(input.files ?? [])];
+      const target = this.imageTarget;
+      input.value = '';
+      if (files.length) this.runAction(() => this.insertImages(files, target));
+    }, { signal });
+    this.q('[data-editor]').addEventListener('paste', (event: ClipboardEvent) => {
+      const files = [...(event.clipboardData?.items ?? [])]
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile()).filter((file): file is File => file !== null);
+      if (!files.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const target = this.current?.id;
+      this.runAction(() => this.insertImages(files, target));
+    }, { capture: true, signal });
+    click('[data-content-mode]', (event) => {
+      this.setContentMode((event.currentTarget as HTMLElement).dataset.contentMode === 'slides' ? 'slides' : 'document');
+      this.syncWelcome();
+    });
+    click('[data-slide-previous]', () => this.slidePreview?.previous());
+    click('[data-slide-next]', () => this.slidePreview?.next());
+    click('[data-slide-present]', () => {
+      if (this.slidePreview) this.slidePreview.present();
+      else this.notify('The presentation is still loading. Please try again in a moment.');
+    });
+    this.q<HTMLSelectElement>('select[data-slide-theme]').addEventListener('change', () => this.changeSlideSettings(), { signal });
+    this.q<HTMLSelectElement>('select[data-slide-ratio]').addEventListener('change', () => this.changeSlideSettings(), { signal });
     click('[data-welcome-open]', () => this.q<HTMLInputElement>('[data-file-input]').click());
     click('[data-welcome-examples]', () => this.q<HTMLDialogElement>('[data-examples-dialog]').showModal());
     click('[data-welcome-dismiss]', () => {
@@ -1030,6 +1279,8 @@ class MarkdownWorkspace extends HTMLElement {
     }, { signal });
     click('[data-pdf], [data-print]', () => this.openPdf(), headerExports);
     click('[data-pdf-close]', () => this.q<HTMLDialogElement>('[data-pdf-dialog]').close());
+    click('[data-slide-pdf-close]', () => this.q<HTMLDialogElement>('[data-slide-pdf-dialog]').close());
+    click('[data-slide-print]', () => this.runAction(() => this.print()));
     click('[data-pdf-style]', (event) => {
       this.documentSettings = normalizeDocumentSettings({ ...this.documentSettings, style: (event.currentTarget as HTMLElement).dataset.pdfStyle });
       this.readPdfControls();
@@ -1117,7 +1368,7 @@ class MarkdownWorkspace extends HTMLElement {
     click('[data-duplicate]', () => this.runAction(async () => {
       if (this.current) {
         const settings = { ...this.documentSettings };
-        await this.newDocument(`${this.current.title.slice(0, 193)} (copy)`, this.current.source);
+        await this.newDocument(`${this.current.title.slice(0, 193)} (copy)`, this.current.source, draftOptions(this.current));
         this.documentSettings = settings;
         this.persistDocumentSettings();
       }
@@ -1129,7 +1380,7 @@ class MarkdownWorkspace extends HTMLElement {
       const example = EXAMPLES.find((item) => item.id === id);
       if (example) {
         this.q<HTMLDialogElement>('[data-examples-dialog]').close();
-        this.runAction(() => this.newDocument(example.title, example.source));
+        this.runAction(() => this.newDocument(example.title, example.source, example));
       }
     }, { signal });
     click('[data-settings]', () => this.q<HTMLDialogElement>('[data-settings-dialog]').showModal());
@@ -1170,7 +1421,8 @@ class MarkdownWorkspace extends HTMLElement {
       this.exportControl('[data-export-toggle]').setAttribute('aria-expanded', String(!menu.hidden));
       if (!menu.hidden) menu.querySelector('button')?.focus();
     }, headerExports);
-    click('[data-export-md]', () => this.downloadSource(), headerExports);
+    click('[data-export-md]', () => this.runAction(() => this.downloadSource()), headerExports);
+    click('[data-export-bundle]', () => this.runAction(() => this.downloadBundle()), headerExports);
     click('[data-export-html]', () => this.runAction(() => this.exportHtml()), headerExports);
     click('[data-find]', () => {
       if (this.dataset.view === 'preview') this.setView(this.mobile.matches ? 'editor' : 'split');
@@ -1205,16 +1457,27 @@ class MarkdownWorkspace extends HTMLElement {
     }, { signal });
     document.addEventListener('keydown', (event) => {
       if (event.defaultPrevented) return;
+      if ((event.target as Element).closest('.qft-slide-presentation')) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+          event.preventDefault();
+          this.slidePreview?.exitPresentation();
+          this.openPdf();
+        } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+          event.preventDefault();
+          this.runAction(() => this.downloadSource());
+        }
+        return;
+      }
       if (event.key === 'Escape') { this.closeExport(); this.closeOutline(); this.closeSidebar(); }
       if (this.querySelector('dialog[open]')) {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p' && this.q<HTMLDialogElement>('[data-pdf-dialog]').open) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p' && (this.q<HTMLDialogElement>('[data-pdf-dialog]').open || this.q<HTMLDialogElement>('[data-slide-pdf-dialog]').open)) {
           event.preventDefault();
           this.runAction(() => this.print());
         }
         return;
       }
       if (event.ctrlKey || event.metaKey) {
-        if (event.key.toLowerCase() === 's') { event.preventDefault(); this.downloadSource(); }
+        if (event.key.toLowerCase() === 's') { event.preventDefault(); this.runAction(() => this.downloadSource()); }
         if (event.key.toLowerCase() === 'o') { event.preventDefault(); this.q<HTMLInputElement>('[data-file-input]').click(); }
         if (event.key.toLowerCase() === 'p') { event.preventDefault(); this.openPdf(); }
         if (event.key.toLowerCase() === 'f') {
@@ -1222,7 +1485,7 @@ class MarkdownWorkspace extends HTMLElement {
           if (this.dataset.view === 'preview') this.setView(this.mobile.matches ? 'editor' : 'split');
           if (this.editor) openSearchPanel(this.editor);
         }
-      } else if (event.key.toLowerCase() === 'n' && !(event.target as Element).closest('input, textarea, select, [contenteditable="true"]')) {
+      } else if (event.key.toLowerCase() === 'n' && !(event.target as Element).closest('input, textarea, select, [contenteditable="true"], .qft-slide-deck')) {
         event.preventDefault();
         this.runAction(() => this.newDocument());
       }
@@ -1255,8 +1518,12 @@ class MarkdownWorkspace extends HTMLElement {
       event.stopPropagation();
       dragDepth = 0;
       this.classList.remove('is-dragging');
-      const file = event.dataTransfer.files[0];
-      this.runAction(() => this.openFile(file));
+      const files = [...event.dataTransfer.files];
+      const target = this.current?.id;
+      if (files.every((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name))) {
+        this.runAction(() => this.insertImages(files, target));
+      } else if (files.length === 1) this.runAction(() => this.openFile(files[0]));
+      else this.notify('Drop one Markdown or ZIP file, or drop a group of pictures to insert them.');
     }, { capture: true, signal });
     const resizer = this.q('[data-resizer]');
     resizer.addEventListener('pointerdown', (event) => {

@@ -29,7 +29,7 @@ export function fileName(title: string, extension: string): string {
   return `${safeTitle}.${suffix}`;
 }
 
-function download(content: string, title: string, extension: string, mime: string): void {
+export function download(content: string, title: string, extension: string, mime: string): void {
   const blob = new Blob([content], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -46,7 +46,7 @@ export function downloadMarkdown(source: string, title: string): void {
   download(source, title, 'md', 'text/markdown');
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
+export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
@@ -55,7 +55,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-async function waitForPrintAssets(article: HTMLElement): Promise<void> {
+export async function waitForPrintAssets(article: HTMLElement): Promise<void> {
   let timer: number | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = window.setTimeout(() => reject(new Error('The document assets are taking too long to load. Please try printing again.')), 20_000);
@@ -67,7 +67,10 @@ async function waitForPrintAssets(article: HTMLElement): Promise<void> {
     await Promise.race([
       Promise.all([
         document.fonts.ready,
-        ...[...article.querySelectorAll('img')].map((image) => image.decode().catch(() => {})),
+        ...[...article.querySelectorAll('img')].map(async (image) => {
+          try { await image.decode(); }
+          catch { throw new Error('An image could not load for printing. Check its address or insert the image from a file, then try again.'); }
+        }),
       ]),
       timeout,
     ]);
@@ -113,7 +116,7 @@ async function fetchLimited(url: string, limit: number): Promise<Blob> {
   }
 }
 
-async function standaloneMathCss(): Promise<string> {
+export async function standaloneMathCss(): Promise<string> {
   if (embeddedKatexCss) return embeddedKatexCss;
   embeddedKatexCss = (async () => {
     const files = Object.entries(fontAssets);
@@ -134,13 +137,19 @@ async function standaloneMathCss(): Promise<string> {
   return embeddedKatexCss;
 }
 
-async function embedImages(html: string): Promise<string> {
+export async function embedImages(html: string): Promise<string> {
   const template = document.createElement('template');
   template.innerHTML = html;
   let embeddedBytes = 0;
+  const assets = new Map<string, string>();
   for (const image of template.content.querySelectorAll<HTMLImageElement>('img')) {
     const src = image.getAttribute('src') ?? '';
     if (src.startsWith('data:')) continue;
+    if (assets.has(src)) {
+      image.src = assets.get(src)!;
+      image.removeAttribute('referrerpolicy');
+      continue;
+    }
     try {
       const blob = await fetchLimited(src, MAX_IMAGE_BYTES);
       if (!/^image\/(png|jpeg|webp|gif)$/i.test(blob.type)) {
@@ -148,11 +157,15 @@ async function embedImages(html: string): Promise<string> {
       }
       embeddedBytes += blob.size;
       if (embeddedBytes > MAX_EXPORT_IMAGE_BYTES) throw new Error('The document has too many image bytes for a portable HTML export.');
-      image.src = await blobToDataUrl(blob);
+      const data = await blobToDataUrl(blob);
+      assets.set(src, data);
+      image.src = data;
       image.removeAttribute('referrerpolicy');
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'The image server may block downloads.';
-      throw new Error(`A remote image could not be embedded. Turn off remote images in Settings, or embed the image in your Markdown. ${detail}`);
+      throw new Error(src.startsWith('blob:')
+        ? `An inserted image could not be embedded. Please reopen the document and try again. ${detail}`
+        : `A remote image could not be embedded. Turn off remote images in Settings, or insert the image from a file. ${detail}`);
     }
   }
   return template.innerHTML;
@@ -235,6 +248,10 @@ export async function printDocument(html: string, title: string, value: Document
       const id = `qft-print-${element.id}`;
       printIds.set(element.id, id);
       element.id = id;
+    });
+    article.querySelectorAll<HTMLLabelElement>('label[for]').forEach((label) => {
+      const id = printIds.get(label.htmlFor);
+      if (id) label.htmlFor = id;
     });
     article.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((anchor) => {
       let target = anchor.getAttribute('href')!.slice(1);

@@ -6,24 +6,24 @@ import SiteFooter from '../components/SiteFooter.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title={`Markdown examples: notes & equations — ${siteConfig.name}`} active="examples" description="Open editable Markdown examples: study notes, a project report, quantum mechanics, a Gaussian integral, and a syntax guide. Try styles for PDF and HTML.">
+<BaseLayout title={`Markdown examples: slides, notes & equations — ${siteConfig.name}`} active="examples" description="Open editable Markdown slides, study notes, a project report, quantum mechanics, and a syntax guide. Present equations or export a PDF and portable HTML.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">A starting point for your next document</span>
     <h1>Markdown examples to make your own.</h1>
-    <p class="page-lead">Explore editable study notes, a project report, and mathematical derivations. The examples demonstrate headings, KaTeX equations, tables, code, and footnotes. Open one as a new local draft, arrange its sections, and try a PDF or HTML style.</p>
+    <p class="page-lead">Explore a five-slide physics presentation, study notes, a project report, and mathematical derivations. Open an example as a new local draft, make it your own, and try Present, Save PDF, or a portable HTML download.</p>
     <div class="example-grid">
       {EXAMPLES.map((example, index) => (
         <article class="example-card">
           <span class="example-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
           <h2>{example.title}</h2>
           <p>{example.description}</p>
-          <a class="button-secondary" href={withBase(`?example=${encodeURIComponent(example.id)}`)} aria-label={`Open ${example.title}`}>Open example <Icon name="arrow" size={16} /></a>
+          <a class="button-secondary" href={withBase(`?example=${encodeURIComponent(example.id)}`)} aria-label={`Open ${example.title}`}>{example.mode === 'slides' ? 'Open slide deck' : 'Open example'} <Icon name="arrow" size={16} /></a>
         </article>
       ))}
     </div>
     <section class="about-callout">
       <h2>Bring an idea of your own</h2>
-      <p>Paste an AI answer or your own notes into the workspace. Choose a new document or append to the one you are working on. Your drafts stay in this browser; download Markdown to keep an editable copy, or save a styled HTML document or PDF to share.</p>
+      <p>Paste an AI answer or your own notes into the workspace. Insert figures, then choose Document or Slides. Drafts stay in this browser; download Markdown + images to keep an editable copy with its pictures, or share an exported HTML document, presentation, or PDF.</p>
       <a href={withBase('guide/')}>Explore the writing guide →</a>
     </section>
   </main>

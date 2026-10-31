@@ -41,12 +41,14 @@ This inventory records the installed browser-facing dependencies and their trans
 | `commander` | 15.0.0 | MIT |
 | `crelt` | 1.0.7 | MIT |
 | `entities` | 8.1.0 | BSD-2-Clause |
+| `fflate` | 0.8.3 | MIT |
 | `highlight.js` | 11.12.0 | BSD-3-Clause |
 | `katex` | 0.19.1 | MIT |
 | `linkify-it` | 6.1.0 | MIT |
 | `markdown-it` | 15.0.3 | MIT |
 | `mdurl` | 2.1.0 | MIT |
 | `punycode.js` | 2.3.1 | MIT |
+| `reveal.js` | 6.0.2 | MIT |
 | `style-mod` | 4.1.4 | MIT |
 | `uc.micro` | 3.0.0 | MIT |
 | `w3c-keyname` | 2.2.8 | MIT |
@@ -1566,6 +1568,64 @@ Source: [https://github.com/marijnh/w3c-keyname](https://github.com/marijnh/w3c-
 
 ```text
 Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### fflate 0.8.3
+
+Source: https://github.com/101arrowz/fflate
+
+`LICENSE`
+
+```text
+MIT License
+
+Copyright (c) 2026 Arjun Barrett
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### reveal.js 6.0.2
+
+Source: https://github.com/hakimel/reveal.js
+
+`LICENSE`
+
+```text
+Copyright (C) 2011-2026 Hakim El Hattab, http://hakim.se, and reveal.js contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

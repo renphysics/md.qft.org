@@ -4,12 +4,14 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import { describe, it } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { DraftConflictError, isDraftConflict, type Draft } from '../src/lib/draft-store.ts';
+import { DraftConflictError, isDraftConflict, type Draft, type DraftOptions } from '../src/lib/draft-store.ts';
+import type { DraftImage } from '../src/lib/image-assets.ts';
 import { scopedStorageKey } from '../src/lib/storage-scope.ts';
 import { siteConfig } from '../src/config/site.ts';
 import { DEFAULT_DOCUMENT_SETTINGS, type DocumentSettings } from '../src/lib/document-presentation.ts';
 import { appendDocumentSection, suggestDocumentTitle, applyCleanup } from '../src/lib/document-tools.ts';
 import { renderMarkdown } from '../src/lib/render-markdown.ts';
+import { EXAMPLES } from '../src/lib/examples.ts';
 
 // Exercise the actual controller methods, with isolated browser surfaces and
 // delayed storage dependencies. Remove imports through the TypeScript AST so
@@ -34,7 +36,7 @@ interface Workspace {
   ephemeralDrafts: Set<string>;
   deletingId?: string;
   actionQueue: Promise<void>;
-  newDocument(title: string, source: string): Promise<void>;
+  newDocument(title: string, source: string, options?: DraftOptions): Promise<void>;
   flush(): Promise<void>;
   refreshFromStorage(): Promise<void>;
   bindEvents(): void;
@@ -46,6 +48,7 @@ interface Workspace {
   activate(draft: Draft): void;
   q(selector: string): unknown;
   querySelector(selector: string): unknown;
+  querySelectorAll(selector: string): unknown[];
   pasteDocument(source: string, title: string, mode: string, target?: string): Promise<void>;
   applyFormatting(): Promise<void>;
   replaceSource(source: string): void;
@@ -58,12 +61,12 @@ interface Workspace {
   closeExport(): void;
   openPdf(): void;
   updatePdfPreview(): void;
-  pdfSnapshot?: { id: string; title: string; source: string; allowRemoteImages: boolean };
+  pdfSnapshot?: DraftOptions & { id: string; title: string; source: string; allowRemoteImages: boolean };
   documentSettings: DocumentSettings;
 }
 
 interface Storage {
-  createDraft(title: string, source: string): Promise<Draft>;
+  createDraft(title: string, source: string, options?: DraftOptions): Promise<Draft>;
   saveDraft(draft: Draft, expectedRevision?: number): Promise<Draft>;
   loadDrafts(): Promise<Draft[]>;
   deleteDraft(id: string): Promise<void>;
@@ -71,6 +74,10 @@ interface Storage {
 
 function draft(id: string, source = '', revision = 1, title = id): Draft {
   return { id, source, title, revision, createdAt: 1, updatedAt: revision };
+}
+
+function attachment(id: string): DraftImage {
+  return { id, name: `${id}.png`, type: 'image/png', blob: new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: 'image/png' }) };
 }
 
 function deferred<T>() {
@@ -93,9 +100,9 @@ function workspace(storage: Partial<Storage> = {}, browserDependencies: Record<s
     document: { addEventListener: noop, getElementById: (id: string) => id === 'workspace-exports' ? headerExports : null }, window: { addEventListener: noop },
     createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
     DEFAULT_DOCUMENT_SETTINGS, appendDocumentSection, suggestDocumentTitle, applyCleanup,
-    renderMarkdown,
+    renderMarkdown, EXAMPLES,
     MAX_SOURCE_LENGTH: 400_000,
-    createDraft: async (title: string, source: string) => draft('new', source, 1, title),
+    createDraft: async (title: string, source: string, options: DraftOptions = {}) => ({ ...draft('new', source, 1, title), ...options }),
     saveDraft: async (value: Draft) => ({ ...value, revision: value.revision + 1 }),
     loadDrafts: async () => [], deleteDraft: async () => {},
     ...storage,
@@ -140,7 +147,7 @@ function confirmDelete(app: Workspace, controls: Map<string, (event: Event) => v
 }
 
 describe('workspace draft coordination', () => {
-  it('connects external header exports while keeping the PDF dialog inside its workspace', () => {
+  it('connects external header exports while keeping the PDF dialog inside its workspace', async () => {
     const downloads: { source: string; title: string }[] = [];
     const headerClicks = new Map<string, () => void>();
     const headerAttributes = new Map<string, string>();
@@ -196,6 +203,7 @@ describe('workspace draft coordination', () => {
 
     headerClicks.get('[data-export-toggle]')!();
     headerClicks.get('[data-export-md]')!();
+    await app.actionQueue;
     assert.deepEqual(downloads, [{ source: app.current.source, title: app.current.title }]);
     assert.equal(menu.hidden, true);
 
@@ -292,6 +300,61 @@ describe('workspace draft coordination', () => {
     assert.equal(app.current.source, '# A note\n\n$E=mc^2$\n');
   });
 
+  it('retains pictures and slide settings in a formatted copy and its untouched original', async () => {
+    const { app } = workspace();
+    const image = attachment('plot');
+    const original = '```markdown\n## A note\n\n![Plot](qft-image:plot)\n```';
+    app.current = { ...app.current, images: [image], mode: 'slides', slideTheme: 'midnight', slideRatio: '4:3' };
+    edit(app, original, 'Illustrated slides');
+    app.cleanupSnapshot = { id: 'old', title: 'Illustrated slides', source: original };
+    app.selectedCleanup = () => ['unwrap-fence', 'heading-levels'];
+    await app.applyFormatting();
+    assert.equal(app.current.id, 'new');
+    assert.equal(app.current.source, '# A note\n\n![Plot](qft-image:plot)\n');
+    assert.equal(app.current.images?.[0].id, image.id);
+    assert.equal(app.current.images?.[0].blob, image.blob);
+    assert.equal(app.current.mode, 'slides');
+    assert.equal(app.current.slideTheme, 'midnight');
+    assert.equal(app.current.slideRatio, '4:3');
+    assert.equal(app.drafts.get('old')?.source, original);
+    assert.equal(app.drafts.get('old')?.images?.[0].blob, image.blob);
+  });
+
+  it('duplicates pictures and slide preferences through the actual Duplicate action', async () => {
+    const { app } = workspace();
+    const image = attachment('figure');
+    app.current = { ...app.current, source: '![Figure](qft-image:figure)', images: [image], mode: 'slides', slideTheme: 'serif', slideRatio: '4:3' };
+    app.drafts.set(app.current.id, app.current);
+    let duplicate!: () => void;
+    app.querySelectorAll = (selector) => selector === '[data-duplicate]' ? [{
+      addEventListener: (event: string, handler: () => void) => { if (event === 'click') duplicate = handler; },
+    }] : [];
+    app.bindEvents();
+    duplicate();
+    await app.actionQueue;
+    assert.equal(app.current.id, 'new');
+    assert.equal(app.current.source, '![Figure](qft-image:figure)');
+    assert.equal(app.current.images?.[0].blob, image.blob);
+    assert.equal(app.current.mode, 'slides');
+    assert.equal(app.current.slideTheme, 'serif');
+    assert.equal(app.current.slideRatio, '4:3');
+    assert.equal(app.drafts.get('old')?.images?.[0].blob, image.blob);
+  });
+
+  it('opens the built-in slide example in Slides mode from the workspace example picker', async () => {
+    const { app, controls } = workspace();
+    app.bindEvents();
+    const example = EXAMPLES.find((item) => item.id === 'quantum-slides')!;
+    controls.get('[data-examples-list]:click')!({
+      target: { closest: () => ({ dataset: { exampleId: example.id } }) },
+    } as unknown as Event);
+    await app.actionQueue;
+    assert.equal(app.current.source, example.source);
+    assert.equal(app.current.mode, 'slides');
+    assert.equal(app.current.slideTheme, example.slideTheme);
+    assert.equal(app.current.slideRatio, example.slideRatio);
+  });
+
   it('requires a fresh cleanup review if a document changed after the preview opened', async () => {
     let created = 0;
     const { app } = workspace({ createDraft: async () => { created++; return draft('unexpected'); } });
@@ -322,6 +385,42 @@ describe('workspace draft coordination', () => {
     assert.equal(writes[0].source, 'typed while the new document was being created');
     assert.equal(app.drafts.get('old')?.source, writes[0].source);
     assert.equal(app.current.id, 'new');
+  });
+
+  it('commits each kind of metadata-only edit made while an earlier autosave is pending', async () => {
+    const imageA = attachment('figure-a');
+    const imageB = attachment('figure-b');
+    const changes: DraftOptions[] = [
+      { mode: 'slides' },
+      { slideTheme: 'midnight' },
+      { slideRatio: '4:3' },
+      { images: [imageA, imageB] },
+    ];
+    for (const change of changes) {
+      const saving = deferred<Draft>();
+      const writes: Draft[] = [];
+      const { app } = workspace({ saveDraft: (value) => {
+        writes.push({ ...value });
+        return writes.length === 1 ? saving.promise : Promise.resolve({ ...value, revision: value.revision + 1 });
+      } });
+      app.current = { ...app.current, images: [imageA], mode: 'document', slideTheme: 'paper', slideRatio: '16:9' };
+      edit(app, '![Figure](qft-image:figure-a)');
+      const pending = app.flush();
+      await nextTurn();
+      app.current = { ...app.current, ...change };
+      app.dirty = true;
+      const expected = app.current;
+      saving.resolve({ ...writes[0], revision: 2 });
+      await pending;
+      assert.equal(writes.length, 2, `The ${Object.keys(change)[0]} edit needs a second committed revision`);
+      assert.equal(app.current.revision, 3);
+      assert.equal(app.current.mode, expected.mode);
+      assert.equal(app.current.slideTheme, expected.slideTheme);
+      assert.equal(app.current.slideRatio, expected.slideRatio);
+      assert.equal(app.current.images?.length, expected.images?.length);
+      assert.equal(writes[1].images?.length, expected.images?.length);
+      assert.equal(app.dirty, false);
+    }
   });
 
   it('does not regress a newly committed draft when a cross-tab read returns an older snapshot', async () => {
@@ -359,6 +458,62 @@ describe('workspace draft coordination', () => {
     assert.equal(app.current.revision, 2);
     assert.equal(app.drafts.get('old')?.source, 'other tab version');
     assert.equal(app.dirty, false);
+  });
+
+  it('keeps both tabs’ picture sets and saves slide changes made during conflict recovery', async () => {
+    const imageA = attachment('local-a');
+    const imageB = attachment('local-b');
+    const otherImage = attachment('other-tab');
+    const creation = deferred<Draft>();
+    const competitor: Draft = { ...draft('old', 'Other tab text', 2), images: [otherImage], mode: 'document' };
+    let recoveryOptions: DraftOptions | undefined;
+    let attempts = 0;
+    const { app } = workspace({
+      createDraft: (_title, _source, options) => { recoveryOptions = options; return creation.promise; },
+      saveDraft: async (value) => {
+        if (++attempts === 1) throw new DraftConflictError('old', competitor);
+        return { ...value, revision: value.revision + 1 };
+      },
+    });
+    app.current = { ...app.current, images: [imageA], mode: 'document', slideTheme: 'paper', slideRatio: '16:9' };
+    edit(app, 'My local text');
+    const saving = app.flush();
+    await nextTurn();
+    assert.equal(recoveryOptions?.images?.[0].id, imageA.id);
+    app.current = { ...app.current, images: [imageA, imageB], mode: 'slides', slideTheme: 'midnight', slideRatio: '4:3' };
+    app.dirty = true;
+    creation.resolve({ ...draft('recovered', 'My local text', 1, 'old (recovered)'), ...recoveryOptions });
+    await saving;
+    assert.equal(app.current.id, 'recovered');
+    assert.equal(app.current.revision, 2);
+    assert.deepEqual(app.current.images?.map((image) => image.id), [imageA.id, imageB.id]);
+    assert.equal(app.current.mode, 'slides');
+    assert.equal(app.current.slideTheme, 'midnight');
+    assert.equal(app.current.slideRatio, '4:3');
+    assert.equal(app.drafts.get('old')?.images?.[0].id, otherImage.id);
+    assert.equal(app.drafts.get('old')?.source, competitor.source);
+    assert.equal(app.dirty, false);
+  });
+
+  it('keeps images and slide preferences in memory if storing a conflict copy fails', async () => {
+    const image = attachment('unsaved-figure');
+    const competitor = draft('old', 'Other tab', 2);
+    const { app } = workspace({
+      saveDraft: async () => { throw new DraftConflictError('old', competitor); },
+      createDraft: async () => { throw new Error('Storage unavailable'); },
+    });
+    app.current = { ...app.current, images: [image], mode: 'slides', slideTheme: 'serif', slideRatio: '4:3' };
+    edit(app, '![Unsaved figure](qft-image:unsaved-figure)');
+    await app.flush();
+    assert.equal(app.current.id, 'memory-draft');
+    assert.equal(app.current.images?.[0].blob, image.blob);
+    assert.equal(app.current.mode, 'slides');
+    assert.equal(app.current.slideTheme, 'serif');
+    assert.equal(app.current.slideRatio, '4:3');
+    assert.equal(app.storageAvailable, false);
+    assert.ok(app.volatileDrafts.has(app.current.id));
+    assert.ok(app.ephemeralDrafts.has(app.current.id));
+    assert.equal(app.drafts.get('old')?.source, 'Other tab');
   });
 
   it('keeps a persisted draft visible when storage is unavailable instead of claiming deletion', async () => {

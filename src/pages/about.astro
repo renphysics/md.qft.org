@@ -7,43 +7,44 @@ import { withBase } from '../lib/site-path';
 import license from '../../LICENSE?raw';
 import notices from '../../THIRD_PARTY_NOTICES.md?raw';
 ---
-<BaseLayout title={`About, privacy & MIT license — ${siteConfig.name}`} active="about" description="Learn how this free Markdown editor processes text locally, stores drafts, handles remote images, and supports reuse under the MIT license.">
+<BaseLayout title={`About, privacy & MIT license — ${siteConfig.name}`} active="about" description="Learn how this free Markdown editor keeps text and pictures in your browser, renders math and slides, exports portable files, and supports MIT-licensed reuse.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">About this project</span>
     <h1>About {siteConfig.name}.</h1>
-    <p class="page-lead">{siteConfig.name} is a free, open-source Markdown editor that runs in your browser. It previews mathematics with KaTeX, helps you organize notes and AI answers, and prepares styled HTML or documents you can save as PDF through browser printing.</p>
+    <p class="page-lead">{siteConfig.name} is a free, open-source Markdown editor that runs in your browser. Write mathematics, insert pictures, organize notes and AI answers, and turn Markdown into documents or slide presentations. Keep editable bundles, portable HTML, or PDFs saved through browser printing.</p>
 
     <section aria-labelledby="your-document-your-decisions">
       <h2 id="your-document-your-decisions">Your document, your decisions</h2>
       <p>Start with a blank page or bring plain text and Markdown from elsewhere. Cleanup shows its changes before creating a formatted copy and keeps your original. The section organizer moves complete sections, with Undo available when you want to change direction.</p>
       <p>Clean, Study Notes, and Academic styles give the same source a different presentation for HTML or PDF. Formatting and organization happen locally; they do not call an AI service, rewrite your ideas, or check the claims and references in a pasted answer.</p>
+      <p>Choose Slides to make a presentation, with a choice of themes and proportions. Equations, figures, lists, and code use the same Markdown rendering as documents. Present fullscreen or save a slide PDF and a standalone interactive HTML deck.</p>
     </section>
 
     <section class="about-callout">
       <h2>Your words stay with you</h2>
-      <p>The editor processes your Markdown in your browser. Drafts are stored locally with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Editor and per-document presentation preferences are also stored in this browser, separately from your Markdown.</p>
-      <p>Browser storage is convenient, but it is not a backup. Clearing site data, private browsing, or a browser’s storage cleanup can remove drafts. Download important work as Markdown and keep that file somewhere you trust.</p>
+      <p>The editor processes your Markdown and imported pictures in your browser. Drafts, local image attachments, and slide settings are stored with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Editor preferences and document print styles are saved locally too.</p>
+      <p>Browser storage is convenient, but it is not a backup. Clearing site data, private browsing, or a browser’s storage cleanup can remove drafts and pictures. Download Markdown + images for work with local pictures, or Slide bundle to preserve a deck’s settings, and keep the ZIP somewhere you trust. Open that bundle here to continue editing. Markdown alone keeps an editable text copy.</p>
     </section>
 
     <section aria-labelledby="small-details">
       <h2 id="small-details">The small details matter</h2>
       <p>The editor, mathematical fonts, and interface fonts are served with the site. Writing and previewing a document does not send its source to a rendering service. The site host still receives ordinary requests needed to load the website.</p>
-      <p>External links connect to another website when you follow them. Remote images are disabled by default; enabling them in Settings lets the browser request those images from their hosts. Those hosts can then receive normal connection information such as your IP address. Embedded raster images do not need a separate image host.</p>
+      <p>External links connect to another website when you follow them. Remote images are disabled by default; enabling them in Settings lets the browser request those images from their hosts. Those hosts can then receive normal connection information such as your IP address. Imported pictures and embedded raster images do not need a separate image host.</p>
       <p>Raw HTML is shown as text, and the preview does not execute scripts from documents. Local saving does not promise that the website itself will load offline; keep exported files for access independent of this site.</p>
     </section>
 
     <section aria-labelledby="take-your-work">
       <h2 id="take-your-work">Take your work with you</h2>
       <div class="guide-grid">
-        <article class="guide-card"><h2>Markdown</h2><p>Your editable source, exactly as written. A small, portable file you can open in another text editor.</p></article>
-        <article class="guide-card"><h2>A styled document</h2><p>HTML export includes your chosen presentation and mathematical fonts. Save PDF lets you choose the style and page settings, then opens the browser’s print dialog. Final pagination appears in that print preview. Remote images in an HTML export must be embedded successfully for a fully portable copy.</p></article>
+        <article class="guide-card"><h2>Editable source and pictures</h2><p>Markdown preserves your source text. Markdown + images adds local pictures in a ZIP bundle you can reopen in the editor. Slide bundle retains a presentation’s settings even without pictures. Use a bundle when you want to keep imported figures or slide settings with the text.</p></article>
+        <article class="guide-card"><h2>A document or presentation</h2><p>HTML export includes fonts and images, plus interactive playback for slides. Save PDF uses browser printing, with document styles or one page per slide. Check the browser’s final print preview. Enabled remote images must be embedded successfully for portable HTML output.</p></article>
       </div>
     </section>
 
     <section aria-labelledby="built-with">
       <h2 id="built-with">Built on good foundations</h2>
-      <p>Astro provides the website, CodeMirror powers the editor, markdown-it parses the text, and KaTeX typesets the mathematics.</p>
-      <p>For syntax and workflow instructions, see the <a href={withBase('guide/')}>Markdown and math guide</a>. The <a href={withBase('faq/')}>FAQ</a> answers common questions about PDFs, saved drafts, and hosting your own version.</p>
+      <p>Astro provides the website, CodeMirror powers the editor, markdown-it parses the text, and KaTeX typesets the mathematics. reveal.js handles slide playback, and fflate packages portable drafts.</p>
+      <p>For syntax and workflow instructions, see the <a href={withBase('guide/')}>Markdown, math, and slides guide</a>. The <a href={withBase('faq/')}>FAQ</a> answers common questions about pictures, presentations, PDFs, saved drafts, and hosting your own version.</p>
     </section>
 
     <section aria-labelledby="make-it-yours">

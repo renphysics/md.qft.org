@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { IDBFactory } from 'fake-indexeddb';
+import { imageMarkdown, prepareImageFiles } from '../src/lib/image-assets.ts';
 import {
   createDraft,
   createDraftId,
@@ -127,5 +128,74 @@ describe('local document storage', { concurrency: false }, () => {
       globalThis.indexedDB = factory;
     }
     assert.deepEqual(await loadDrafts(), []);
+  });
+
+  it('stores image bytes and slide preferences in the same draft revision', async () => {
+    const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+    const [image] = await prepareImageFiles([new File([bytes], 'Figure.png', { type: 'image/png' })]);
+    const created = await createDraft('Research talk', imageMarkdown(image), {
+      images: [image], mode: 'slides', slideTheme: 'midnight', slideRatio: '4:3',
+    });
+    const persisted = await getDraft(created.id);
+    assert.equal(persisted?.mode, 'slides');
+    assert.equal(persisted?.slideTheme, 'midnight');
+    assert.equal(persisted?.slideRatio, '4:3');
+    assert.equal(persisted?.images?.[0].id, image.id);
+    assert.deepEqual(new Uint8Array(await persisted!.images![0].blob.arrayBuffer()), bytes);
+    const saved = await saveDraft({ ...persisted!, source: `# Updated\n\n${persisted!.source}` });
+    assert.equal(saved.revision, 2);
+    assert.equal(saved.images?.[0].id, image.id);
+    assert.equal(saved.mode, 'slides');
+    assert.deepEqual(await getDraft(saved.id), saved);
+  });
+
+  it('duplicates image attachments and slide preferences independently of later deletion', async () => {
+    const [image] = await prepareImageFiles([new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'Photo.jpg')]);
+    const original = await createDraft('A talk', imageMarkdown(image), { images: [image], mode: 'slides', slideTheme: 'serif', slideRatio: '16:9' });
+    const copy = await duplicateDraft(original);
+    assert.notEqual(copy.images, original.images);
+    assert.notEqual(copy.images![0], original.images![0]);
+    assert.equal(copy.images![0].id, original.images![0].id);
+    assert.equal(copy.mode, 'slides');
+    assert.equal(copy.slideTheme, 'serif');
+    await deleteDraft(original.id);
+    const persisted = await getDraft(copy.id);
+    assert.deepEqual(new Uint8Array(await persisted!.images![0].blob.arrayBuffer()), new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+    assert.equal(persisted?.source, original.source);
+  });
+
+  it('preserves the winning image snapshot when another tab saves a stale revision', async () => {
+    const [imageA, imageB] = await prepareImageFiles([
+      new File(['GIF89a', new Uint8Array([1, 0, 1, 0])], 'A.gif'),
+      new File(['GIF89a', new Uint8Array([2, 0, 2, 0])], 'B.gif'),
+    ]);
+    const initial = await createDraft('Two tabs', imageMarkdown(imageA), { images: [imageA], mode: 'document' });
+    const winner = await saveDraft({ ...initial, images: [imageB], source: imageMarkdown(imageB), mode: 'slides' });
+    await assert.rejects(saveDraft({ ...initial, title: 'Stale edit' }), (error: unknown) => {
+      assert.ok(error instanceof DraftConflictError);
+      assert.equal(error.current?.images?.[0].id, imageB.id);
+      assert.equal(error.current?.mode, 'slides');
+      assert.equal(error.current?.source, imageMarkdown(imageB));
+      return true;
+    });
+    assert.deepEqual(await getDraft(initial.id), winner);
+  });
+
+  it('upgrades an old text-only draft on save without changing its identity or creation time', async () => {
+    const legacy = await createDraft('Existing notes', '# Existing notes');
+    assert.equal('mode' in legacy, false);
+    assert.equal('images' in legacy, false);
+    const updated = await saveDraft({ ...legacy, mode: 'slides', slideTheme: 'paper', images: [] });
+    assert.equal(updated.id, legacy.id);
+    assert.equal(updated.createdAt, legacy.createdAt);
+    assert.equal(updated.revision, 2);
+    assert.equal(updated.mode, 'slides');
+    assert.deepEqual(await getDraft(updated.id), updated);
+  });
+
+  it('does not commit a new revision when image metadata validation fails', async () => {
+    const draft = await createDraft('Keep this document', 'Original source');
+    await assert.rejects(saveDraft({ ...draft, source: 'Must not be committed', images: [{ id: 'x', name: 'x.svg', type: 'image/png', blob: new Blob(['<svg/>'], { type: 'image/svg+xml' }) }] }), DraftStorageError);
+    assert.deepEqual(await getDraft(draft.id), draft);
   });
 });

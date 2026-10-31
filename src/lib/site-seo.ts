@@ -4,8 +4,8 @@ import type { SiteFaq } from './site-faq';
 /** Public, canonical routes only. Drafts and example query strings are local UI state. */
 export const publicPages = [
   { path: '', name: 'Workspace' },
-  { path: 'guide/', name: 'Markdown and math guide' },
-  { path: 'examples/', name: 'Document examples' },
+  { path: 'guide/', name: 'Markdown, math, and slides guide' },
+  { path: 'examples/', name: 'Document and slide examples' },
   { path: 'faq/', name: 'Frequently asked questions' },
   { path: 'about/', name: 'About and privacy' },
 ] as const;
@@ -71,9 +71,11 @@ export function structuredData({ homeUrl, canonicalUrl, title, description, faq 
         softwareHelp: { '@type': 'WebPage', url: new URL('guide/', homeUrl).href },
         featureList: [
           'Live Markdown preview', 'KaTeX mathematics',
-          'Local browser drafts', 'Reviewed formatting cleanup',
-          'Section organization', 'Markdown and standalone HTML export',
-          'Document styles and browser print-to-PDF',
+          'Local browser drafts and image attachments', 'Reviewed formatting cleanup',
+          'Section organization', 'Markdown and image ZIP bundles',
+          'Standalone document and interactive presentation HTML export',
+          'Markdown slides with themes and fullscreen presentation',
+          'Document styles and browser print-to-PDF', 'One-page-per-slide PDF printing',
         ],
       },
       page,

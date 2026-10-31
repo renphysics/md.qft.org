@@ -1,8 +1,8 @@
 # QFT Markdown
 
-A reusable workspace for turning **AI answers, notes, and mathematics into documents worth keeping**, released under the **MIT license**. Paste Markdown, organize its sections, choose a document style, and take your work with you as editable Markdown, portable HTML, or a PDF saved through your browser.
+A reusable workspace for turning **AI answers, notes, and mathematics into documents and presentations**, released under the **MIT license**. Paste Markdown, insert pictures, organize sections, or present a slide deck. Keep editable Markdown with its images, portable HTML, or a PDF saved through your browser.
 
-Built with Astro, CodeMirror, markdown-it, and KaTeX. The application runs in the browser and deploys as static files on **GitHub Pages**. Drafts stay in this browser's storage; there are no accounts or cloud documents. You can fork it, change the branding, and host it on your own domain or GitHub project URL.
+Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application runs in the browser and deploys as static files on **GitHub Pages**. Drafts and imported images stay in this browser's storage; there are no accounts or cloud documents. You can fork it, change the branding, and host it on your own domain or GitHub project URL.
 
 ## What you can do
 
@@ -14,9 +14,14 @@ Built with Astro, CodeMirror, markdown-it, and KaTeX. The application runs in th
 - Choose **Clean**, **Study Notes**, or **Academic** presentation for PDF and HTML. Adjust paper size, orientation, margins, text size, spacing, optional author, contents, and major-section page breaks.
 - Write in a CodeMirror editor with line numbers, undo/redo, find and replace, and adjustable text size. Switch between split view, editor, and preview; resize the panes and toggle synchronized scrolling.
 - Use inline and display mathematics with `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`.
+- Insert PNG, JPEG, WebP, and GIF pictures through **Insert image**, clipboard paste, or drag and drop. Pictures save with the draft without filling its Markdown with base64 text.
+- Switch between **Document** and **Slides** without adding another toolbar. Use `---` slide breaks, Paper/Midnight/Academic themes, 16:9 or 4:3 proportions, and fullscreen **Present** playback.
 - Keep named drafts with automatic local saving. Concurrent edits in other tabs are preserved as conflict copies.
 - Import a `.md` file as a separate draft and download Markdown without changing its source.
+- Download **Markdown + images** as an editable ZIP with local pictures and slide settings, then reopen it using **Open file**.
+- Use **Slide bundle** to retain slide mode, theme, and proportions even when a presentation has no local pictures.
 - Export a portable HTML document with embedded math fonts, or open **Save PDF** to style the document before using the browser's print dialog.
+- Export a standalone interactive HTML presentation or a slide PDF with one page per slide.
 - Start from study notes, a project report, mathematical and physics examples, or the Markdown field guide; use the outline to navigate longer notes.
 - Read in light or dark mode. Math errors remain visible and link back to their source.
 - Choose whether to load remote images. They are blocked by default.
@@ -30,9 +35,39 @@ Built with Astro, CodeMirror, markdown-it, and KaTeX. The application runs in th
 
 The PDF setup includes A4/US Letter, portrait/landscape, three margin presets, 10–13 pt text, spacing, optional author, a linked table of contents, and page breaks before major sections. **Add a title if missing** preserves existing Markdown headings. The typography preview shows the selected appearance; final page boundaries and the destination are controlled by the browser.
 
-Presentation preferences are saved per document in localStorage, separately from its Markdown. Downloaded Markdown contains the source text, not these application preferences. Cleanup and organization are formatting tools; they do not summarize text, validate citations, or rewrite claims.
+Document PDF-style preferences are saved per draft in localStorage, separately from its Markdown. Slide mode, theme, and aspect ratio save with the draft and travel in an exported ZIP bundle. Plain Markdown contains source text and references, not these application preferences or local image bytes. Cleanup and organization are formatting tools; they do not summarize text, validate citations, or rewrite claims.
 
 Live preview, the paste dialog, and structural tools support up to 400,000 characters. Keep longer material in smaller documents for these features. Markdown downloads preserve the source independently of the rendered preview.
+
+## Pictures and portable drafts
+
+Choose **Insert image**, paste an image into the editor, or drop image files onto the workspace. Imports support PNG, JPEG, WebP, and GIF, with limits of **8 MiB per image**, **24 MiB total**, and **50 images per draft**. File signatures determine the image format. Local pictures are stored as blobs with the draft in IndexedDB; short Markdown references resolve to browser-local image URLs while editing. Image bytes do not count toward the Markdown character limit.
+
+When a draft has local pictures, its Markdown download becomes **Markdown + images**, an editable ZIP bundle. It contains the Markdown, image files, and slide settings, and can be reopened through **Open file**. A plain `.md` import cannot read neighboring files on your computer. Source text copied into a Markdown-only file contains local image references but does not contain those images.
+
+Ordinary HTTPS image links are supported when **Load remote images** is enabled in Settings. Those links remain remote in Markdown bundles. HTML exports embed local images and attempt to embed enabled remote images; their hosts must permit the download. Embedded PNG/JPEG/WebP/GIF data URLs also work, but their text counts toward the source limit.
+
+## Markdown slides
+
+Choose **Slides** in the format selector. **Editor / Split / Preview** still controls the visible panes. Put `---` on its own line, with blank lines before and after, to begin a slide. Separators inside fenced code and display math stay literal. Document mode keeps ordinary horizontal rules.
+
+```markdown
+# A presentation
+
+One idea at a time.
+
+---
+
+## An equation
+
+$$
+i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
+$$
+```
+
+Slides reuse the document Markdown/KaTeX renderer, including all four math delimiters and the same image permissions. Choose **Paper**, **Midnight**, or **Academic**, and **16:9** or **4:3**. **Present** opens fullscreen playback; use arrows to navigate. Keep content short enough to fit each slide.
+
+In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, and images in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This format does not implement Marp directives, Slidev components, arbitrary HTML, or user-supplied scripts.
 
 ## Start locally
 
@@ -89,7 +124,7 @@ Use backticks or fenced code blocks when demonstrating syntax literally. A backs
 
 ## Your documents
 
-Local saving is convenient, but it is not a backup. Clearing site data, private-browsing policies, or changing browser/profile can remove or hide local drafts. A custom domain, a different Pages hostname, and localhost have separate browser storage; project paths on the same host use separate application storage names. **Download Markdown for anything you want to keep independently.**
+Local saving is convenient, but it is not a backup. Clearing site data, private-browsing policies, or changing browser/profile can remove or hide local drafts. A custom domain, a different Pages hostname, and localhost have separate browser storage; project paths on the same host use separate application storage names. **Download Markdown + images for drafts whose editable source and pictures you want to keep independently.** Markdown alone is sufficient when there are no local image attachments to preserve.
 
 The application does not send document text to a server. The host still receives ordinary website requests. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
 
