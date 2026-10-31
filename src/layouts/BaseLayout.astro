@@ -45,7 +45,7 @@ const contentSecurityPolicy = [
     <header class="site-header">
       <a href={withBase()} class="brand" aria-label={`${siteConfig.name} home`}>
         <span class="brand-symbol" aria-hidden="true">m<span>∗</span></span>
-        <span class="brand-wordmark"><strong>{siteConfig.name}</strong><span class="brand-caption">{siteConfig.tagline}</span></span>
+        <span class="brand-wordmark"><strong>{siteConfig.name}</strong></span>
       </a>
       <nav class="top-nav" aria-label="Main navigation">
         <a href={withBase()} class:list={{ active: active === 'editor' }} aria-current={active === 'editor' ? 'page' : undefined}>Workspace</a>
