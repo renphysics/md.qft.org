@@ -2,6 +2,8 @@
 
 QFT Markdown is distributed under the MIT license in [LICENSE](LICENSE), with copyright (c) 2026 Jie Ren. Third-party software and font files retain the licenses and copyright notices below.
 
+The built-in interactive physics demonstrations, their static illustrations, and the isolated demo controller are original application code distributed under that same MIT license. They add no external plotting or 3D library dependency. Standalone HTML exports include the applicable application, reveal.js, and KaTeX notices with their bundled code.
+
 ## Browser libraries and fonts
 
 This inventory records the installed browser-facing dependencies and their transitive package dependencies. Some packages are used only in part after bundling. The versions come from the installed packages corresponding to package-lock.json; license texts are reproduced from their distributed license and notice files.

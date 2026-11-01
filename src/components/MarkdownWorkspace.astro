@@ -2,8 +2,10 @@
 import Icon from './Icon.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
+import { DEMO_PRESETS } from '../lib/demo-presets';
 import 'katex/dist/katex.min.css';
 import '../styles/document.css';
+import '../styles/interactive-demos.css';
 ---
 <qft-markdown-workspace data-view="split" class="workspace" id="main-content">
   <aside class="document-sidebar" aria-label="Documents" data-sidebar>
@@ -43,6 +45,7 @@ import '../styles/document.css';
         <button data-cleanup><Icon name="tidy" size={15} /><span>Clean up</span></button>
         <button data-organize><Icon name="sections" size={15} /><span>Organize</span></button>
         <button data-insert-image title="Insert images (or paste / drop them into the editor)"><Icon name="image" size={15} /><span>Insert image</span></button>
+        <button data-insert-demo title="Add an interactive demonstration"><Icon name="play" size={15} /><span>Interactive demo</span></button>
       </div>
       <div class="workspace-view-tools">
         <button class="icon-button" data-settings aria-label="Editor settings" title="Editor settings"><Icon name="sliders" size={17} /></button>
@@ -70,15 +73,39 @@ import '../styles/document.css';
         <div class="panel-bottom preview-bottom"><span data-reading-time>Ready when you are</span><div class="slide-navigation" data-slide-navigation hidden><button class="icon-button small" data-slide-previous aria-label="Previous slide"><Icon name="previous" size={15} /></button><span data-slide-position aria-live="polite" aria-atomic="true">1 / 1</span><button class="icon-button small" data-slide-next aria-label="Next slide"><Icon name="chevron" size={15} /></button></div><label class="slide-theme-control" data-slide-theme-control hidden><span class="sr-only">Slide theme</span><select data-slide-theme aria-label="Slide theme"><option value="paper">Paper</option><option value="midnight">Midnight</option><option value="serif">Academic</option></select></label><span class="typeset-label" data-document-typeset>Typeset with <strong>KaTeX</strong></span></div>
       </section>
     </div>
-    <div class="diagnostics" data-diagnostics hidden><button class="diagnostics-heading" data-diagnostics-toggle aria-expanded="true"><span data-error-heading>Check your mathematics</span><Icon name="down" size={14} /></button><div data-error-list></div></div>
+    <div class="diagnostics" data-diagnostics hidden><button class="diagnostics-heading" data-diagnostics-toggle aria-expanded="true"><span data-error-heading>Check your document</span><Icon name="down" size={14} /></button><div data-error-list></div></div>
     <footer class="workspace-footer"><div class="document-stats"><span data-word-count>0 words</span><span class="stat-divider">·</span><span data-char-count>0 characters</span><span class="stat-divider">·</span><span data-math-count>0 equations</span></div><label class="sync-control"><input type="checkbox" data-sync checked /><span class="switch-track"></span><Icon name="link" size={13} /> Sync scrolling</label><span class="footer-note">A little space to think.</span></footer>
   </main>
   <input type="file" data-file-input accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip" hidden />
   <input type="file" data-image-input accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" multiple hidden />
+  <input type="file" data-demo-file-input accept=".html,.htm,text/html" hidden />
   <div class="toast" role="status" aria-live="polite" data-toast hidden></div>
   <dialog class="app-dialog" data-name-dialog aria-labelledby="name-dialog-title"><form method="dialog" data-name-form><div class="dialog-heading"><span class="eyebrow">YOUR DOCUMENT</span><button type="button" class="icon-button" data-name-close aria-label="Close"><Icon name="close" /></button></div><h2 id="name-dialog-title">Give your ideas a name.</h2><p>A descriptive title makes your notes easier to find.</p><label for="document-name">Document title</label><input id="document-name" name="title" required maxlength="100" autocomplete="off" data-name-input /><div class="dialog-actions"><button type="button" class="button-secondary" data-name-close>Cancel</button><button class="button-primary" value="save">Save title <Icon name="check" size={16} /></button></div></form></dialog>
   <dialog class="app-dialog" data-delete-dialog aria-labelledby="delete-dialog-title"><form method="dialog" data-delete-form><div class="dialog-heading"><span class="eyebrow">MAKE SOME ROOM</span><button type="button" class="icon-button" data-delete-close aria-label="Close"><Icon name="close" /></button></div><h2 id="delete-dialog-title">Delete this document?</h2><p><strong data-delete-title></strong> will be removed from this browser. Download a copy first if you want to keep it.</p><div class="dialog-actions"><button type="button" class="button-secondary" data-delete-close>Keep document</button><button class="button-primary" value="delete">Delete document</button></div></form></dialog>
   <dialog class="app-dialog examples-dialog" data-examples-dialog aria-labelledby="examples-dialog-title"><div class="dialog-heading"><span class="eyebrow">A PLACE TO BEGIN</span><button class="icon-button" data-examples-close aria-label="Close examples"><Icon name="close" /></button></div><h2 id="examples-dialog-title">Start with a little inspiration.</h2><p>Open an example as a new document and make it your own.</p><div data-examples-list class="example-options"></div></dialog>
+  <dialog class="app-dialog demo-gallery-dialog" data-demo-dialog aria-labelledby="demo-gallery-title">
+    <div class="dialog-heading"><span class="eyebrow">SHOW HOW IT WORKS</span><button class="icon-button" data-demo-close aria-label="Close interactive demos"><Icon name="close" /></button></div>
+    <h2 id="demo-gallery-title">Add an interactive demo.</h2>
+    <p>Give your audience something to explore. Choose a physics demo, or bring your own HTML and JavaScript.</p>
+    <div class="demo-gallery-options"><label><input type="checkbox" data-demo-new-slide checked /> Add on a new slide</label><button type="button" data-demo-lesson>Open the complete physics lesson <Icon name="arrow" size={14} /></button></div>
+    <div class="demo-gallery-grid">
+      {DEMO_PRESETS.map((demo) => <button type="button" class="demo-gallery-card" data-demo-preset={demo.id} aria-label={`Insert ${demo.title}`}>
+        <span class="demo-gallery-illustration" aria-hidden="true" set:html={demo.poster} />
+        <span class="demo-gallery-card-copy"><strong>{demo.title}</strong><small>{demo.description}</small><span class="demo-gallery-insert">Insert demo <Icon name="plus" size={14} /></span></span>
+      </button>)}
+    </div>
+    <details class="demo-custom-details" data-demo-custom>
+      <summary><span><Icon name="code" size={17} /> Use your own HTML &amp; JavaScript</span><Icon name="down" size={15} /></summary>
+      <form data-demo-form>
+        <p>Paste a self-contained demo, including one made with AI. Use inline CSS and JavaScript with <code>addEventListener</code>; external libraries and inline event attributes are not supported.</p>
+        <label for="demo-title">Demo title<input id="demo-title" data-demo-title type="text" maxlength="100" value="Interactive demonstration" required /></label>
+        <div class="demo-code-label"><label for="demo-html">HTML, CSS &amp; JavaScript</label><button type="button" data-demo-open-file><Icon name="upload" size={14} /> Open HTML file</button></div>
+        <textarea id="demo-html" data-demo-html spellcheck="false" required placeholder={'<button id="counter">Count: 0</button>\n<script>\nlet count = 0;\nconst button = document.getElementById("counter");\nbutton.addEventListener("click", () => {\n  button.textContent = "Count: " + ++count;\n});\n</script>'}></textarea>
+        <div class="demo-custom-footer"><p>The code runs only when you choose Run demo. Download HTML to share it; PDF uses a still image or text fallback.</p><button type="submit" class="button-primary"><Icon name="plus" size={15} /> Insert custom demo</button></div>
+      </form>
+    </details>
+    <div class="demo-gallery-footer"><span><Icon name="play" size={14} /> Run demos in the preview or while presenting.</span><button class="button-secondary" data-demo-close>Done</button></div>
+  </dialog>
   <dialog class="app-dialog settings-dialog" data-settings-dialog aria-labelledby="settings-dialog-title"><div class="dialog-heading"><span class="eyebrow">MAKE IT YOURS</span><button class="icon-button" data-settings-close aria-label="Close settings"><Icon name="close" /></button></div><h2 id="settings-dialog-title">A comfortable place to write.</h2><div class="setting-row"><div><label for="editor-font-size">Editor text size</label><p>Give your source a little breathing room.</p></div><select id="editor-font-size" data-font-size><option value="12">12 px</option><option value="13">13 px</option><option value="14" selected>14 px</option><option value="15">15 px</option><option value="16">16 px</option><option value="18">18 px</option></select></div><div class="setting-row"><div><label for="wrap-lines">Wrap long lines</label><p>Keep the whole sentence in view.</p></div><input id="wrap-lines" type="checkbox" checked data-wrap /></div><div class="setting-row"><div><label for="remote-images">Load remote images</label><p>Off by default. Enabling contacts the image hosts in this document.</p></div><input id="remote-images" type="checkbox" data-remote-images /></div><div data-slide-settings hidden><div class="setting-row"><div><label for="slide-ratio">Slide size</label><p>Choose a widescreen or classic canvas.</p></div><select id="slide-ratio" data-slide-ratio><option value="16:9">16:9 widescreen</option><option value="4:3">4:3 classic</option></select></div><p class="slide-settings-help">Separate slides with a blank line, <code>---</code>, and another blank line. Choose a theme below the preview.</p></div><div class="settings-note"><Icon name="shield" size={18} /><p>Drafts are saved only in this browser. Export a copy to keep a backup.</p></div><div class="shortcut-list"><span>Download Markdown <kbd>Ctrl / ⌘ S</kbd></span><span>Open a file <kbd>Ctrl / ⌘ O</kbd></span><span>Find in source <kbd>Ctrl / ⌘ F</kbd></span></div></dialog>
   <dialog class="app-dialog paste-dialog" data-paste-dialog aria-labelledby="paste-dialog-title">
     <form data-paste-form>

@@ -18,6 +18,7 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
       <p>Start with a blank page or bring plain text and Markdown from elsewhere. Cleanup shows its changes before creating a formatted copy and keeps your original. The section organizer moves complete sections, with Undo available when you want to change direction.</p>
       <p>Clean, Study Notes, and Academic styles give the same source a different presentation for HTML or PDF. Formatting and organization happen locally; they do not call an AI service, rewrite your ideas, or check the claims and references in a pasted answer.</p>
       <p>Choose Slides to make a presentation, with a choice of themes and proportions. Equations, figures, lists, and code use the same Markdown rendering as documents. Present fullscreen or save a slide PDF and a standalone interactive HTML deck.</p>
+      <p>Interactive demos let a class explore a wave packet, rotate a Bloch sphere, adjust a black-hole potential, or compare wave and envelope motion. Insert a built-in demo or a self-contained HTML and JavaScript example, then choose Run demo in the preview or presentation.</p>
     </section>
 
     <section class="about-callout">
@@ -30,14 +31,14 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
       <h2 id="small-details">The small details matter</h2>
       <p>The editor, mathematical fonts, and interface fonts are served with the site. Writing and previewing a document does not send its source to a rendering service. The site host still receives ordinary requests needed to load the website.</p>
       <p>External links connect to another website when you follow them. Remote images are disabled by default; enabling them in Settings lets the browser request those images from their hosts. Those hosts can then receive normal connection information such as your IP address. Imported pictures and embedded raster images do not need a separate image host.</p>
-      <p>Raw HTML is shown as text, and the preview does not execute scripts from documents. Local saving does not promise that the website itself will load offline; keep exported files for access independent of this site.</p>
+      <p>Ordinary HTML and JavaScript code blocks are shown as text. Only an explicitly marked interactive demo can run, after you choose Run demo. It runs in an isolated frame without access to the editor’s saved drafts. Demos are designed to be self-contained; external libraries, network requests, and inline event attributes are not supported. Local saving does not promise that the website itself will load offline; keep exported files for access independent of this site.</p>
     </section>
 
     <section aria-labelledby="take-your-work">
       <h2 id="take-your-work">Take your work with you</h2>
       <div class="guide-grid">
         <article class="guide-card"><h2>Editable source and pictures</h2><p>Markdown preserves your source text. Markdown + images adds local pictures in a ZIP bundle you can reopen in the editor. Slide bundle retains a presentation’s settings even without pictures. Use a bundle when you want to keep imported figures or slide settings with the text.</p></article>
-        <article class="guide-card"><h2>A document or presentation</h2><p>HTML export includes fonts and images, plus interactive playback for slides. Save PDF uses browser printing, with document styles or one page per slide. Check the browser’s final print preview. Enabled remote images must be embedded successfully for portable HTML output.</p></article>
+        <article class="guide-card"><h2>A document or presentation</h2><p>HTML export includes fonts, images, and interactive demos, plus playback for slides. Save PDF uses browser printing, with document styles or one page per slide. Demos become a captured canvas image, a built-in illustration, or a text fallback. Check the browser’s final print preview. Enabled remote images must be embedded successfully for portable HTML output.</p></article>
       </div>
     </section>
 

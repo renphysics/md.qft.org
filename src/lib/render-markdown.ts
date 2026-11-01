@@ -11,6 +11,7 @@ import json from 'highlight.js/lib/languages/json';
 import bash from 'highlight.js/lib/languages/bash';
 import latex from 'highlight.js/lib/languages/latex';
 import css from 'highlight.js/lib/languages/css';
+import { isInteractiveFence, renderInteractiveFence, MAX_INTERACTIVE_DEMOS } from './interactive-demos';
 
 for (const [name, language] of Object.entries({ javascript, typescript, python, json, bash, latex, css })) {
   hljs.registerLanguage(name, language);
@@ -117,6 +118,31 @@ function renderSource(source: string, options: RenderOptions, slides: boolean): 
   md.use(mathPlugin, { delimiters: 'all', mathFence: false, allowInlineWithSpace: false });
   md.use(footnote);
   md.use(tasklist, { disabled: true });
+
+  // Explicit interactive fences become inert cards. Only the separate sandbox
+  // controller can run their code after the reader chooses Run demo.
+  const ordinaryFence = md.renderer.rules.fence!;
+  const interactiveCards = new WeakMap<Token, string>();
+  let interactiveCount = 0;
+  md.renderer.rules.fence = (tokens, index, settings, environment, renderer) => {
+    const token = tokens[index];
+    if (!isInteractiveFence(token.info)) return ordinaryFence(tokens, index, settings, environment, renderer);
+    const existing = interactiveCards.get(token);
+    if (existing) return existing;
+    const line = token.map?.[0] ?? 0;
+    let html: string;
+    if (++interactiveCount > MAX_INTERACTIVE_DEMOS) {
+      const message = `A document can preview up to ${MAX_INTERACTIVE_DEMOS} interactive demos. Additional demo source is preserved in the Markdown.`;
+      if (interactiveCount === MAX_INTERACTIVE_DEMOS + 1) result.errors.push({ message, line: line + 1 });
+      html = `<div class="qft-demo-error" role="note">${escapeHtml(message)}</div>\n`;
+    } else {
+      const rendered = renderInteractiveFence(token.info, token.content, line);
+      if (rendered.error) result.errors.push({ message: rendered.error, line: line + 1 });
+      html = rendered.html;
+    }
+    interactiveCards.set(token, html);
+    return html;
+  };
 
   const inlineOffsets = new WeakMap<Token, number>();
   const tokenizeInline = md.inline.tokenize;

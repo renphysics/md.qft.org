@@ -13,8 +13,11 @@ import {
 import { renderMarkdown, MAX_SOURCE_LENGTH, type MarkdownResult, type RenderOptions } from '../lib/render-markdown';
 import { createImageObjectUrls, prepareImageFiles, imageMarkdown } from '../lib/image-assets';
 import { renderSlides, normalizeSlideSettings, type SlideResult, type SlideSettings } from '../lib/slides';
+import { interactiveFence } from '../lib/interactive-demos';
+import { DEMO_PRESETS } from '../lib/demo-presets';
+import { createInteractiveDemos, type InteractiveDemoController } from './interactive-demo-runtime';
 import type { SlidePreview, SlidePreviewState } from './slide-preview';
-import { downloadMarkdown, exportPortableHtml, printDocument } from '../lib/export-document';
+import { downloadMarkdown, exportPortableHtml, printDocument, makeInteractivePrintCopy } from '../lib/export-document';
 import {
   DEFAULT_DOCUMENT_SETTINGS, normalizeDocumentSettings, prepareDocumentHtml,
   documentPresentationCss, documentPageMetrics, inspectPrintLayout, type DocumentSettings,
@@ -27,6 +30,7 @@ import { connectScrollSync } from '../lib/scroll-sync';
 import { EXAMPLES } from '../lib/examples';
 import { siteConfig } from '../config/site';
 import { scopedStorageKey } from '../lib/storage-scope';
+import { withBase } from '../lib/site-path';
 
 type ViewMode = 'editor' | 'split' | 'preview';
 interface Preferences { fontSize: number; wrap: boolean; sync: boolean; view: ViewMode; share: number }
@@ -123,6 +127,8 @@ class MarkdownWorkspace extends HTMLElement {
   private remoteImages = false;
   private imageUrls?: ReturnType<typeof createImageObjectUrls>;
   private imageTarget?: string;
+  private demoTarget?: string;
+  private documentDemos?: InteractiveDemoController;
   private slidePreview?: SlidePreview;
   private slideLoading?: Promise<void>;
   private slidesRendered?: SlideResult;
@@ -180,6 +186,7 @@ class MarkdownWorkspace extends HTMLElement {
     this.editor?.destroy();
     this.slideGeneration += 1;
     this.slidePreview?.destroy();
+    this.documentDemos?.destroy();
     this.imageUrls?.revoke();
   }
 
@@ -361,11 +368,14 @@ class MarkdownWorkspace extends HTMLElement {
 
   private activate(draft: Draft): void {
     clearTimeout(this.previewTimer);
-    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-slide-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog]')) {
+    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-slide-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog], [data-demo-dialog]')) {
       if (dialog.open) dialog.close();
     }
     this.current = { ...draft };
+    this.documentDemos?.destroy();
+    this.documentDemos = undefined;
     this.slidePreview?.exitPresentation();
+    this.slidePreview?.resetDemos();
     this.slidePreview?.goTo(0);
     this.refreshImages();
     this.syncContentMode();
@@ -509,6 +519,15 @@ class MarkdownWorkspace extends HTMLElement {
     this.slidesRendered = isSlides ? renderSlides(this.current.source, options) : undefined;
     this.rendered = this.slidesRendered ?? renderMarkdown(this.current.source, options);
     preview.innerHTML = isSlides ? '' : this.rendered.html;
+    if (!this.documentDemos) {
+      this.documentDemos = createInteractiveDemos(preview, {
+        sandboxUrl: withBase('demo-sandbox.html'),
+        isActive: () => this.current?.mode !== 'slides' && this.dataset.view !== 'editor',
+        onLayout: () => this.scrollSync?.refresh(),
+      });
+    }
+    this.documentDemos.sync();
+    this.slidePreview?.syncDemos();
     if (isSlides) void this.updateSlides();
     if (!isSlides && !this.current.source.trim()) {
       const empty = document.createElement('p');
@@ -587,6 +606,53 @@ class MarkdownWorkspace extends HTMLElement {
 
   private slideSettings(): SlideSettings {
     return normalizeSlideSettings({ theme: this.current?.slideTheme, ratio: this.current?.slideRatio });
+  }
+
+  private openDemos(): void {
+    this.demoTarget = this.current?.id;
+    this.q<HTMLDialogElement>('[data-demo-dialog]').showModal();
+  }
+
+  private async insertDemo(value: { preset?: string; title?: string; html?: string }, newSlide: boolean, target = this.demoTarget): Promise<void> {
+    if (!this.current || !this.editor || this.current.id !== target) {
+      throw new Error('The active document changed. Open Interactive demo in the document where you want to insert it.');
+    }
+    const preset = value.preset ? DEMO_PRESETS.find((item) => item.id === value.preset) : undefined;
+    if (value.preset && !preset) throw new Error('Choose one of the available demonstrations.');
+    const title = preset?.title ?? (value.title?.trim() || 'Interactive demonstration');
+    if (!preset && !value.html?.trim()) throw new Error('Paste some HTML and JavaScript for your demonstration.');
+    const fence = interactiveFence(value);
+    const selection = this.editor.state.selection.main;
+    const from = newSlide ? this.current.source.length : selection.from;
+    const to = newSlide ? from : selection.to;
+    const prefix = newSlide
+      ? `${this.current.source.trim() ? '\n\n---\n\n' : ''}## ${title.replace(/[\r\n]+/g, ' ')}\n\n`
+      : (from > 0 && !this.current.source.slice(0, from).endsWith('\n\n') ? '\n\n' : '');
+    const insertion = `${prefix}${fence}\n\n`;
+    if (this.current.source.length - (to - from) + insertion.length > MAX_SOURCE_LENGTH) {
+      throw new Error('This demo would exceed the 400,000-character document limit. Use a smaller demo or start a new document.');
+    }
+    if (!this.current.source.trim() && this.current.title === 'Untitled document') {
+      this.current = { ...this.current, title };
+      this.updateTitle();
+    }
+    if (newSlide) this.current = { ...this.current, mode: 'slides' };
+    this.editor.dispatch({
+      changes: { from, to, insert: insertion },
+      selection: { anchor: from + insertion.length },
+      scrollIntoView: true,
+      annotations: isolateHistory.of('full'),
+    });
+    this.markDraftChanged();
+    this.q<HTMLDialogElement>('[data-demo-dialog]').close();
+    this.syncContentMode();
+    if (this.dataset.view === 'editor') this.setView(this.mobile.matches ? 'preview' : 'split');
+    this.render();
+    if (newSlide) {
+      await this.updateSlides();
+      if (this.current?.id === target) this.slidePreview?.goTo((this.slidesRendered?.slides.length ?? 1) - 1);
+    }
+    this.notify('Demo inserted. Choose Run demo in the preview, or Present to explore it fullscreen.');
   }
 
   private syncContentMode(): void {
@@ -718,7 +784,7 @@ class MarkdownWorkspace extends HTMLElement {
     for (const button of this.querySelectorAll<HTMLButtonElement>('[data-view-mode]')) {
       button.setAttribute('aria-pressed', String(button.dataset.viewMode === this.dataset.view));
     }
-    requestAnimationFrame(() => { this.editor?.requestMeasure(); this.scrollSync?.refresh(); this.slidePreview?.layout(); });
+    requestAnimationFrame(() => { this.editor?.requestMeasure(); this.scrollSync?.refresh(); this.slidePreview?.layout(); this.documentDemos?.sync(); });
   }
 
   private savePreferences(): void { writeLocal(PREFERENCES_KEY, JSON.stringify(this.preferences)); }
@@ -992,7 +1058,7 @@ class MarkdownWorkspace extends HTMLElement {
       this.q('[data-slide-pdf-ratio]').textContent = `${this.slideSettings().ratio} · ${this.slideSettings().theme === 'serif' ? 'Academic' : this.slideSettings().theme === 'midnight' ? 'Midnight' : 'Paper'}`;
       const warning = this.q('[data-slide-pdf-warning]');
       warning.hidden = !this.slideOverflow && !result.errors.length;
-      warning.textContent = result.errors.length ? 'Resolve the mathematical issues shown in the editor before exporting.' : 'The current slide is too full. Shorten it or add a slide break before exporting.';
+      warning.textContent = result.errors.length ? 'Resolve the rendering issues shown in the editor before exporting.' : 'The current slide is too full. Shorten it or add a slide break before exporting.';
       this.q<HTMLDialogElement>('[data-slide-pdf-dialog]').showModal();
       return;
     }
@@ -1057,6 +1123,7 @@ class MarkdownWorkspace extends HTMLElement {
     const article = this.q('[data-pdf-preview]');
     this.q<HTMLStyleElement>('[data-pdf-preview-style]').textContent = documentPresentationCss(this.documentSettings, '[data-pdf-preview]');
     article.innerHTML = prepareDocumentHtml(result.html, snapshot.title, this.documentSettings);
+    makeInteractivePrintCopy(article, this.documentDemos?.snapshots());
     // The editor's live preview remains mounted. Keep preview anchors unique.
     const ids = new Map<string, string>();
     for (const element of article.querySelectorAll<HTMLElement>('[id]')) {
@@ -1146,7 +1213,7 @@ class MarkdownWorkspace extends HTMLElement {
       const settings = this.slideSettings();
       const { printSlides } = await import('../lib/export-slides');
       slidesDialog.close();
-      await printSlides(result.slides, snapshot.title, settings);
+      await printSlides(result.slides, snapshot.title, settings, this.slidePreview?.demoSnapshots());
       return;
     }
     const dialog = this.q<HTMLDialogElement>('[data-pdf-dialog]');
@@ -1161,7 +1228,7 @@ class MarkdownWorkspace extends HTMLElement {
     const result = renderMarkdown(snapshot.source, this.renderOptions(snapshot.allowRemoteImages));
     if (!result.html) throw new Error(result.errors[0]?.message ?? 'This document could not be rendered.');
     dialog.close();
-    await printDocument(result.html, snapshot.title, settings);
+    await printDocument(result.html, snapshot.title, settings, this.documentDemos?.snapshots());
   }
 
   private async openFile(file: File): Promise<void> {
@@ -1195,6 +1262,48 @@ class MarkdownWorkspace extends HTMLElement {
     };
     const headerExports = this.headerExports();
     click('[data-paste], [data-welcome-paste]', () => this.openPaste());
+    click('[data-insert-demo]', () => this.openDemos());
+    click('[data-demo-close]', () => this.q<HTMLDialogElement>('[data-demo-dialog]').close());
+    click('[data-demo-preset]', (event) => {
+      const preset = (event.currentTarget as HTMLElement).dataset.demoPreset;
+      const newSlide = this.q<HTMLInputElement>('[data-demo-new-slide]').checked;
+      const target = this.demoTarget;
+      this.runAction(() => this.insertDemo({ preset }, newSlide, target));
+    });
+    click('[data-demo-lesson]', () => {
+      const example = EXAMPLES.find((item) => item.id === 'interactive-physics');
+      if (!example) return;
+      this.q<HTMLDialogElement>('[data-demo-dialog]').close();
+      this.runAction(async () => {
+        await this.newDocument(example.title, example.source, example);
+        if (this.mobile.matches) this.setView('preview');
+      });
+    });
+    this.q<HTMLFormElement>('[data-demo-form]').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const title = this.q<HTMLInputElement>('[data-demo-title]').value.trim();
+      const html = this.q<HTMLTextAreaElement>('[data-demo-html]').value;
+      const newSlide = this.q<HTMLInputElement>('[data-demo-new-slide]').checked;
+      const target = this.demoTarget;
+      this.runAction(() => this.insertDemo({ title, html }, newSlide, target));
+    }, { signal });
+    click('[data-demo-open-file]', () => this.q<HTMLInputElement>('[data-demo-file-input]').click());
+    this.q<HTMLInputElement>('[data-demo-file-input]').addEventListener('change', (event) => {
+      const input = event.target as HTMLInputElement;
+      const file = input.files?.[0];
+      input.value = '';
+      if (!file) return;
+      const target = this.demoTarget;
+      this.runAction(async () => {
+        if (!/\.html?$/i.test(file.name)) throw new Error('Choose an HTML (.html or .htm) file.');
+        if (file.size > 100_000) throw new Error('Choose a self-contained HTML demo smaller than 100 KB.');
+        const html = await file.text();
+        if (target !== this.current?.id || !this.q<HTMLDialogElement>('[data-demo-dialog]').open) return;
+        this.q<HTMLTextAreaElement>('[data-demo-html]').value = html;
+        this.q<HTMLInputElement>('[data-demo-title]').value = file.name.replace(/\.html?$/i, '').replace(/[-_]+/g, ' ').slice(0, 100);
+        this.q<HTMLDetailsElement>('[data-demo-custom]').open = true;
+      });
+    }, { signal });
     click('[data-insert-image]', () => {
       this.imageTarget = this.current?.id;
       this.q<HTMLInputElement>('[data-image-input]').click();

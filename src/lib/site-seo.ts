@@ -75,6 +75,8 @@ export function structuredData({ homeUrl, canonicalUrl, title, description, faq 
           'Section organization', 'Markdown and image ZIP bundles',
           'Standalone document and interactive presentation HTML export',
           'Markdown slides with themes and fullscreen presentation',
+          'Interactive physics demonstrations and isolated custom HTML demos',
+          'Offline interactive HTML and static demo snapshots for PDF',
           'Document styles and browser print-to-PDF', 'One-page-per-slide PDF printing',
         ],
       },

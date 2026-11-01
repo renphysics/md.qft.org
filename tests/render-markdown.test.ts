@@ -140,12 +140,18 @@ test('oversized sources return a clear error rather than partial rendering', () 
   assert.match(result.errors[0].message, /400,000/);
 });
 
-test('the included examples render without mathematics errors', () => {
+test('the included examples render their mathematics and teaching demos without errors', () => {
   for (const example of EXAMPLES) {
     const result = renderMarkdown(example.source);
     assert.deepEqual(result.errors, [], example.title);
     assert.ok(result.headings.length >= 3, example.title);
-    assert.ok(result.mathCount >= 3, example.title);
+    if (example.id === 'interactive-physics') {
+      const demos = [...result.html.matchAll(/data-demo-preset="([^"]+)"/g)].map(match => match[1]);
+      assert.deepEqual(demos, ['wave-packet', 'bloch-sphere', 'effective-potential', 'interference']);
+      assert.equal((result.html.match(/class="qft-demo"/g) ?? []).length, 4);
+    } else {
+      assert.ok(result.mathCount >= 3, example.title);
+    }
   }
   const guide = renderMarkdown(EXAMPLES.find((example) => example.id === 'quickstart')!.source);
   assert.match(guide.html, /<code>\$x\$<\/code>/);

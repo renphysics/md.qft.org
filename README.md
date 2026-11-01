@@ -1,6 +1,6 @@
 # QFT Markdown
 
-A reusable workspace for turning **AI answers, notes, and mathematics into documents and presentations**, released under the **MIT license**. Paste Markdown, insert pictures, organize sections, or present a slide deck. Keep editable Markdown with its images, portable HTML, or a PDF saved through your browser.
+A reusable workspace for turning **AI answers, notes, and mathematics into documents and interactive presentations**, released under the **MIT license**. Paste Markdown, insert pictures, organize sections, or teach with a live physics demonstration. Keep editable Markdown with its images, portable HTML, or a PDF saved through your browser.
 
 Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application runs in the browser and deploys as static files on **GitHub Pages**. Drafts and imported images stay in this browser's storage; there are no accounts or cloud documents. You can fork it, change the branding, and host it on your own domain or GitHub project URL.
 
@@ -16,6 +16,7 @@ Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application
 - Use inline and display mathematics with `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`.
 - Insert PNG, JPEG, WebP, and GIF pictures through **Insert image**, clipboard paste, or drag and drop. Pictures save with the draft without filling its Markdown with base64 text.
 - Switch between **Document** and **Slides** without adding another toolbar. Use `---` slide breaks, Paper/Midnight/Academic themes, 16:9 or 4:3 proportions, and fullscreen **Present** playback.
+- Insert interactive wave-packet, Bloch-sphere, effective-potential, and interference demonstrations, or add a self-contained HTML/CSS/JavaScript demo. Run each explicitly inside an isolated frame.
 - Keep named drafts with automatic local saving. Concurrent edits in other tabs are preserved as conflict copies.
 - Import a `.md` file as a separate draft and download Markdown without changing its source.
 - Download **Markdown + images** as an editable ZIP with local pictures and slide settings, then reopen it using **Open file**.
@@ -67,7 +68,49 @@ $$
 
 Slides reuse the document Markdown/KaTeX renderer, including all four math delimiters and the same image permissions. Choose **Paper**, **Midnight**, or **Academic**, and **16:9** or **4:3**. **Present** opens fullscreen playback; use arrows to navigate. Keep content short enough to fit each slide.
 
-In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, and images in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This format does not implement Marp directives, Slidev components, arbitrary HTML, or user-supplied scripts.
+In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, images, and supported interactive demonstrations in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This format does not implement Marp directives or Slidev components. Ordinary HTML and script fences remain displayed source; executable demos use the explicit syntax below.
+
+## Interactive teaching demonstrations
+
+Choose **Interactive demo** in the toolbar. Four built-in choices are ready to insert: a spreading Gaussian wave packet, a Bloch sphere with a rotatable camera, a Schwarzschild scalar-field potential, and wave interference. Keep **Add on a new slide** selected for a clean teaching slide. **Open the complete physics lesson** creates a deck containing all four.
+
+````markdown
+## Watch a wave packet spread
+
+```interactive wave-packet
+```
+````
+
+The other preset identifiers are `bloch-sphere`, `effective-potential`, and `interference`. A preset fence is empty: its identifier selects the built-in source and initial illustration. The HTML exporter includes the complete demo code, so exported presentations do not require this website or a CDN.
+
+Choose **Run demo** on a preview to start it. The plot and controls work in both the workspace and fullscreen presentation. Timers and animations pause when the slide or browser tab becomes inactive and resume when it returns. **Stop** removes the running frame; **Restart** begins from the initial state. Editing Markdown recreates the affected rendered cards, and running demo state is not part of saved Markdown.
+
+### Custom HTML, CSS, and JavaScript
+
+In the insertion dialog, expand **Use your own HTML & JavaScript**, then paste the source or open a self-contained HTML file. The following syntax also works directly in Markdown:
+
+````markdown
+```interactive title="A small counter"
+<button id="counter">Count: 0</button>
+<script>
+  let count = 0;
+  const button = document.getElementById('counter');
+  button.addEventListener('click', () => {
+    button.textContent = `Count: ${++count}`;
+  });
+</script>
+```
+````
+
+Use inline `<style>` and `<script>` elements and attach handlers with `addEventListener`. External scripts, module imports, network calls, inline event attributes such as `onclick`, `eval`, nested frames, forms, and popup windows are outside this supported format. Include code and styles directly; use embedded raster data images for assets. A complete React, Vue, or Slidev application needs to be converted into self-contained HTML before insertion. A document supports **20 demo blocks**, each custom block up to **100,000 source characters**, within the editor's overall 400,000-character source limit.
+
+Demos run only after an explicit **Run demo** action. The workspace uses a same-site runner inside an iframe with `sandbox="allow-scripts"` and an opaque origin; it does not grant `allow-same-origin`. Portable exports use a nonce-bearing sandboxed `srcdoc` document. The demo's DOM and storage origin remain separate from the editor's drafts. A restrictive child Content Security Policy blocks external dependencies and connections. This isolation does not make arbitrary code well behaved: a custom demo should avoid unbounded loops and excessive computation.
+
+### Interactive HTML and static PDF
+
+Both document and slide HTML exports retain supported demos and their isolated player. Recipients choose **Run demo** themselves; the demo starts from its source-defined initial state. Markdown and ZIP bundles keep the code or preset name, not transient control values or animation time.
+
+PDF output uses the most recently captured canvas PNG when available. Otherwise a built-in demo uses its initial SVG illustration; a custom demo uses a labeled static placeholder. Printing never starts a demo just to capture it. For a custom visualization without a canvas, include an ordinary image in the Markdown if the PDF needs a specific illustration. A PDF has no sliders or animation; use HTML for the interactive version.
 
 ## Start locally
 
@@ -126,7 +169,7 @@ Use backticks or fenced code blocks when demonstrating syntax literally. A backs
 
 Local saving is convenient, but it is not a backup. Clearing site data, private-browsing policies, or changing browser/profile can remove or hide local drafts. A custom domain, a different Pages hostname, and localhost have separate browser storage; project paths on the same host use separate application storage names. **Download Markdown + images for drafts whose editable source and pictures you want to keep independently.** Markdown alone is sufficient when there are no local image attachments to preserve.
 
-The application does not send document text to a server. The host still receives ordinary website requests. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
+The application does not send document text to a server. The host still receives ordinary website requests, including the static sandbox runner when a demo starts in the workspace. Demo source is passed to that frame locally in the browser. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
 
 ## License
 

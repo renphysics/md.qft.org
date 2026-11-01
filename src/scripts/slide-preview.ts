@@ -1,4 +1,6 @@
 import type { RevealApi } from 'reveal.js';
+import { createInteractiveDemos, type InteractiveDemoController } from './interactive-demo-runtime';
+import { withBase } from '../lib/site-path';
 import {
   DEFAULT_SLIDE_SETTINGS, normalizeSlideSettings, slideDimensions,
   renderSlides, type SlideSettings, type SlidesResult,
@@ -49,6 +51,7 @@ export async function createSlidePreview(
     // DOM focus also covers keyboard-only users and entering Present directly.
     keyboardCondition: (event) => {
       const active = document.activeElement;
+      if (active instanceof HTMLElement && active.closest('input,textarea,select,iframe,[contenteditable="true"],.qft-demo')) return false;
       const inDeck = canvas.contains(active) || !!canvas.closest('.qft-slide-presentation')?.contains(active);
       if (!inDeck) return false;
       if (active instanceof HTMLElement && active.closest('button,select')
@@ -92,6 +95,7 @@ export class SlidePreview {
   private disposed = false;
   private html = this.result.html;
   private fullscreenRequested = false;
+  private demos!: InteractiveDemoController;
 
   constructor(
     private readonly host: HTMLElement,
@@ -101,7 +105,8 @@ export class SlidePreview {
     private readonly deck: RevealApi,
     private readonly onChange: (state: SlidePreviewState) => void,
   ) {
-    this.deck.on('slidechanged', () => this.scheduleLayout());
+    this.resetDemos();
+    this.deck.on('slidechanged', () => { this.demos.sync(); this.scheduleLayout(); });
     this.canvas.addEventListener('pointerdown', (event) => {
       if (!(event.target instanceof Element) || !event.target.closest('a,button,input,select,textarea')) this.canvas.focus({ preventScroll: true });
     }, { signal: this.abort.signal });
@@ -142,6 +147,19 @@ export class SlidePreview {
 
   get index(): number { return this.deck.getIndices().h ?? 0; }
 
+  syncDemos(): void { this.demos?.sync(); }
+  demoSnapshots(): Map<string, string> { return this.demos.snapshots(); }
+  resetDemos(): void {
+    this.demos?.destroy();
+    this.demos = createInteractiveDemos(this.slides, {
+      sandboxUrl: withBase('demo-sandbox.html'),
+      isActive: (card) => card.closest('.qft-slide') === this.deck.getCurrentSlide()
+        && (Boolean(this.overlay) || this.host.getClientRects().length > 0),
+      onLayout: () => this.scheduleLayout(),
+      onEscape: () => this.exitPresentation(),
+    });
+  }
+
   update(result: SlidesResult, value: SlideSettings = this.settings): void {
     if (this.disposed) return;
     const selected = this.index;
@@ -164,6 +182,7 @@ export class SlidePreview {
         }
       }
     }
+    this.demos.sync();
     this.scheduleLayout();
   }
 
@@ -178,6 +197,7 @@ export class SlidePreview {
   layout(): void {
     if (this.disposed || !this.wrapper.isConnected) return;
     this.deck.layout();
+    this.demos.sync();
     const content = this.deck.getCurrentSlide()?.querySelector<HTMLElement>('.qft-slide-content');
     const overflow = !!content && content.clientHeight > 0
       && (content.scrollHeight > content.clientHeight + 2 || content.scrollWidth > content.clientWidth + 2);
@@ -216,7 +236,7 @@ export class SlidePreview {
     close.textContent = 'Exit presentation';
     close.addEventListener('click', () => this.exitPresentation(), { signal: this.abort.signal });
     bar.append(close);
-    overlay.append(this.wrapper, bar);
+    overlay.append(bar);
     this.overlay = overlay;
     for (const sibling of document.body.children) {
       if (!(sibling instanceof HTMLElement)) continue;
@@ -224,6 +244,10 @@ export class SlidePreview {
       sibling.inert = true;
     }
     document.body.append(overlay);
+    // A state-preserving move keeps demo controls and canvases alive. Older
+    // browsers reset the demo instead of leaving a reloaded, uninitialized frame.
+    if (typeof overlay.moveBefore === 'function') overlay.moveBefore(this.wrapper, bar);
+    else { overlay.insertBefore(this.wrapper, bar); this.resetDemos(); }
     this.canvas.setAttribute('aria-label', 'Presentation. Use the arrow keys to navigate. Press Escape to exit.');
     this.canvas.focus({ preventScroll: true });
     this.scheduleLayout();
@@ -240,7 +264,8 @@ export class SlidePreview {
     this.overlay = undefined;
     this.fullscreenRequested = false;
     if (document.fullscreenElement === overlay) void document.exitFullscreen().catch(() => {});
-    this.host.append(this.wrapper);
+    if (typeof this.host.moveBefore === 'function') this.host.moveBefore(this.wrapper, null);
+    else { this.host.append(this.wrapper); this.resetDemos(); }
     overlay.remove();
     for (const [element, inert] of this.inertStates) element.inert = inert;
     this.inertStates.clear();
@@ -252,7 +277,7 @@ export class SlidePreview {
 
   private keepFocusInside(event: KeyboardEvent): void {
     if (!this.overlay) return;
-    const focusable = [...this.overlay.querySelectorAll<HTMLElement>('button,a[href],input,select,textarea,[tabindex]')]
+    const focusable = [...this.overlay.querySelectorAll<HTMLElement>('button,a[href],input,select,textarea,iframe,[tabindex]')]
       .filter((element) => element.tabIndex >= 0 && element.getClientRects().length && !element.closest('[hidden],[aria-hidden="true"]'));
     if (!focusable.length) { event.preventDefault(); return; }
     const first = focusable[0];
@@ -266,6 +291,7 @@ export class SlidePreview {
     this.exitPresentation();
     this.disposed = true;
     this.abort.abort();
+    this.demos.destroy();
     this.resize?.disconnect();
     cancelAnimationFrame(this.resizeFrame);
     this.deck.destroy();

@@ -133,6 +133,22 @@ test('task-list labels stay associated and IDs are unique across views and repea
   assert.match(renderMarkdown('`id="task-item-0"`').html, /id=&quot;task-item-0&quot;/);
 });
 
+test('repeated footnote demos have stable independent snapshot identities on every slide', () => {
+  const source = 'First.[^demo]\n\n---\n\nSecond.[^demo]\n\n[^demo]: A demonstration.\n\n    ```interactive wave-packet\n    ```';
+  const ids = (html: string) => [...html.matchAll(/data-demo-id="([^"]+)"/g)].map((match) => match[1]);
+  const deck = renderSlides(source);
+  assert.deepEqual(deck.errors, []);
+  const instances = deck.slides.flatMap((slide) => ids(slide.html));
+  assert.equal(instances.length, 2);
+  assert.equal(new Set(instances).size, 2, 'independent frames must not overwrite each other’s snapshot');
+  assert.match(instances[0], /-s1$/);
+  assert.match(instances[1], /-s2$/);
+  assert.deepEqual(ids(deck.html), instances, 'preview and per-slide print fragments must use the same keys');
+  assert.deepEqual(ids(renderSlides(source).html), instances, 're-rendering for export must preserve snapshot keys');
+  assert.equal(ids(renderMarkdown(source).html).some((id) => instances.includes(id)), false);
+  assert.match(renderSlides('`data-demo-id="demo-example-1"`').html, /data-demo-id=&quot;demo-example-1&quot;/);
+});
+
 test('attachments only render through a trusted map and preserve the image safety boundary', () => {
   const source = '![Local](qft-image:one)\n\n![Raw blob](blob:https://md.qft.org/two)\n\n![Remote](https://example.org/three.png)';
   const unresolved = renderMarkdown(source);

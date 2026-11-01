@@ -9,7 +9,7 @@ export interface SiteFaq {
 export const siteFaqs: readonly SiteFaq[] = [
   {
     question: `Is ${siteConfig.name} free to use? Do I need an account?`,
-    answer: `${siteConfig.name} is a free, open-source Markdown editor with math preview, local images, slides, and document exports. You can edit notes, organize sections, present a slide deck, and prepare a PDF without creating an account. The editor runs in your browser.`,
+    answer: `${siteConfig.name} is a free, open-source Markdown editor with math preview, local images, interactive slides, and document exports. You can edit notes, organize sections, present a slide deck with physics demonstrations, and prepare a PDF without creating an account. The editor runs in your browser.`,
   },
   {
     question: 'Which mathematical notation does the editor support?',
@@ -36,12 +36,24 @@ export const siteFaqs: readonly SiteFaq[] = [
     answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The same Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. Marp directives and Slidev components are not supported.',
   },
   {
+    question: 'Can a slide contain a working JavaScript demonstration?',
+    answer: 'Yes. Choose Interactive demo to insert a wave packet, Bloch sphere, effective-potential plot, or interference demonstration, or paste self-contained HTML, CSS, and JavaScript. An explicit interactive fence creates a demo card; choose Run demo to start it. Stop removes the running frame and Restart begins again. Timers and animations pause on inactive slides or browser tabs. Ordinary HTML and JavaScript code blocks are still displayed as code.',
+  },
+  {
+    question: 'How are custom interactive demos isolated?',
+    answer: 'Each demo runs in a sandboxed frame with a separate origin, so it cannot read the editor’s drafts or change its interface. Use self-contained source and addEventListener for controls; external scripts, module imports, network calls, inline event attributes, nested frames, and popup windows are not supported. The limit is 20 demos per document and 100,000 source characters per custom demo, within the editor’s overall source limit. A sandbox does not prevent inefficient or unbounded computations.',
+  },
+  {
+    question: 'Do interactive demonstrations work in HTML and PDF exports?',
+    answer: 'Standalone HTML includes supported self-contained demos and their player. Recipients choose Run demo, and each demo starts from its source-defined initial state. PDF output is static: it uses the most recently captured canvas image when available, otherwise a built-in demo’s initial illustration or a labeled placeholder for a custom demo. Add an ordinary image for a custom visualization that needs a specific PDF figure. Markdown and ZIP bundles retain source, not transient slider positions or animation time.',
+  },
+  {
     question: 'Can I format and organize an AI-generated answer?',
     answer: 'Yes. Paste the answer as plain text or Markdown, then use Clean up to review formatting changes before creating a formatted copy. The original draft is retained. Organize moves complete sections, including their nested headings, equations, and code, and offers Undo move. These tools do not call an AI model, rewrite or summarize the answer, verify its claims, or validate its citations.',
   },
   {
     question: 'Can I download editable Markdown or standalone HTML?',
-    answer: 'Yes. Markdown download preserves source text. With local pictures, the download becomes Markdown + images, an editable ZIP bundle. Slide bundle retains a deck’s slide settings even without pictures. Standalone HTML includes rendered content, fonts, and images, and opens independently of this editor. Document HTML includes the source in a disclosure; slide HTML includes interactive playback. Enabled remote images must be embedded successfully, or export reports the problem. Reopening the editor website itself offline is not guaranteed.',
+    answer: 'Yes. Markdown download preserves source text. With local pictures, the download becomes Markdown + images, an editable ZIP bundle. Slide bundle retains a deck’s slide settings even without pictures. Standalone HTML includes rendered content, fonts, images, and supported interactive demos, and opens independently of this editor. Document HTML includes the source in a disclosure; slide HTML also includes presentation playback. Enabled remote images must be embedded successfully, or export reports the problem. Reopening the editor website itself offline is not guaranteed.',
   },
   {
     question: 'Can I reuse the source and host my own version?',

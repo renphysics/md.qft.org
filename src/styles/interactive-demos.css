@@ -1,0 +1,88 @@
+/* One card surface for document preview, slides, fullscreen, and offline HTML. */
+.qft-demo {
+  --demo-ink: #263744;
+  --demo-muted: #687985;
+  --demo-accent: #315e70;
+  --demo-paper: #f5f8f8;
+  --demo-border: #dce5e7;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  margin: 22px 0;
+  overflow: hidden;
+  border: 1px solid var(--demo-border);
+  border-radius: 12px;
+  background: var(--demo-paper);
+  color: var(--demo-ink);
+  font: 14px/1.5 Inter, system-ui, sans-serif;
+  text-align: left;
+  text-wrap: initial;
+  box-sizing: border-box;
+  contain: layout style;
+}
+.qft-demo *, .qft-demo *::before, .qft-demo *::after { box-sizing: border-box; }
+.qft-demo [hidden] { display: none !important; }
+.qft-demo .qft-demo-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--demo-border);
+  color: var(--demo-ink);
+  font: inherit;
+}
+.qft-demo .qft-demo-kicker { color: var(--demo-accent); font: 600 10px/1.4 Inter, system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+.qft-demo .qft-demo-heading strong { font-size: 14px; font-weight: 650; }
+.qft-demo .qft-demo-stage { position: relative; height: 340px; min-height: 240px; overflow: hidden; background: #f8fbfc; }
+.qft-demo .qft-demo-poster, .qft-demo .qft-demo-frame { position: absolute; inset: 0; width: 100%; height: 100%; }
+.qft-demo .qft-demo-frame:empty { display: none; }
+.qft-demo .qft-demo-frame iframe { display: block; width: 100%; height: 100%; border: 0; margin: 0; background: #f8fbfc; }
+.qft-demo .qft-demo-frame iframe:focus-visible { outline: 3px solid var(--demo-accent); outline-offset: -3px; }
+.qft-demo .qft-demo-poster > svg { display: block; width: 100%; height: 100%; max-width: none; max-height: none; }
+.qft-demo .qft-demo-print-snapshot { display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.qft-demo .qft-demo-placeholder { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; width: 100%; height: 100%; color: var(--demo-muted); }
+.qft-demo .qft-demo-placeholder svg { width: 54px; height: 54px; color: var(--demo-accent); }
+.qft-demo .qft-demo-placeholder strong { color: var(--demo-ink); font: 600 18px/1.4 Inter, system-ui, sans-serif; }
+.qft-demo .qft-demo-placeholder span { font-size: 12px; }
+.qft-demo .qft-demo-caption { display: flex; flex-direction: column; gap: 2px; padding: 8px 18px; margin: 0; border-top: 1px solid var(--demo-border); color: var(--demo-muted); font: 12px/1.45 Inter, system-ui, sans-serif; }
+.qft-demo .qft-demo-status { font-size: 11px; color: var(--demo-accent); }
+.qft-demo[data-demo-state="error"] .qft-demo-status { color: #a3384b; }
+.qft-demo .qft-demo-controls { display: flex; align-items: center; gap: 8px; padding: 0 18px 11px; }
+.qft-demo .qft-demo-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 31px; padding: 5px 13px; border: 1px solid #c7d4d8; border-radius: 6px; background: #fff; color: var(--demo-ink); font: 500 12px/1.4 Inter, system-ui, sans-serif; cursor: pointer; }
+.qft-demo .qft-demo-controls [data-demo-run] { background: var(--demo-accent); border-color: var(--demo-accent); color: #fff; }
+.qft-demo .qft-demo-controls button:hover { filter: brightness(.94); }
+.qft-demo .qft-demo-controls button:focus-visible { outline: 2px solid var(--demo-accent); outline-offset: 3px; }
+.qft-demo .qft-demo-controls button:disabled { opacity: .5; cursor: not-allowed; }
+.qft-demo .qft-demo-controls > span { margin-left: auto; color: var(--demo-muted); font: 11px/1.4 Inter, system-ui, sans-serif; }
+.qft-demo-error { padding: 14px 18px; margin: 20px 0; border: 1px solid #e7b9c0; border-radius: 8px; background: #fff3f5; color: #843444; font: 14px/1.5 Inter,system-ui,sans-serif; }
+.qft-demo-error p { margin: 5px 0 0 !important; }
+.qft-slide-deck .qft-slide-content:has(> .qft-demo) { padding: 36px 48px; }
+.qft-slide-deck .qft-slide-content:has(> .qft-demo) > h2 { font-size: 40px; margin-bottom: 16px; }
+.qft-slide-deck .qft-slide-content:has(> .qft-demo)::after { left: 48px; bottom: 19px; }
+.qft-slide-deck .qft-slide-content .qft-demo { height: 520px; max-height: none; margin: 14px 0 0; border-radius: 12px; font-size: 16px; }
+.qft-slide-deck .qft-slide-content .qft-demo-heading { flex: 0 0 auto; min-height: 38px; padding: 8px 18px; }
+.qft-slide-deck .qft-slide-content .qft-demo-heading strong { font-size: 17px; }
+.qft-slide-deck .qft-slide-content .qft-demo-kicker { font-size: 11px; }
+.qft-slide-deck .qft-slide-content .qft-demo-stage { flex: 1; min-height: 0; height: auto; }
+.qft-slide-deck .qft-slide-content .qft-demo-caption { flex: 0 0 auto; padding: 6px 18px; font-size: 12px; line-height: 1.35; }
+.qft-slide-deck .qft-slide-content .qft-demo-status { font-size: 10px; }
+.qft-slide-deck .qft-slide-content .qft-demo-controls { flex: 0 0 auto; padding: 0 18px 8px; }
+.qft-slide-deck .qft-slide-content .qft-demo-controls button { min-height: 29px; font-size: 12px; }
+.qft-slide-deck .qft-slide-content .qft-demo .qft-demo-print-snapshot { width: 100%; height: 100%; max-height: none; margin: 0; }
+.qft-slide-deck[data-slide-ratio="4:3"] .qft-slide-content .qft-demo { height: 620px; }
+.qft-slide-deck[data-slide-theme="midnight"] .qft-demo { --demo-ink: #e6ecef; --demo-muted: #adbbc5; --demo-accent: #a7c8d5; --demo-paper: #1e2a36; --demo-border: #3e505e; }
+.qft-slide-deck[data-slide-theme="midnight"] .qft-demo .qft-demo-controls button { background: #314451; border-color: #506778; }
+.qft-slide-deck[data-slide-theme="midnight"] .qft-demo .qft-demo-controls [data-demo-run] { background: #b5d2dd; border-color: #b5d2dd; color: #18303d; }
+.qft-demo[data-demo-state="static"] .qft-demo-status { display: none; }
+@media (max-width: 480px) {
+  .markdown-document .qft-demo .qft-demo-stage { height: 360px; }
+  .markdown-document .qft-demo .qft-demo-controls > span { display: none; }
+  .markdown-document .qft-demo .qft-demo-heading { gap: 3px; flex-direction: column; }
+}
+@media print {
+  .qft-demo { break-inside: avoid; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .qft-demo .qft-demo-controls, .qft-demo .qft-demo-frame, .qft-demo .qft-demo-status { display: none !important; }
+  .qft-demo .qft-demo-poster { display: block !important; }
+}

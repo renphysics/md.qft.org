@@ -31,6 +31,19 @@ $$`,
 
 Let $x\in\RR$ and $v\in\RR^n$.`,
   image: '![A description of the figure](https://example.org/figure.png)',
+  interactive: '## Watch a wave packet spread\n\n```interactive wave-packet\n```',
+  customDemo: [
+    '```interactive title="A small counter"',
+    '<button id="counter">Count: 0</button>',
+    '<script>',
+    '  let count = 0;',
+    '  const button = document.getElementById("counter");',
+    '  button.addEventListener("click", () => {',
+    '    button.textContent = `Count: ${++count}`;',
+    '  });',
+    '</script>',
+    '```',
+  ].join('\n'),
   slides: String.raw`# A short presentation
 
 One idea at a time.
@@ -51,11 +64,11 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
 - Explain the result.`,
 };
 ---
-<BaseLayout title={`Markdown, images, slides & PDF guide — ${siteConfig.name}`} active="guide" description="Learn how to insert images, write KaTeX equations, present Markdown slides, and export documents or presentations as PDF, portable HTML, and editable image bundles.">
+<BaseLayout title={`Markdown, interactive slides & PDF guide — ${siteConfig.name}`} active="guide" description="Learn how to insert images, write KaTeX equations, add interactive physics demonstrations to Markdown slides, and export PDF, portable HTML, or editable bundles.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">From a useful answer to a lasting note</span>
     <h1>A guide to Markdown, math, and slides.</h1>
-    <p class="page-lead">Use {siteConfig.name} to turn plain text or Markdown into documents and presentations with equations, pictures, tables, and code. Edit locally, present fullscreen, and keep portable copies of your work.</p>
+    <p class="page-lead">Use {siteConfig.name} to turn plain text or Markdown into documents and presentations with equations, pictures, and interactive demonstrations. Edit locally, present fullscreen, and keep portable copies of your work.</p>
 
     <section aria-labelledby="paste-to-document">
       <h2 id="paste-to-document">From pasted text to PDF</h2>
@@ -85,7 +98,24 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
       <p>Slide settings offer <strong>Paper</strong>, <strong>Midnight</strong>, and <strong>Academic</strong> themes, with <strong>16:9</strong> or <strong>4:3</strong> proportions. Equations use the same four delimiters as documents: <code>$...$</code>, <code>$$...$$</code>, <code>{String.raw`\(...\)`}</code>, and <code>{String.raw`\[...\]`}</code>.</p>
       <p>Choose <strong>Present</strong> for fullscreen playback, use the arrow keys to move between slides, and press <kbd>Esc</kbd> to leave fullscreen. Keep each slide focused; split dense text or a long derivation across several slides when the content does not fit.</p>
       <p>In Slides mode, <strong>Save PDF</strong> prepares one page per slide through the browser’s print dialog. Check the print preview; Chromium-based browsers are recommended for consistent slide output. <strong>Download HTML</strong> creates a standalone interactive presentation with its fonts, images, and playback code included. Download <strong>Slide bundle</strong> to retain editable source and slide settings, or <strong>Markdown + images</strong> when the draft has local pictures. Both are ZIP bundles you can reopen here.</p>
-      <p>This is a simple Markdown slide format, powered by reveal.js. Marp directives, Slidev components, and arbitrary HTML or scripts are not supported. Start with the <a href={withBase('?example=quantum-slides')}>five-slide quantum phase example</a>.</p>
+      <p>This is a simple Markdown slide format, powered by reveal.js. Marp directives and Slidev components are not supported. Ordinary HTML and JavaScript remain readable source; the explicit interactive blocks below provide runnable demonstrations. Start with the <a href={withBase('?example=quantum-slides')}>five-slide quantum phase example</a>.</p>
+    </section>
+
+    <section aria-labelledby="interactive-demonstrations">
+      <h2 id="interactive-demonstrations">Teach with an interactive demonstration</h2>
+      <p>Choose <strong>Interactive demo</strong> to add a ready-made physics demonstration or your own HTML, CSS, and JavaScript. Keep <strong>Add on a new slide</strong> selected to give it a slide of its own. The demonstration appears as a static preview until you choose <strong>Run demo</strong>. Its sliders, buttons, and canvas work inside the slide, including in fullscreen. <strong>Stop</strong> removes the running demonstration; <strong>Restart</strong> returns it to its initial state.</p>
+      <p>Timers and animations pause while a slide or browser tab is inactive and resume when you return. Editing the Markdown recreates the rendered demo; transient slider positions and animation time are not saved with its source.</p>
+      <p>The four built-in demonstrations are a spreading Gaussian wave packet, a rotatable Bloch sphere, a Schwarzschild scalar-field potential, and wave interference. Try the <a href={withBase('?example=interactive-physics')}>interactive physics lesson</a> to present them together.</p>
+      <pre><code>{snippets.interactive}</code></pre>
+      <p>Replace <code>wave-packet</code> with <code>bloch-sphere</code>, <code>effective-potential</code>, or <code>interference</code>. Put one demonstration on a slide, with a short heading and explanation. Keep the surrounding Markdown concise so the plot and its controls have room.</p>
+      <h3>Bring your own HTML and JavaScript</h3>
+      <p>Use an <code>interactive</code> fence with a title and self-contained HTML. Styles and scripts belong inside the block. Attach events with <code>addEventListener</code>; ordinary <code>html</code> and <code>javascript</code> fences still display code without running it.</p>
+      <pre><code>{snippets.customDemo}</code></pre>
+      <p>Each running demonstration uses a separate sandboxed frame. It cannot read the editor’s drafts or change its interface. External scripts, module imports, network requests, embedded frames, and inline event attributes such as <code>onclick</code> are not supported. Include the needed code and styles directly, and use embedded raster data images for assets. The editor does not convert a React or Slidev project into a standalone demo.</p>
+      <p>A document can contain up to <strong>20 demonstrations</strong>, with up to <strong>100,000 characters</strong> of source in each custom demo. The complete Markdown still has the editor’s 400,000-character preview limit.</p>
+      <h3>Share the demonstration and print its explanation</h3>
+      <p><strong>Download HTML</strong> includes the demo code and player, so the built-in demonstrations and supported self-contained custom demos can run offline. Recipients choose <strong>Run demo</strong> themselves. Markdown and ZIP bundles retain the demonstration’s source, rather than its current slider positions or animation time.</p>
+      <p><strong>Save PDF</strong> uses the most recently captured canvas image when available. Otherwise it uses the built-in demonstration’s initial illustration, or a labeled static placeholder for a custom demo. PDF pages do not run JavaScript. For a custom demonstration without a canvas, add an ordinary explanatory image to the Markdown when you need a specific figure in the PDF.</p>
     </section>
 
     <div class="guide-grid">
@@ -116,7 +146,7 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
       </section>
       <section class="guide-card">
         <h2>Code stays code</h2>
-        <p>Wrap inline code in backticks, or use a fenced block with a language name. Mathematical delimiters inside code remain literal.</p>
+        <p>Wrap inline code in backticks, or use a fenced block with a language name. Mathematical delimiters inside code remain literal. Only an explicit <code>interactive</code> block can become a runnable demo after you choose Run.</p>
         <pre><code>{snippets.code}</code></pre>
       </section>
       <section class="guide-card">
@@ -133,7 +163,7 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
 
     <section aria-labelledby="working-with-documents">
       <h2 id="working-with-documents">A few things to know</h2>
-      <p>Mathematics is typeset by KaTeX, which supports a large subset of TeX math. A formula that cannot be rendered stays visible with an error; you can correct it without losing the surrounding document. Raw HTML is displayed as text. Scripts, HTML embeds, and MDX are not executed.</p>
+      <p>Mathematics is typeset by KaTeX, which supports a large subset of TeX math. A formula that cannot be rendered stays visible with an error; you can correct it without losing the surrounding document. Raw HTML is displayed as text. The explicit <code>interactive</code> syntax runs supported HTML and scripts only inside an isolated frame after you choose Run; MDX is not evaluated.</p>
       <p>Live preview, pasting, and the formatting tools support up to 400,000 characters. Work with smaller documents when a longer text exceeds that limit. Changing a document style leaves its Markdown source untouched.</p>
       <p>Imported pictures are stored separately from the Markdown text, so they do not consume its character allowance. PNG, JPEG, WebP, and GIF data URLs are also supported, but long embedded strings do count toward that limit.</p>
       <p>Drafts save in this browser. Download <strong>Markdown</strong> for a text copy, <strong>Markdown + images</strong> for local pictures, or <strong>Slide bundle</strong> to retain a deck’s slide settings. <strong>HTML</strong> keeps a portable document or presentation, and <strong>Save PDF</strong> opens your browser’s print dialog. Clearing site data can remove local drafts, so keep downloaded copies of work you want to retain.</p>

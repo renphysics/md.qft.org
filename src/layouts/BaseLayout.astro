@@ -25,6 +25,7 @@ const contentSecurityPolicy = [
   "font-src 'self' data:",
   `connect-src 'self' https: blob:${import.meta.env.DEV ? ' ws: wss:' : ''}`,
   "worker-src 'self' blob:",
+  "frame-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'none'",

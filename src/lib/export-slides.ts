@@ -4,20 +4,18 @@ import revealCss from 'reveal.js/reveal.css?raw';
 import katexLicense from 'katex/LICENSE?raw';
 import documentCss from '../styles/document.css?raw';
 import slideCss from '../styles/slides.css?raw';
+import interactiveCss from '../styles/interactive-demos.css?raw';
+import applicationLicense from '../../LICENSE?raw';
+import { interactiveRuntimeSource } from '../scripts/interactive-demo-runtime';
 import { escapeHtml, type RenderOptions } from './render-markdown';
 import {
   DEFAULT_SLIDE_SETTINGS, normalizeSlideSettings, renderSlides, slideDimensions,
   type SlideSettings,
 } from './slides';
-import { download, embedImages, standaloneMathCss, waitForPrintAssets } from './export-document';
+import { download, embedImages, standaloneMathCss, waitForPrintAssets, exportScriptNonce, makeInteractivePrintCopy, namespacePrintIds } from './export-document';
 import { siteConfig } from '../config/site';
 
 let printing = false;
-
-function nonce(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(18));
-  return btoa(String.fromCharCode(...bytes));
-}
 
 function staticSlideCss(settings: SlideSettings, prefix: string): string {
   const { width, height } = slideDimensions(settings);
@@ -43,47 +41,81 @@ export async function exportSlidesHtml(
   const { width, height } = slideDimensions(settings);
   const slideSections = rendered.slides.map((slide, index) => `<section class="qft-slide" data-slide-index="${index}">${slide.html}</section>`).join('\n');
   const [mathStyle, html] = await Promise.all([standaloneMathCss(), embedImages(slideSections)]);
-  const scriptNonce = nonce();
+  const scriptNonce = exportScriptNonce();
   const script = `${revealRuntime}\n
+const makePrintCopy = (${makeInteractivePrintCopy.toString()});
+const namespacePrintIds = (${namespacePrintIds.toString()});
 const deck = new Reveal(document.querySelector('.reveal'), {
   width:${width},height:${height},margin:0.04,minScale:0.05,maxScale:2,
   center:false,hash:true,transition:'none',backgroundTransition:'none',
   controls:true,progress:true,slideNumber:'c/t',showSlideNumber:'all',
   embedded:false,disableLayout:false,pdfSeparateFragments:false,pdfMaxPagesPerSlide:1,
   scrollActivationWidth:0,view:null,
-  keyboardCondition:()=>!document.getElementById('source-document').open
+  keyboardCondition:()=>!document.getElementById('source-document').open &&
+    !(document.activeElement instanceof Element && document.activeElement.closest('input,select,textarea,button,iframe,[contenteditable="true"],.qft-demo'))
 });
-deck.initialize();
+let demos;
+deck.initialize().then(()=>{
+  try{
+    demos=(${interactiveRuntimeSource()})(document.querySelector('.export-deck'),{
+      scriptNonce:${JSON.stringify(scriptNonce)},
+      isActive:card=>!document.getElementById('source-document').open && !!deck.getCurrentSlide()?.contains(card),
+      onLayout:()=>deck.layout(),
+      onEscape:()=>{if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
+    });
+    deck.on('slidechanged',()=>demos.sync());
+  }catch(error){
+    const status=document.getElementById('export-status');
+    status.textContent='Interactive demonstrations could not start in this browser. Their static previews and source remain available.';
+    status.hidden=false;
+  }
+}).catch(()=>{
+  const status=document.getElementById('export-status');
+  status.textContent='The presentation player could not start in this browser. Please try a current browser.';
+  status.hidden=false;
+});
 document.getElementById('present').addEventListener('click',()=>{
   if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
   else document.documentElement.requestFullscreen?.().catch(()=>{});
 });
+let printCopy;
+let printTimer;
+function clearPrintCopy(){
+  clearTimeout(printTimer);
+  printCopy?.remove();
+  printCopy=undefined;
+  delete document.body.dataset.exportPrinting;
+}
+function preparePrintDeck(){
+  clearPrintCopy();
+  printCopy=document.querySelector('.export-deck').cloneNode(true);
+  printCopy.className='qft-slide-deck export-print-copy';
+  printCopy.querySelectorAll('.reveal > .backgrounds,.reveal > .controls,.reveal > .progress,.reveal > .slide-number,.reveal > .speaker-notes,.reveal > .pause-overlay').forEach(element=>element.remove());
+  makePrintCopy(printCopy,demos?.snapshots() || new Map());
+  namespacePrintIds(printCopy,'qft-export-print-');
+  printCopy.querySelectorAll('[tabindex]').forEach(element=>element.removeAttribute('tabindex'));
+  document.body.append(printCopy);
+  document.body.dataset.exportPrinting='slides';
+  return printCopy;
+}
 async function checkPrintLayout(){
-  const measureDeck=document.querySelector('.export-deck').cloneNode(true);
-  measureDeck.className='qft-slide-deck export-print-check';
-  measureDeck.setAttribute('aria-hidden','true');
-  measureDeck.inert=true;
-  measureDeck.querySelectorAll('[id]').forEach(element=>element.removeAttribute('id'));
-  measureDeck.querySelectorAll('label[for]').forEach(element=>element.removeAttribute('for'));
+  const measureDeck=preparePrintDeck();
   let timeout;
   try{
-    document.body.append(measureDeck);
     void measureDeck.offsetHeight;
     await Promise.race([
       Promise.all([document.fonts.ready,...[...measureDeck.querySelectorAll('img')].map(image=>image.decode())]),
       new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Images or fonts are taking too long to load. Please try again.')),20000);})
     ]);
     const overflow=[];
-    measureDeck.querySelectorAll('.qft-slide').forEach((slide,index)=>{
+    measureDeck.querySelectorAll('.slides > section.qft-slide').forEach((slide,index)=>{
       const content=slide.querySelector('.qft-slide-content');
       if(content&&[content,...content.querySelectorAll('pre,.katex-display,table')].some(element=>
         element.scrollHeight>element.clientHeight+3||element.scrollWidth>element.clientWidth+3))overflow.push(index+1);
     });
     if(overflow.length)throw new Error('Slide'+(overflow.length===1?' ':'s ')+overflow.slice(0,12).join(', ')+(overflow.length>12?', …':'')+(overflow.length===1?' contains':' contain')+' too much content for this slide size. Shorten or split the content in the editor, then export again.');
-  }finally{
-    clearTimeout(timeout);
-    measureDeck.remove();
-  }
+  }catch(error){clearPrintCopy();throw error;}
+  finally{clearTimeout(timeout);}
 }
 document.getElementById('save-pdf').addEventListener('click',async()=>{
   const pdfButton=document.getElementById('save-pdf');
@@ -95,6 +127,7 @@ document.getElementById('save-pdf').addEventListener('click',async()=>{
   try{
     await checkPrintLayout();
     window.print();
+    if(printCopy)printTimer=setTimeout(clearPrintCopy,300000);
   }catch(error){
     exportStatus.textContent=error instanceof Error?error.message:'The presentation could not be prepared for printing. Please try again.';
     exportStatus.hidden=false;
@@ -103,10 +136,18 @@ document.getElementById('save-pdf').addEventListener('click',async()=>{
     pdfButton.removeAttribute('aria-busy');
   }
 });
-document.getElementById('source-document').addEventListener('toggle',()=>deck.layout());
+window.addEventListener('beforeprint',()=>{if(!printCopy)preparePrintDeck();});
+window.addEventListener('afterprint',clearPrintCopy);
+document.addEventListener('keydown',event=>{
+  if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='p'){
+    event.preventDefault();document.getElementById('save-pdf').click();
+  }
+});
+document.getElementById('source-document').addEventListener('toggle',()=>{deck.layout();demos?.sync();});
+window.addEventListener('pagehide',event=>{if(!event.persisted)demos?.destroy();});
 `.replace(/<\/script/gi, '<\\/script');
   const warning = rendered.errors.length
-    ? `<p class="export-warning">${rendered.errors.length} mathematical rendering issue${rendered.errors.length === 1 ? '' : 's'} remain in this presentation.</p>` : '';
+    ? `<p class="export-warning">${rendered.errors.length} rendering issue${rendered.errors.length === 1 ? '' : 's'} remain in this presentation.</p>` : '';
   const exported = `<!doctype html>
 <html lang="en">
 <head>
@@ -114,18 +155,19 @@ document.getElementById('source-document').addEventListener('toggle',()=>deck.la
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="generator" content="${escapeHtml(siteConfig.name)}">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${scriptNonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; object-src 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${scriptNonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src 'self' blob:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'">
 <title>${escapeHtml(title || 'Markdown slides')}</title>
 <style>
 ${revealCss}
 ${mathStyle}
 ${documentCss}
 ${slideCss}
+${interactiveCss}
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#171719;color:#eee;font-family:system-ui,sans-serif}
 *{box-sizing:border-box}
 .export-deck{position:fixed;inset:42px 0 0;width:100%;height:calc(100% - 42px)}
 .export-deck>.reveal{width:100%;height:100%}
-.export-toolbar{position:fixed;inset:0 0 auto;height:42px;z-index:20;display:flex;align-items:center;gap:12px;padding:0 16px;background:#232327;font:12px/1.5 system-ui,sans-serif}
+.export-toolbar{position:fixed;inset:0 0 auto;height:42px;z-index:20;display:flex;align-items:center;gap:12px;padding:0 16px;background:#232327;color:#eee;font:12px/1.5 system-ui,sans-serif}
 .export-toolbar strong{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:500}
 .export-toolbar button,.export-toolbar summary{color:inherit;background:none;border:1px solid #55555d;border-radius:5px;padding:4px 9px;font:inherit;cursor:pointer}
 .export-toolbar button:focus-visible,.export-toolbar summary:focus-visible{outline:2px solid #cda5ae;outline-offset:2px}
@@ -136,19 +178,21 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#171719;col
 .source-panel details{margin-top:16px}
 .export-warning{position:fixed;z-index:21;bottom:10px;left:16px;max-width:70%;padding:8px 12px;background:#fbe8ec;color:#922b40;font:12px/1.5 system-ui,sans-serif;border-radius:4px}
 .export-status{position:fixed;z-index:25;top:48px;left:16px;right:16px;max-width:960px;margin:0;padding:12px 16px;border:1px solid #cf8796;border-radius:6px;background:#fff0f3;color:#84283d;font:14px/1.5 system-ui,sans-serif;box-shadow:0 3px 14px #0002}
-${staticSlideCss(settings, '.export-print-check')}
-.export-print-check{position:fixed;left:-20000px;top:0;visibility:hidden;pointer-events:none}
+${staticSlideCss(settings, '.export-print-copy')}
+.export-print-copy{position:fixed;left:-20000px;top:0;visibility:hidden;pointer-events:none}
 @page{size:${width}px ${height}px;margin:0}
 @media print{
  html,body{width:auto!important;height:auto!important;overflow:visible!important;background:white!important;margin:0!important;padding:0!important}
- .export-toolbar,.export-warning,.export-status,.export-print-check{display:none!important}
+ .export-toolbar,.export-warning,.export-status{display:none!important}
  .export-deck{position:static!important;inset:auto!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+ body[data-export-printing] .export-deck{display:none!important}
+ .export-print-copy{display:block!important;position:static!important;visibility:visible!important;margin:0!important;padding:0!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}
  ${staticSlideCss(settings, '.export-deck')}
 }
 </style>
 </head>
 <body>
-<header class="export-toolbar"><strong>${escapeHtml(title || 'Markdown slides')}</strong><button id="present" type="button">Full screen</button><button id="save-pdf" type="button">Save PDF</button><details id="source-document"><summary>Source</summary><div class="source-panel"><h2>Original Markdown</h2><pre>${escapeHtml(source)}</pre><details><summary>reveal.js · MIT license</summary><pre>${escapeHtml(revealLicense)}</pre></details><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details></div></details></header>
+<header class="export-toolbar"><strong>${escapeHtml(title || 'Markdown slides')}</strong><button id="present" type="button">Full screen</button><button id="save-pdf" type="button">Save PDF</button><details id="source-document"><summary>Source</summary><div class="source-panel"><h2>Original Markdown</h2><pre>${escapeHtml(source)}</pre><details><summary>reveal.js · MIT license</summary><pre>${escapeHtml(revealLicense)}</pre></details><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details><details><summary>QFT Markdown demo runtime and built-in examples · MIT license</summary><pre>${escapeHtml(applicationLicense)}</pre></details></div></details></header>
 ${warning}
 <p id="export-status" class="export-status" role="alert" hidden></p>
 <main class="export-deck qft-slide-deck" data-slide-theme="${settings.theme}" data-slide-ratio="${settings.ratio}"><div class="reveal"><div class="slides">${html}</div></div></main>
@@ -181,6 +225,7 @@ function namespacePrintAnchors(root: HTMLElement): void {
 export async function printSlides(
   slides: readonly { html: string }[], title: string,
   value: SlideSettings = DEFAULT_SLIDE_SETTINGS,
+  snapshots: ReadonlyMap<string, string> = new Map(),
 ): Promise<void> {
   if (printing || document.body.dataset.qftPrinting) return;
   if (!slides.length) throw new Error('Add some Markdown before exporting slides.');
@@ -207,9 +252,10 @@ export async function printSlides(
     root.dataset.slideRatio = settings.ratio;
     root.setAttribute('aria-hidden', 'true');
     root.innerHTML = `<div class="reveal"><div class="slides">${slides.map((slide, index) => `<section class="qft-slide" data-slide-index="${index}">${slide.html}</section>`).join('')}</div></div>`;
+    makeInteractivePrintCopy(root, snapshots);
     namespacePrintAnchors(root);
     style = document.createElement('style');
-    style.textContent = `${documentCss}\n${slideCss}\n${staticSlideCss(settings, '.qft-print-slides')}
+    style.textContent = `${documentCss}\n${slideCss}\n${interactiveCss}\n${staticSlideCss(settings, '.qft-print-slides')}
 .qft-print-slides{position:fixed;left:-20000px;top:0;visibility:hidden;pointer-events:none}
 @media print{
  @page{size:${width}px ${height}px;margin:0}
@@ -222,7 +268,7 @@ export async function printSlides(
     document.body.append(root);
     await waitForPrintAssets(root);
     const overflow: number[] = [];
-    root.querySelectorAll<HTMLElement>('.qft-slide').forEach((slide, index) => {
+    root.querySelectorAll<HTMLElement>('.slides > section.qft-slide').forEach((slide, index) => {
       const content = slide.querySelector<HTMLElement>('.qft-slide-content');
       if (!content) return;
       const candidates = [content, ...content.querySelectorAll<HTMLElement>('pre,.katex-display,table')];

@@ -604,3 +604,48 @@ html[data-theme='dark'] .welcome-document { box-shadow: 5px 7px 0 #413437, 0 8px
   .slide-stage { padding: 12px; }
   .slide-overflow-notice { font-size: 10px; }
 }
+.demo-gallery-dialog { width: min(900px,calc(100vw - 32px)); }
+.demo-gallery-dialog > h2 { margin-top: 8px; }
+.demo-gallery-options { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:20px 0 16px; }
+.demo-gallery-options label { display:flex; align-items:center; gap:8px; color:var(--text); }
+.demo-gallery-options input { accent-color:var(--accent); width:15px; height:15px; }
+.demo-gallery-options button, .demo-code-label button { display:inline-flex; align-items:center; gap:6px; border:0; background:transparent; color:var(--accent); padding:5px 0; font:inherit; font-size:12px; cursor:pointer; }
+.demo-gallery-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.demo-gallery-card { display:flex; flex-direction:column; text-align:left; border:1px solid var(--border); border-radius:10px; background:var(--paper); color:var(--text); overflow:hidden; padding:0; cursor:pointer; transition:border-color .15s ease,box-shadow .15s ease; }
+.demo-gallery-card:hover { border-color:var(--accent); box-shadow:0 4px 16px #4c283012; }
+.demo-gallery-card:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.demo-gallery-illustration { display:block; height:132px; width:100%; padding:8px 14px; background:#faf8f4; border-bottom:1px solid var(--border); }
+.demo-gallery-illustration svg { width:100%; height:100%; display:block; }
+.demo-gallery-card-copy { display:flex; flex:1; flex-direction:column; padding:14px 17px; }
+.demo-gallery-card-copy strong { font:600 16px/1.35 var(--font-ui); letter-spacing:-.25px; }
+.demo-gallery-card-copy small { font:12px/1.65 var(--font-ui); color:var(--muted); margin-top:7px; }
+.demo-gallery-insert { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:12px; color:var(--accent); font-size:11px; font-weight:600; }
+.demo-custom-details { margin-top:20px; border:1px solid var(--border); border-radius:8px; background:var(--paper); }
+.demo-custom-details > summary { display:flex; justify-content:space-between; align-items:center; padding:15px 17px; cursor:pointer; list-style:none; font-size:13px; font-weight:550; }
+.demo-custom-details > summary::-webkit-details-marker { display:none; }
+.demo-custom-details > summary > span { display:flex; gap:9px; align-items:center; }
+.demo-custom-details[open] > summary > svg { transform:rotate(180deg); }
+.demo-custom-details > form { padding:0 17px 17px; }
+.demo-custom-details form > p { font-size:12px; line-height:1.75; color:var(--muted); margin:0 0 15px; }
+.demo-custom-details code { font-size:11px; }
+.demo-custom-details form > label { display:block; margin:12px 0; }
+.demo-custom-details input { margin-top:7px; }
+.demo-code-label { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top:16px; margin-bottom:6px; }
+.demo-code-label > label { font-weight:600; }
+.demo-custom-details textarea { min-height:210px; }
+.demo-custom-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-top:16px; }
+.demo-custom-footer p { margin:0; max-width:420px; color:var(--muted); font-size:11px; line-height:1.7; }
+.demo-custom-footer button { flex-shrink:0; }
+.demo-gallery-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:22px; }
+.demo-gallery-footer > span { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; }
+@media (max-width:640px) {
+  .demo-gallery-options { align-items:flex-start; flex-direction:column; gap:8px; }
+  .demo-gallery-grid { gap:10px; }
+  .demo-gallery-illustration { height:95px; padding:6px; }
+  .demo-gallery-card-copy { padding:12px; }
+  .demo-gallery-card-copy strong { font-size:13px; }
+  .demo-gallery-card-copy small { font-size:11px; }
+  .demo-custom-footer { flex-direction:column; align-items:stretch; gap:12px; }
+  .demo-gallery-footer > span { max-width:210px; line-height:1.5; }
+}
+@media (max-width:390px) { .demo-gallery-grid { grid-template-columns:1fr; } .demo-gallery-illustration { height:120px; } }

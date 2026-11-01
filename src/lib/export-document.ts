@@ -1,6 +1,9 @@
 import katexCss from 'katex/dist/katex.min.css?raw';
 import katexLicense from 'katex/LICENSE?raw';
 import documentCss from '../styles/document.css?raw';
+import interactiveCss from '../styles/interactive-demos.css?raw';
+import applicationLicense from '../../LICENSE?raw';
+import { interactiveRuntimeSource } from '../scripts/interactive-demo-runtime';
 import { escapeHtml, renderMarkdown, type RenderOptions } from './render-markdown';
 import { siteConfig } from '../config/site';
 import {
@@ -20,6 +23,74 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_EXPORT_IMAGE_BYTES = 24 * 1024 * 1024;
 let embeddedKatexCss: Promise<string> | undefined;
 let printing = false;
+
+export function exportScriptNonce(): string {
+  return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(18))));
+}
+
+/** Also serialized into portable HTML. Keep this function self-contained. */
+export function makeInteractivePrintCopy(root: ParentNode, snapshots: ReadonlyMap<string, string> = new Map()): void {
+  for (const card of root.querySelectorAll<HTMLElement>('.qft-demo[data-demo-id]')) {
+    const poster = card.querySelector<HTMLElement>('[data-demo-poster]');
+    const snapshot = snapshots.get(card.dataset.demoId ?? '');
+    const usableSnapshot = !!snapshot && snapshot.length <= 12 * 1024 * 1024
+      && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(snapshot);
+    card.querySelectorAll('iframe,[data-demo-frame],.qft-demo-controls,template').forEach((element) => element.remove());
+    card.dataset.demoState = 'static';
+    card.removeAttribute('tabindex');
+    if (poster) {
+      poster.hidden = false;
+      poster.removeAttribute('aria-hidden');
+      if (usableSnapshot) {
+        const image = document.createElement('img');
+        image.src = snapshot;
+        image.alt = `Canvas snapshot of ${card.querySelector('.qft-demo-heading')?.textContent?.trim() || 'the interactive demonstration'}`;
+        image.className = 'qft-demo-print-snapshot';
+        poster.replaceChildren(image);
+      } else if (!card.dataset.demoPreset) {
+        const heading = poster.querySelector('strong');
+        const explanation = poster.querySelector('span');
+        if (heading) heading.textContent = 'Interactive demonstration';
+        if (explanation) explanation.textContent = 'Open the HTML version to use this demonstration.';
+      }
+    }
+    const status = card.querySelector<HTMLElement>('[data-demo-status]');
+    if (status) {
+      status.hidden = false;
+      status.textContent = usableSnapshot ? 'Canvas snapshot · use the HTML version to interact.' : 'Static preview · use the HTML version to interact.';
+    }
+    card.querySelector('[data-demo-print-note]')?.remove();
+    const caption = card.querySelector('.qft-demo-caption');
+    if (caption) {
+      const note = document.createElement('span');
+      note.dataset.demoPrintNote = '';
+      note.textContent = usableSnapshot ? 'Canvas snapshot · interactive controls are available in the HTML version.'
+        : card.dataset.demoPreset ? 'Initial illustration · interactive controls are available in the HTML version.'
+          : 'Static placeholder · interactive controls are available in the HTML version.';
+      caption.append(note);
+    }
+  }
+}
+
+/** Namespaces a detached print copy without changing the live document. */
+export function namespacePrintIds(root: ParentNode, prefix = 'qft-print-'): void {
+  const ids = new Map<string, string>();
+  root.querySelectorAll<HTMLElement>('[id]').forEach((element) => {
+    const id = `${prefix}${element.id}`;
+    ids.set(element.id, id);
+    element.id = id;
+  });
+  root.querySelectorAll<HTMLLabelElement>('label[for]').forEach((label) => {
+    const id = ids.get(label.htmlFor);
+    if (id) label.htmlFor = id;
+  });
+  root.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((anchor) => {
+    let target = anchor.getAttribute('href')!.slice(1);
+    try { target = decodeURIComponent(target); } catch { /* Preserve malformed fragments. */ }
+    const id = ids.get(target);
+    if (id) anchor.setAttribute('href', `#${id}`);
+  });
+}
 
 export function fileName(title: string, extension: string): string {
   let safeTitle = title.normalize('NFKC').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
@@ -171,7 +242,7 @@ export async function embedImages(html: string): Promise<string> {
   return template.innerHTML;
 }
 
-/** Export a standalone, script-free HTML document with embedded math fonts. */
+/** Export a standalone document; only explicit demo blocks receive a player. */
 export async function exportPortableHtml(
   source: string, title: string, options: RenderOptions = {},
   value: DocumentSettings = DEFAULT_DOCUMENT_SETTINGS,
@@ -180,8 +251,36 @@ export async function exportPortableHtml(
   const rendered = renderMarkdown(source, options);
   if (!rendered.html && source.trim()) throw new Error(rendered.errors[0]?.message ?? 'The document could not be rendered.');
   const [mathStyle, html] = await Promise.all([standaloneMathCss(), embedImages(rendered.html)]);
+  const hasDemos = html.includes('data-demo-id=');
+  const scriptNonce = exportScriptNonce();
+  const script = hasDemos ? `
+const makePrintCopy = (${makeInteractivePrintCopy.toString()});
+const namespacePrintIds = (${namespacePrintIds.toString()});
+const article = document.querySelector('.export-document');
+let demos;
+try {
+  demos = (${interactiveRuntimeSource()})(article, {scriptNonce:${JSON.stringify(scriptNonce)}});
+} catch (error) {
+  const status = document.getElementById('demo-export-status');
+  status.textContent = 'Interactive demonstrations could not start in this browser. Their static previews and source remain available.';
+  status.hidden = false;
+}
+let printCopy;
+window.addEventListener('beforeprint',()=>{
+  printCopy?.remove();
+  printCopy = article.cloneNode(true);
+  printCopy.classList.remove('export-document');
+  printCopy.classList.add('export-document-print-copy');
+  makePrintCopy(printCopy,demos?.snapshots() || new Map());
+  namespacePrintIds(printCopy,'qft-export-print-');
+  article.after(printCopy);
+  document.body.dataset.exportPrinting='document';
+});
+window.addEventListener('afterprint',()=>{printCopy?.remove();printCopy=undefined;delete document.body.dataset.exportPrinting;});
+window.addEventListener('pagehide',event=>{if(!event.persisted)demos?.destroy();});
+`.replace(/<\/script/gi, '<\\/script') : '';
   const warning = rendered.errors.length
-    ? `<p class="export-warning">This document contains ${rendered.errors.length} unresolved mathematical rendering issue${rendered.errors.length === 1 ? '' : 's'}. The original Markdown is included below.</p>`
+    ? `<p class="export-warning">This document contains ${rendered.errors.length} unresolved rendering issue${rendered.errors.length === 1 ? '' : 's'}. The original Markdown is included below.</p>`
     : '';
   const exported = `<!doctype html>
 <html lang="en">
@@ -190,11 +289,12 @@ export async function exportPortableHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="${escapeHtml(siteConfig.name)}">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${hasDemos ? `'nonce-${scriptNonce}'` : "'none'"}; script-src-attr 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; frame-src 'self' blob:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'">
 <title>${escapeHtml(title || 'Markdown document')}</title>
 <style>
 ${mathStyle}
 ${documentCss}
+${hasDemos ? interactiveCss : ''}
 ${documentPresentationCss(settings)}
 :root{color-scheme:light;background:#f1f2f2;color:#29282e}
 *{box-sizing:border-box}
@@ -204,20 +304,22 @@ main{max-width:${documentPageMetrics(settings).widthMm}mm;margin:0 auto;backgrou
 .source-document summary{cursor:pointer}
 .source-document pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#444;font:12px/1.7 ui-monospace,monospace}
 .export-warning{border-left:3px solid #a33548;padding:12px 16px;background:#fbe8ec;font:13px/1.6 system-ui,sans-serif}
+.export-document-print-copy{display:none}
 @media(max-width:600px){body{padding:0}main{padding:24px 20px;box-shadow:none}}
-@media print{body{padding:0;background:white}.source-document{display:none}main{max-width:none;margin:0;padding:0;box-shadow:none}.export-warning{break-inside:avoid}}
+@media print{body{padding:0;background:white}.source-document{display:none}main{max-width:none;margin:0;padding:0;box-shadow:none}.export-warning{break-inside:avoid}${hasDemos ? 'body[data-export-printing] .export-document{display:none!important}.export-document-print-copy{display:block!important}' : ''}}
 </style>
 </head>
 <body><main>
 ${warning}
-<article class="markdown-document document-presentation">${prepareDocumentHtml(html, title, settings)}</article>
-<details class="source-document"><summary>Original Markdown · exported with ${escapeHtml(siteConfig.name)}</summary><pre>${escapeHtml(source)}</pre><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details></details>
-</main></body></html>`;
+${hasDemos ? '<p id="demo-export-status" class="export-warning" role="alert" hidden></p>' : ''}
+<article class="markdown-document document-presentation export-document">${prepareDocumentHtml(html, title, settings)}</article>
+<details class="source-document"><summary>Original Markdown · exported with ${escapeHtml(siteConfig.name)}</summary><pre>${escapeHtml(source)}</pre><details><summary>KaTeX math typesetting and fonts · MIT license</summary><pre>${escapeHtml(katexLicense)}</pre></details>${hasDemos ? `<details><summary>QFT Markdown demo runtime and built-in examples · MIT license</summary><pre>${escapeHtml(applicationLicense)}</pre></details>` : ''}</details>
+</main>${script ? `<script nonce="${scriptNonce}">${script}</script>` : ''}</body></html>`;
   download(exported, title, 'html', 'text/html');
 }
 
 /** Print a clean copy without moving or restyling the live editor. */
-export async function printDocument(html: string, title: string, value: DocumentSettings = DEFAULT_DOCUMENT_SETTINGS): Promise<void> {
+export async function printDocument(html: string, title: string, value: DocumentSettings = DEFAULT_DOCUMENT_SETTINGS, snapshots: ReadonlyMap<string, string> = new Map()): Promise<void> {
   if (printing) return;
   const settings = normalizeDocumentSettings(value);
   const metrics = documentPageMetrics(settings);
@@ -240,27 +342,13 @@ export async function printDocument(html: string, title: string, value: Document
     article.className = 'qft-print-document markdown-document document-presentation';
     article.setAttribute('aria-hidden', 'true');
     article.innerHTML = prepareDocumentHtml(html, title, settings);
+    makeInteractivePrintCopy(article, snapshots);
     article.querySelectorAll('[tabindex]').forEach((element) => element.removeAttribute('tabindex'));
     // The live preview remains in the DOM. Give the print copy distinct
     // anchors so internal PDF links resolve to the visible printed targets.
-    const printIds = new Map<string, string>();
-    article.querySelectorAll<HTMLElement>('[id]').forEach((element) => {
-      const id = `qft-print-${element.id}`;
-      printIds.set(element.id, id);
-      element.id = id;
-    });
-    article.querySelectorAll<HTMLLabelElement>('label[for]').forEach((label) => {
-      const id = printIds.get(label.htmlFor);
-      if (id) label.htmlFor = id;
-    });
-    article.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((anchor) => {
-      let target = anchor.getAttribute('href')!.slice(1);
-      try { target = decodeURIComponent(target); } catch { /* Preserve malformed fragments. */ }
-      const id = printIds.get(target);
-      if (id) anchor.setAttribute('href', `#${id}`);
-    });
+    namespacePrintIds(article);
     printStyle = document.createElement('style');
-    printStyle.textContent = `${documentPresentationCss(settings, '.qft-print-document')}
+    printStyle.textContent = `${interactiveCss}\n${documentPresentationCss(settings, '.qft-print-document')}
 .qft-print-document{position:fixed;left:-10000px;top:0;width:${metrics.contentWidthMm}mm;visibility:hidden;pointer-events:none}
 @media print{html,body{height:auto!important;overflow:visible!important;background:#fff!important}body[data-qft-printing]>:not(.qft-print-document){display:none!important}.qft-print-document{display:block!important;position:static!important;visibility:visible!important;margin:0!important;padding:0!important;width:auto!important;max-width:none!important;background:#fff!important}body[data-qft-printing]{margin:0!important;padding:0!important}.qft-print-document .katex-display{overflow:visible!important}}`;
     document.head.append(printStyle);

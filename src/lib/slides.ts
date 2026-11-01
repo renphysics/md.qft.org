@@ -21,5 +21,13 @@ export function slideDimensions(value: unknown = DEFAULT_SLIDE_SETTINGS): { widt
 }
 
 export function renderSlides(source: string, options: RenderOptions = {}): SlidesResult {
-  return renderMarkdownSlides(source, options);
+  const result = renderMarkdownSlides(source, options);
+  // A shared footnote can render the same source demo on several slides.
+  // Each instance has independent controls, so snapshots need instance keys.
+  for (const [index, slide] of result.slides.entries()) {
+    slide.html = slide.html.replace(/data-demo-id="(demo-[a-z0-9]+-\d+)"/g,
+      (_match, id: string) => `data-demo-id="${id}-s${index + 1}"`);
+  }
+  result.html = result.slides.map((slide, index) => `<section class="qft-slide" data-slide-index="${index}">${slide.html}</section>`).join('\n');
+  return result;
 }
