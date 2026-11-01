@@ -1,0 +1,90 @@
+---
+import Icon from './Icon.astro';
+import { withBase } from '../lib/site-path';
+---
+<dialog class="app-dialog ai-lesson-dialog" data-ai-dialog aria-labelledby="ai-lesson-title">
+  <div class="dialog-heading"><span class="eyebrow">YOUR NEXT CLASS</span><button class="icon-button" data-ai-close aria-label="Close Create with AI"><Icon name="close" /></button></div>
+  <h2 id="ai-lesson-title">From a topic to a lesson.</h2>
+  <p>Use your preferred AI assistant to create slides, pictures, and interactive demos. Bring the lesson back here to make it yours.</p>
+  <div class="ai-lesson-layout">
+    <form data-ai-form>
+      <label for="ai-topic">What will you teach?</label>
+      <textarea id="ai-topic" data-ai-topic required maxlength="3000" placeholder="For example: wave packets and the uncertainty principle, based on chapter 3 of my course notes."></textarea>
+      <div class="lesson-field-grid">
+        <label for="ai-audience">Audience<input id="ai-audience" data-ai-audience type="text" maxlength="160" value="Undergraduate students" /></label>
+        <label for="ai-duration">Class length <span>(minutes)</span><input id="ai-duration" data-ai-duration type="number" min="5" max="240" step="5" value="45" required /></label>
+      </div>
+      <details class="ai-more-options"><summary>Language, mathematics &amp; demos <Icon name="down" size={14} /></summary>
+        <div class="lesson-field-grid">
+          <label for="ai-language">Language<input id="ai-language" data-ai-language type="text" maxlength="80" value="English" /></label>
+          <label for="ai-math">Mathematics<select id="ai-math" data-ai-math><option value="Match the audience">Match the audience</option><option value="Conceptual; minimal equations">Conceptual</option><option value="Calculus and worked examples">Calculus &amp; worked examples</option><option value="Advanced derivations">Advanced derivations</option></select></label>
+        </div>
+        <label for="ai-demos">Demos to include <span>(optional)</span><input id="ai-demos" data-ai-demos type="text" maxlength="500" placeholder="A wave packet with sliders for width and momentum" /></label>
+      </details>
+      <div class="ai-primary-actions"><button type="submit" class="button-primary"><Icon name="copy" size={16} /> Copy AI instructions</button><button type="button" class="button-secondary" data-ai-starter><Icon name="download" size={16} /> Starter ZIP</button></div>
+      <p class="lesson-inline-status" data-ai-status role="status" aria-live="polite">No account or API key needed. You choose the AI assistant.</p>
+      <details class="ai-prompt-details" data-ai-prompt-details hidden><summary>View or copy the instructions</summary><label for="ai-prompt" class="sr-only">AI instructions</label><textarea id="ai-prompt" data-ai-prompt readonly spellcheck="false"></textarea></details>
+    </form>
+    <aside class="ai-lesson-steps" aria-label="Create a lesson in three steps">
+      <ol>
+        <li><span>1</span><div><strong>Describe your lesson</strong><p>Choose the topic and the students you’re teaching.</p></div></li>
+        <li><span>2</span><div><strong>Ask your AI assistant</strong><p>Paste the instructions into Codex or another assistant. Attach the chapter or notes you want it to use.</p></div></li>
+        <li><span>3</span><div><strong>Open, revise, present</strong><p>Ask for a lesson ZIP. Open it here, check it, and make your final edits.</p></div></li>
+      </ol>
+      <button type="button" class="button-secondary" data-ai-open><Icon name="upload" size={15} /> Open AI lesson</button>
+      <button type="button" class="lesson-text-button" data-ai-example>Try the starter in the workspace <Icon name="arrow" size={13} /></button>
+      <a class="lesson-format-link" href={withBase('lesson-format-v2.md')} target="_blank" rel="noopener">Format guide for AI &amp; developers <Icon name="external" size={12} /></a>
+    </aside>
+  </div>
+</dialog>
+
+<dialog class="app-dialog lesson-check-dialog" data-lesson-check-dialog aria-labelledby="lesson-check-title">
+  <div class="dialog-heading"><span class="eyebrow">BEFORE CLASS</span><button class="icon-button" data-lesson-check-close aria-label="Close lesson check"><Icon name="close" /></button></div>
+  <h2 id="lesson-check-title">Check your lesson.</h2>
+  <p data-lesson-check-summary></p>
+  <div class="lesson-check-result" data-lesson-check-result role="status"></div>
+  <ul class="lesson-check-list" data-lesson-check-list></ul>
+  <p class="lesson-check-help">This checks the lesson’s format and dependencies. Run each demo and review the content before class.</p>
+  <details class="lesson-report-details" data-lesson-report-details hidden><summary>Report for your AI assistant</summary><textarea data-lesson-report readonly aria-label="Lesson compatibility report"></textarea></details>
+  <div class="dialog-actions"><button class="button-secondary" data-lesson-check-copy><Icon name="copy" size={15} /> Copy report for AI</button><button class="button-primary" data-lesson-check-close>Done <Icon name="check" size={15} /></button></div>
+</dialog>
+
+<dialog class="app-dialog lesson-update-dialog" data-lesson-update-dialog aria-labelledby="lesson-update-title">
+  <div class="dialog-heading"><span class="eyebrow">A NEW REVISION</span><button class="icon-button" data-lesson-update-close aria-label="Close lesson update"><Icon name="close" /></button></div>
+  <h2 id="lesson-update-title">Review this lesson update.</h2>
+  <p data-lesson-update-description></p>
+  <div class="lesson-update-summary" data-lesson-update-summary></div>
+  <details class="lesson-change-details"><summary>Review changes <Icon name="down" size={14} /></summary>
+    <label for="lesson-change-file">File or settings<select id="lesson-change-file" data-lesson-change-file></select></label>
+    <div class="lesson-comparison"><label>Current version<textarea data-lesson-before readonly spellcheck="false"></textarea></label><label>Incoming version<textarea data-lesson-after readonly spellcheck="false"></textarea></label></div>
+  </details>
+  <p class="lesson-recovery-note"><Icon name="copy" size={15} /><span>Updating keeps a recovery copy in your workspace. Open that copy to return to the previous version.</span></p>
+  <p class="lesson-inline-status" data-lesson-update-status role="status" aria-live="polite"></p>
+  <div class="dialog-actions"><button class="button-secondary" data-lesson-update-copy>Open as a new copy</button><button class="button-primary" data-lesson-update-apply>Update lesson <Icon name="check" size={15} /></button></div>
+</dialog>
+
+<dialog class="app-dialog lesson-files-dialog" data-lesson-files-dialog aria-labelledby="lesson-files-title">
+  <form data-lesson-files-form>
+    <div class="dialog-heading"><span class="eyebrow">EDITABLE &amp; PORTABLE</span><button type="button" class="icon-button" data-lesson-files-close aria-label="Close lesson files"><Icon name="close" /></button></div>
+    <h2 id="lesson-files-title">Your lesson files.</h2>
+    <p>Edit a file here, or give the Project ZIP to your AI assistant. Reopen the revised ZIP to review and update this lesson.</p>
+    <label for="lesson-file">File<select id="lesson-file" data-lesson-file></select></label>
+    <label class="sr-only" for="lesson-file-source">File contents</label><textarea id="lesson-file-source" data-lesson-file-source spellcheck="false"></textarea>
+    <p class="lesson-file-note" data-lesson-file-note></p>
+    <p class="lesson-inline-status" data-lesson-files-status role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button type="button" class="button-secondary" data-lesson-files-close>Cancel</button><button type="button" class="button-secondary" data-lesson-files-download><Icon name="download" size={15} /> Project ZIP</button><button type="submit" class="button-primary">Save changes <Icon name="check" size={15} /></button></div>
+  </form>
+</dialog>
+
+<dialog class="app-dialog demo-edit-dialog" data-demo-edit-dialog aria-labelledby="demo-edit-title">
+  <form data-demo-edit-form>
+    <div class="dialog-heading"><span class="eyebrow">MAKE IT YOURS</span><button type="button" class="icon-button" data-demo-edit-close aria-label="Close demo editor"><Icon name="close" /></button></div>
+    <h2 id="demo-edit-title">Edit your demo.</h2>
+    <p data-demo-edit-description></p>
+    <label for="demo-edit-name">Demo title<input id="demo-edit-name" data-demo-edit-name type="text" maxlength="100" required /></label>
+    <div class="demo-setting-fields" data-demo-setting-fields></div>
+    <div data-demo-edit-code><label for="demo-edit-source">HTML, CSS &amp; JavaScript</label><textarea id="demo-edit-source" data-demo-edit-source spellcheck="false" maxlength="100000"></textarea></div>
+    <p class="lesson-inline-status" data-demo-edit-status role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button type="button" class="button-secondary" data-demo-edit-close>Cancel</button><button type="submit" class="button-primary">Save demo <Icon name="check" size={15} /></button></div>
+  </form>
+</dialog>

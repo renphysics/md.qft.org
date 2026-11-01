@@ -1,4 +1,5 @@
 import { gaussianState, blochState, schwarzschildPotential, schwarzschildPeak, interferenceState } from './demo-physics';
+import { demoSettingFields, normalizeDemoSettings, type DemoSettings } from './demo-settings';
 
 export type DemoPresetId = 'wave-packet' | 'bloch-sphere' | 'effective-potential' | 'interference';
 export interface DemoPreset {
@@ -121,6 +122,7 @@ function wavePacketDemo(ui: PlotUi, physics: typeof gaussianState) {
   const sigma = ui.bind('sigma', render, n => n.toFixed(2));
   const momentum = ui.bind('momentum', render, n => n.toFixed(1));
   const time = ui.bind('time', () => { pause(); render(); }, n => n.toFixed(2));
+  const initialTime = time.value();
   const stateText = document.getElementById('state')!;
   function render() {
     ui.clear();
@@ -151,7 +153,7 @@ function wavePacketDemo(ui: PlotUi, physics: typeof gaussianState) {
     if (running) pause();
     else { running = true; previous = performance.now(); play.textContent = 'Pause'; play.setAttribute('aria-pressed', 'true'); frame = requestAnimationFrame(tick); }
   });
-  document.getElementById('reset')!.addEventListener('click', () => { pause(); time.set(0); render(); });
+  document.getElementById('reset')!.addEventListener('click', () => { pause(); time.set(initialTime); render(); });
   view.addEventListener('change', render); ui.setDraw(render);
 }
 
@@ -242,6 +244,7 @@ function potentialDemo(ui: PlotUi, potential: typeof schwarzschildPotential, pea
   const { ctx, colors } = ui;
   const mass = ui.bind('mass', render, n => n.toFixed(2));
   const ell = ui.bind('ell', render, n => n.toFixed(0));
+  const initialMass = mass.value(), initialEll = ell.value();
   const readout = document.getElementById('state')!;
   function render() {
     ui.clear();
@@ -258,7 +261,7 @@ function potentialDemo(ui: PlotUi, potential: typeof schwarzschildPotential, pea
     readout.textContent = 'rpeak / M₀ = ' + rPeak.toFixed(3) + '  ·  M₀² Vpeak = ' + vPeak.toFixed(4);
     ui.canvas.setAttribute('aria-label', 'Schwarzschild massless scalar potential, mass ' + m.toFixed(2) + ' reference masses, angular number ' + l + ', horizon ' + (2 * m).toFixed(2) + ', maximum at radius ' + rPeak.toFixed(3) + '.');
   }
-  document.getElementById('reset')!.addEventListener('click', () => { mass.set(1); ell.set(2); render(); }); ui.setDraw(render);
+  document.getElementById('reset')!.addEventListener('click', () => { mass.set(initialMass); ell.set(initialEll); render(); }); ui.setDraw(render);
 }
 
 function interferenceDemo(ui: PlotUi, physics: typeof interferenceState) {
@@ -267,6 +270,7 @@ function interferenceDemo(ui: PlotUi, physics: typeof interferenceState) {
   const k = ui.bind('k', render, n => n.toFixed(2));
   const delta = ui.bind('delta', render, n => n.toFixed(2));
   const time = ui.bind('time', () => { pause(); render(); }, n => n.toFixed(2));
+  const initialTime = time.value();
   const play = document.getElementById('play') as HTMLButtonElement, readout = document.getElementById('state')!;
   let running = false, previous = 0, frame = 0;
   function render() {
@@ -301,7 +305,7 @@ function interferenceDemo(ui: PlotUi, physics: typeof interferenceState) {
     if (running) pause();
     else { running = true; previous = performance.now(); play.textContent = 'Pause'; play.setAttribute('aria-pressed', 'true'); frame = requestAnimationFrame(tick); }
   });
-  document.getElementById('reset')!.addEventListener('click', () => { pause(); time.set(0); render(); });
+  document.getElementById('reset')!.addEventListener('click', () => { pause(); time.set(initialTime); render(); });
   mode.addEventListener('change', render); ui.setDraw(render);
 }
 
@@ -323,14 +327,18 @@ function plotPoster(label: string, xlabel: string, ylabel: string, curves: strin
     + '<text x="965" y="299" text-anchor="end">' + xlabel + '</text>' + ticks + '</g>' + curves + '</svg>';
 }
 
-function wavePoster(): string {
-  const points = polyline(x => gaussianState(x, 0, 1, 1).density, -16, 16, 0, 0.5);
-  return plotPoster('A normalized Gaussian probability density, initial width one, mean momentum one, time zero.', 'Position x', '|ψ(x)|² · σ₀ = 1, k₀ = 1, t = 0',
-    '<polygon points="65,259 ' + points + ' 965,259" fill="#8b405317"/><polyline points="' + points + '" fill="none" stroke="#8b4053" stroke-width="3"/>',
-    '<text x="65" y="280" text-anchor="middle">−16</text><text x="515" y="280" text-anchor="middle">0</text><text x="965" y="280" text-anchor="middle">16</text><text x="51" y="263" text-anchor="end">0</text><text x="51" y="60" text-anchor="end">0.5</text>');
+function wavePoster(settings: DemoSettings = normalizeDemoSettings('wave-packet')): string {
+  const sigma = Number(settings.sigma), momentum = Number(settings.momentum), time = Number(settings.time), density = settings.view === 'density';
+  const state = (x: number) => gaussianState(x, time, sigma, momentum);
+  const points = polyline(x => density ? state(x).density : state(x).real, -24, 24, density ? 0 : -0.9, density ? 0.75 : 0.9);
+  const curves = (density ? '<polygon points="65,259 ' + points + ' 965,259" fill="#8b405317"/>' : '')
+    + '<polyline points="' + points + '" fill="none" stroke="#8b4053" stroke-width="3"/>'
+    + (density ? '' : '<polyline points="' + polyline(x => state(x).imaginary, -24, 24, -0.9, 0.9) + '" fill="none" stroke="#347e83" stroke-width="3"/>');
+  return plotPoster('A normalized Gaussian wave packet with initial width ' + sigma + ', mean momentum ' + momentum + ', time ' + time + '.', 'Position x', (density ? '|ψ(x)|²' : 'Re ψ (red) · Im ψ (teal)') + ' · σ₀ = ' + sigma + ', k₀ = ' + momentum + ', t = ' + time,
+    curves, '<text x="65" y="280" text-anchor="middle">−24</text><text x="515" y="280" text-anchor="middle">0</text><text x="965" y="280" text-anchor="middle">24</text>');
 }
 
-function spherePoster(): string {
+function spherePoster(settings: DemoSettings = normalizeDemoSettings('bloch-sphere')): string {
   const cx = 310, cy = 160, radius = 110, azimuth = -Math.PI / 4, elevation = Math.PI / 9;
   const p = (x: number, y: number, z: number) => ({
     x: cx + radius * (-Math.sin(azimuth) * x + Math.cos(azimuth) * y),
@@ -345,29 +353,34 @@ function spherePoster(): string {
       lines += '<path d="M' + a.x.toFixed(2) + ' ' + a.y.toFixed(2) + 'L' + b.x.toFixed(2) + ' ' + b.y.toFixed(2) + '" fill="none" stroke="' + (a.depth < 0 ? '#dbd2c6' : '#bfb1a0') + '"' + (a.depth < 0 ? ' stroke-dasharray="2 3"' : '') + '/>';
     }
   }
-  const state = blochState(Math.PI / 3, Math.PI / 4), tip = p(state.x, state.y, state.z);
-  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 310" role="img" aria-label="Bloch sphere at theta 60 degrees and phi 45 degrees, probability zero 0.75.">'
+  const theta = Number(settings.theta), phi = Number(settings.phi);
+  const state = blochState(theta * Math.PI / 180, phi * Math.PI / 180), tip = p(state.x, state.y, state.z);
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 310" role="img" aria-label="Bloch sphere at theta ' + theta + ' degrees and phi ' + phi + ' degrees, probability zero ' + state.probability0.toFixed(3) + '.">'
     + '<rect width="1000" height="310" rx="12" fill="#fbfaf7"/><circle cx="310" cy="160" r="110" fill="#f2ece3" stroke="#d7ccbe"/>'
     + lines + '<path d="M310 160L' + tip.x.toFixed(2) + ' ' + tip.y.toFixed(2) + '" stroke="#8b4053" stroke-width="4"/><circle cx="' + tip.x.toFixed(2) + '" cy="' + tip.y.toFixed(2) + '" r="6" fill="#8b4053"/>'
     + '<g font-family="system-ui,sans-serif"><text x="310" y="32" text-anchor="middle" font-size="18" fill="#71665a">|0⟩</text><text x="310" y="295" text-anchor="middle" font-size="18" fill="#71665a">|1⟩</text>'
-    + '<text x="540" y="84" font-size="14" fill="#88796c">A PURE QUBIT</text><text x="540" y="121" font-size="26" fill="#3c3535">θ = 60°   φ = 45°</text>'
-    + '<text x="540" y="168" font-size="20" fill="#8b4053">P(0) = 0.750</text><text x="540" y="201" font-size="20" fill="#347e83">P(1) = 0.250</text>'
+    + '<text x="540" y="84" font-size="14" fill="#88796c">A PURE QUBIT</text><text x="540" y="121" font-size="26" fill="#3c3535">θ = ' + theta + '°   φ = ' + phi + '°</text>'
+    + '<text x="540" y="168" font-size="20" fill="#8b4053">P(0) = ' + state.probability0.toFixed(3) + '</text><text x="540" y="201" font-size="20" fill="#347e83">P(1) = ' + state.probability1.toFixed(3) + '</text>'
     + '<text x="540" y="248" font-size="15" fill="#776d63">Rotate the view. Adjust the quantum state.</text></g></svg>';
 }
 
-function potentialPoster(): string {
-  const points = polyline(r => schwarzschildPotential(r, 1, 2), 0, 18, 0, 0.31);
-  return plotPoster('Massless scalar Schwarzschild potential, mass one, angular number two.', 'Areal radius r / M₀', 'M₀² Vℓ(r) · M = M₀ = 1, ℓ = 2',
-    '<rect x="65" y="54" width="100" height="205" fill="#d7d0c54d"/><polyline points="' + points + '" fill="none" stroke="#8b4053" stroke-width="3"/>',
-    '<text x="65" y="280" text-anchor="middle">0</text><text x="165" y="280" text-anchor="middle">2</text><text x="515" y="280" text-anchor="middle">9</text><text x="965" y="280" text-anchor="middle">18</text><text x="51" y="263" text-anchor="end">0</text><text x="51" y="60" text-anchor="end">0.31</text>');
+function potentialPoster(settings: DemoSettings = normalizeDemoSettings('effective-potential')): string {
+  const mass = Number(settings.mass), ell = Number(settings.ell);
+  const ymax = Math.max(schwarzschildPotential(schwarzschildPeak(mass, ell), mass, ell), schwarzschildPotential(schwarzschildPeak(1, ell), 1, ell)) * 1.25;
+  const points = polyline(r => schwarzschildPotential(r, mass, ell), 0, 18, 0, ymax);
+  const reference = polyline(r => schwarzschildPotential(r, 1, ell), 0, 18, 0, ymax);
+  return plotPoster('Massless scalar Schwarzschild potential, mass ' + mass + ', angular number ' + ell + '.', 'Areal radius r / M₀', 'M₀² Vℓ(r) · M / M₀ = ' + mass + ', ℓ = ' + ell,
+    '<rect x="65" y="54" width="' + 100 * mass + '" height="205" fill="#d7d0c54d"/><polyline points="' + reference + '" fill="none" stroke="#aaa096" stroke-width="2" stroke-dasharray="6 5"/><polyline points="' + points + '" fill="none" stroke="#8b4053" stroke-width="3"/>',
+    '<text x="65" y="280" text-anchor="middle">0</text><text x="515" y="280" text-anchor="middle">9</text><text x="965" y="280" text-anchor="middle">18</text><text x="51" y="263" text-anchor="end">0</text><text x="51" y="60" text-anchor="end">' + ymax.toFixed(2) + '</text>');
 }
 
-function interferencePoster(): string {
+function interferencePoster(settings: DemoSettings = normalizeDemoSettings('interference')): string {
+  const k = Number(settings.k), delta = Number(settings.delta), time = Number(settings.time), dispersion = settings.dispersion as 'linear' | 'quadratic';
   const curve = (fn: (x: number) => number, color: string, dash = false) => '<polyline points="' + polyline(fn, -16, 16, -1.15, 1.15) + '" fill="none" stroke="' + color + '" stroke-width="' + (dash ? 2 : 3) + '"' + (dash ? ' stroke-dasharray="7 5"' : '') + '/>';
-  return plotPoster('Two-wave interference with quadratic dispersion, mean wave number two and separation 0.5, at time zero.', 'Position x', 'Interference · ω = k²/2, k₀ = 2, Δk = 0.5',
-    curve(x => Math.abs(interferenceState(x, 0, 2, 0.5, 'quadratic').envelope), '#b18b46', true)
-    + curve(x => -Math.abs(interferenceState(x, 0, 2, 0.5, 'quadratic').envelope), '#b18b46', true)
-    + curve(x => interferenceState(x, 0, 2, 0.5, 'quadratic').value, '#8b4053'),
+  return plotPoster('Two-wave interference with ' + dispersion + ' dispersion, mean wave number ' + k + ' and separation ' + delta + ', at time ' + time + '.', 'Position x', 'Interference · ' + (dispersion === 'quadratic' ? 'ω = k²/2' : 'ω = 1.2k') + ', k₀ = ' + k + ', Δk = ' + delta + ', t = ' + time,
+    curve(x => Math.abs(interferenceState(x, time, k, delta, dispersion).envelope), '#b18b46', true)
+    + curve(x => -Math.abs(interferenceState(x, time, k, delta, dispersion).envelope), '#b18b46', true)
+    + curve(x => interferenceState(x, time, k, delta, dispersion).value, '#8b4053'),
     '<text x="65" y="280" text-anchor="middle">−16</text><text x="515" y="280" text-anchor="middle">0</text><text x="965" y="280" text-anchor="middle">16</text><text x="51" y="162" text-anchor="end">0</text>');
 }
 
@@ -428,4 +441,27 @@ export const DEMO_PRESETS: readonly DemoPreset[] = [
 
 export function findDemoPreset(id: string): DemoPreset | undefined {
   return DEMO_PRESETS.find(preset => preset.id === id);
+}
+
+/** Apply validated source settings to trusted markup, before any sandbox script runs. */
+export function configureDemoPreset(id: string, value: unknown = {}): DemoPreset {
+  const preset = findDemoPreset(id);
+  if (!preset) throw new Error(`Unknown interactive demo “${id}”.`);
+  const settings = normalizeDemoSettings(id, value);
+  let html = preset.html;
+  for (const field of demoSettingFields(id)) {
+    const current = settings[field.key];
+    if (field.type === 'number') {
+      const pattern = new RegExp('(<input\\b[^>]*\\bid="' + field.key + '"[^>]*\\bvalue=")[^"]*(")');
+      html = html.replace(pattern, (_match, before: string, after: string) => before + current + after);
+    } else {
+      const pattern = new RegExp('(<select\\b[^>]*\\bid="' + field.key + '"[^>]*>)([\\s\\S]*?)(</select>)');
+      html = html.replace(pattern, (_match, before: string, options: string, after: string) => before + options
+        .replace(/\sselected(?:="[^"]*")?/g, '')
+        .replace(new RegExp('<option value="' + current + '"'), '<option value="' + current + '" selected') + after);
+    }
+  }
+  const poster = id === 'wave-packet' ? wavePoster(settings) : id === 'bloch-sphere' ? spherePoster(settings)
+    : id === 'effective-potential' ? potentialPoster(settings) : interferencePoster(settings);
+  return { ...preset, html, poster };
 }

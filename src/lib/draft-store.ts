@@ -1,7 +1,9 @@
 import { scopedStorageKey } from './storage-scope';
+import { validateLessonProject, cloneLessonProject, type LessonProject } from './lesson-project';
 import { validateImageAssets, type DraftImage } from './image-assets';
 
 export interface DraftOptions {
+  project?: LessonProject;
   images?: DraftImage[];
   mode?: 'document' | 'slides';
   slideTheme?: 'paper' | 'midnight' | 'serif';
@@ -158,6 +160,10 @@ function validateText(title: string, source: string): { title: string; source: s
 /** Absent metadata stays absent, so drafts created before slides/images remain unchanged. */
 export function validateDraftOptions(value: DraftOptions = {}): DraftOptions {
   const result: DraftOptions = {};
+  if (value.project !== undefined) {
+    try { result.project = validateLessonProject(value.project); }
+    catch (error) { throw new DraftStorageError(error instanceof Error ? error.message : 'The lesson project could not be read.', { cause: error }); }
+  }
   if (value.mode !== undefined) {
     if (!['document', 'slides'].includes(value.mode)) throw new DraftStorageError('The document view type is invalid.');
     result.mode = value.mode;
@@ -176,11 +182,14 @@ export function validateDraftOptions(value: DraftOptions = {}): DraftOptions {
       throw new DraftStorageError(error instanceof Error ? error.message : 'The document images could not be read.', { cause: error });
     }
   }
+  if (result.project?.imagePaths.some((entry) => !result.images?.some((image) => image.id === entry.imageId))) {
+    throw new DraftStorageError('A lesson image is missing from this document.');
+  }
   return result;
 }
 
 function cloneDraft(draft: Draft): Draft {
-  return { ...draft, ...(draft.images ? { images: draft.images.map((image) => ({ ...image })) } : {}) };
+  return { ...draft, ...(draft.project ? { project: cloneLessonProject(draft.project) } : {}), ...(draft.images ? { images: draft.images.map((image) => ({ ...image })) } : {}) };
 }
 
 function readDraft(value: unknown): Draft | undefined {

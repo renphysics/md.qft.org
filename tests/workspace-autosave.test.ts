@@ -12,6 +12,8 @@ import { DEFAULT_DOCUMENT_SETTINGS, type DocumentSettings } from '../src/lib/doc
 import { appendDocumentSection, suggestDocumentTitle, applyCleanup } from '../src/lib/document-tools.ts';
 import { renderMarkdown } from '../src/lib/render-markdown.ts';
 import { EXAMPLES } from '../src/lib/examples.ts';
+import { createLessonProject, cloneLessonProject } from '../src/lib/lesson-project.ts';
+import type { WorkspaceBundle } from '../src/lib/document-bundle.ts';
 
 // Exercise the actual controller methods, with isolated browser surfaces and
 // delayed storage dependencies. Remove imports through the TypeScript AST so
@@ -63,6 +65,9 @@ interface Workspace {
   updatePdfPreview(): void;
   pdfSnapshot?: DraftOptions & { id: string; title: string; source: string; allowRemoteImages: boolean };
   documentSettings: DocumentSettings;
+  lessonImport?: { bundle:WorkspaceBundle; target:Draft; changes:unknown[] };
+  applyLessonImport(asCopy:boolean):Promise<void>;
+  reviewLessonImport(bundle:WorkspaceBundle,target:Draft):Promise<void>;
 }
 
 interface Storage {
@@ -100,7 +105,7 @@ function workspace(storage: Partial<Storage> = {}, browserDependencies: Record<s
     document: { addEventListener: noop, getElementById: (id: string) => id === 'workspace-exports' ? headerExports : null }, window: { addEventListener: noop },
     createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
     DEFAULT_DOCUMENT_SETTINGS, appendDocumentSection, suggestDocumentTitle, applyCleanup,
-    renderMarkdown, EXAMPLES,
+    renderMarkdown, EXAMPLES, cloneLessonProject,
     MAX_SOURCE_LENGTH: 400_000,
     createDraft: async (title: string, source: string, options: DraftOptions = {}) => ({ ...draft('new', source, 1, title), ...options }),
     saveDraft: async (value: Draft) => ({ ...value, revision: value.revision + 1 }),
@@ -557,5 +562,126 @@ describe('workspace draft coordination', () => {
     assert.equal(app.current.source, 'typed while deletion was pending');
     assert.equal(app.drafts.get('new')?.source, app.current.source);
     assert.equal(app.dirty, false);
+  });
+
+  it('commits a separate recovery copy before replacing a lesson revision', async () => {
+    const backup = deferred<Draft>();
+    const calls:string[] = [];
+    let recoveryOptions:DraftOptions | undefined;
+    const {app} = workspace({
+      createDraft:async (_title,source,options) => { calls.push(`backup:${source}`); recoveryOptions = options; return backup.promise; },
+      saveDraft:async (value,expected) => { calls.push(`update:${value.source}`); assert.equal(expected,1); return {...value,revision:2}; },
+    });
+    app.current = {...app.current,project:createLessonProject('slides.md','original-project')};
+    app.drafts.set('old',app.current);
+    app.lessonImport = {target:app.current,changes:[],bundle:{title:'Revised lesson',source:'new slides',images:[],project:cloneLessonProject(app.current.project!)}};
+    const update = app.applyLessonImport(false);
+    await nextTurn();
+    assert.deepEqual(calls,['backup:initial']);
+    assert.equal(app.current.source,'initial');
+    assert.notEqual(recoveryOptions?.project?.id,'original-project');
+    backup.resolve({...draft('backup','initial',1,'Old lesson (before update)'),...recoveryOptions});
+    await update;
+    assert.deepEqual(calls,['backup:initial','update:new slides']);
+    assert.equal(app.current.id,'old');
+    assert.equal(app.current.project?.id,'original-project');
+    assert.equal(app.drafts.get('backup')?.source,'initial');
+    assert.equal(app.drafts.get('old')?.source,'new slides');
+  });
+
+  it('does not replace a lesson if its recovery copy cannot be stored', async () => {
+    let saves = 0;
+    const {app} = workspace({
+      createDraft:async () => {throw new Error('Storage full');},
+      saveDraft:async (value) => {saves += 1; return value;},
+    });
+    app.lessonImport = {target:app.current,changes:[],bundle:{title:'New lesson',source:'revised',images:[]}};
+    await assert.rejects(app.applyLessonImport(false),/Storage full/);
+    assert.equal(saves,0);
+    assert.equal(app.current.source,'initial');
+  });
+
+  it('preserves edits to another active document while saving the lesson recovery copy', async () => {
+    const backup = deferred<Draft>();
+    const writes:Draft[] = [];
+    const {app} = workspace({createDraft:async () => backup.promise,saveDraft:async (value) => {writes.push(value); return {...value,revision:value.revision+1};}});
+    const target = draft('lesson','before');
+    app.drafts.set(target.id,target);
+    app.lessonImport = {target,changes:[],bundle:{title:'Updated lesson',source:'after',images:[]}};
+    const updating = app.applyLessonImport(false);
+    await nextTurn();
+    edit(app,'typed in my other document during backup');
+    backup.resolve(draft('backup','before'));
+    await updating;
+    assert.equal(app.current.id,'old');
+    assert.equal(app.current.source,'typed in my other document during backup');
+    assert.equal(app.dirty,false);
+    assert.equal(app.drafts.get('lesson')?.source,'after');
+    assert.ok(writes.some((value) => value.id === 'old' && value.source === app.current.source));
+  });
+
+  it('preserves late edits after the imported lesson commit was already in progress', async () => {
+    const updating = deferred<Draft>();
+    let creates = 0;
+    let saves = 0;
+    const {app} = workspace({
+      createDraft:async (title,source,options) => ({...draft(`copy-${++creates}`,source,1,title),...options}),
+      saveDraft:async (_value) => {
+        saves += 1;
+        if (saves === 1) return updating.promise;
+        throw new DraftConflictError('old',draft('old','imported lesson',2));
+      },
+    });
+    app.lessonImport = {target:app.current,changes:[],bundle:{title:'Updated lesson',source:'imported lesson',images:[]}};
+    const update = app.applyLessonImport(false);
+    await nextTurn();
+    edit(app,'late notes typed after closing the review');
+    updating.resolve(draft('old','imported lesson',2));
+    await update;
+    assert.equal(app.current.id,'copy-2');
+    assert.equal(app.current.source,'late notes typed after closing the review');
+    assert.equal(app.drafts.get('old')?.source,'imported lesson');
+    assert.equal(app.drafts.get('copy-1')?.source,'initial');
+    assert.equal(app.dirty,false);
+  });
+
+  it('requires a fresh revision review when the target changes', async () => {
+    let saves = 0;
+    let reviewed:Draft | undefined;
+    const {app} = workspace({saveDraft:async (value) => {saves += 1; return value;}});
+    app.lessonImport = {target:app.current,changes:[],bundle:{title:'New lesson',source:'revised',images:[]}};
+    app.drafts.set('old',{...app.current,source:'edited in another tab',revision:2});
+    app.reviewLessonImport = async (_bundle,target) => {reviewed = target;};
+    await assert.rejects(app.applyLessonImport(false),/changed while this review was open/);
+    assert.equal(reviewed?.source,'edited in another tab');
+    assert.equal(saves,0);
+  });
+
+  it('keeps the original and recovery copy if a different tab wins the update race', async () => {
+    const {app} = workspace({saveDraft:async () => {throw new DraftConflictError('old',draft('old','other tab',2));}});
+    app.lessonImport = {target:app.current,changes:[],bundle:{title:'New lesson',source:'revised',images:[]}};
+    await assert.rejects(app.applyLessonImport(false),/Another tab changed/);
+    assert.equal(app.current.source,'initial');
+    assert.equal(app.drafts.get('new')?.source,'initial');
+    assert.ok(app.lessonImport);
+  });
+
+  it('saves a demo file changed during an earlier autosave instead of dropping it', async () => {
+    const first = deferred<Draft>();
+    const saves:Draft[] = [];
+    const {app} = workspace({saveDraft:async (value) => {saves.push(value); return saves.length === 1 ? first.promise : {...value,revision:3};}});
+    const project = {...createLessonProject('slides.md','my-lesson'),files:[{path:'demos/wave.html',content:'old demo'}]};
+    app.current = {...app.current,project};
+    edit(app,'edited slides');
+    const save = app.flush();
+    await nextTurn();
+    app.current = {...app.current,project:{...project,files:[{path:'demos/wave.html',content:'new demo'}]}};
+    app.dirty = true;
+    first.resolve({...saves[0],revision:2});
+    await save;
+    assert.equal(saves.length,2);
+    assert.equal(saves[1].project?.files[0].content,'new demo');
+    assert.equal(app.current.project?.files[0].content,'new demo');
+    assert.equal(app.dirty,false);
   });
 });

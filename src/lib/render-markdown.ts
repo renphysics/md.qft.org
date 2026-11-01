@@ -12,6 +12,8 @@ import bash from 'highlight.js/lib/languages/bash';
 import latex from 'highlight.js/lib/languages/latex';
 import css from 'highlight.js/lib/languages/css';
 import { isInteractiveFence, renderInteractiveFence, MAX_INTERACTIVE_DEMOS } from './interactive-demos';
+import { projectFilePath, type LessonProject } from './lesson-project';
+import { imageReference } from './image-assets';
 
 for (const [name, language] of Object.entries({ javascript, typescript, python, json, bash, latex, css })) {
   hljs.registerLanguage(name, language);
@@ -23,6 +25,10 @@ export interface RenderOptions {
   allowRemoteImages?: boolean;
   /** Only attachment URLs resolved by the workspace may become local object URLs. */
   imageSources?: ReadonlyMap<string, string>;
+  /** Separate, local demo source files from an imported lesson project. */
+  project?: LessonProject;
+  /** Workspace-only action. Portable exports omit authoring controls. */
+  editableDemos?: boolean;
 }
 export interface RenderIssue { message: string; line: number }
 export interface DocumentHeading { id: string; text: string; level: number; line: number }
@@ -136,7 +142,7 @@ function renderSource(source: string, options: RenderOptions, slides: boolean): 
       if (interactiveCount === MAX_INTERACTIVE_DEMOS + 1) result.errors.push({ message, line: line + 1 });
       html = `<div class="qft-demo-error" role="note">${escapeHtml(message)}</div>\n`;
     } else {
-      const rendered = renderInteractiveFence(token.info, token.content, line);
+      const rendered = renderInteractiveFence(token.info, token.content, line, options);
       if (rendered.error) result.errors.push({ message: rendered.error, line: line + 1 });
       html = rendered.html;
     }
@@ -222,9 +228,12 @@ function renderSource(source: string, options: RenderOptions, slides: boolean): 
     const src = String(token.attrGet('src') ?? '');
     const alt = renderer.renderInlineAsText(token.children ?? [], settings, environment);
     const title = String(token.attrGet('title') ?? '');
-    const attachment = src.startsWith('qft-image:') ? options.imageSources?.get(src) : undefined;
+    const projectPath = options.project ? projectFilePath(src, options.project.document) : undefined;
+    const projectImage = projectPath ? options.project?.imagePaths.find(image => image.path === projectPath) : undefined;
+    const reference = src.startsWith('qft-image:') ? src : projectImage ? imageReference(projectImage.imageId) : undefined;
+    const attachment = reference ? options.imageSources?.get(reference) : undefined;
     if (attachment && (/^blob:/i.test(attachment) || embeddedRaster.test(attachment))) {
-      return `<img src="${escapeHtml(attachment)}" alt="${escapeHtml(alt)}"${title ? ` title="${escapeHtml(title)}"` : ''} decoding="async" data-qft-image="${escapeHtml(src)}">`;
+      return `<img src="${escapeHtml(attachment)}" alt="${escapeHtml(alt)}"${title ? ` title="${escapeHtml(title)}"` : ''} decoding="async" data-qft-image="${escapeHtml(reference!)}">`;
     }
     if (embeddedRaster.test(src) || (options.allowRemoteImages && remoteImage.test(src))) {
       return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${title ? ` title="${escapeHtml(title)}"` : ''} decoding="async" referrerpolicy="no-referrer">`;

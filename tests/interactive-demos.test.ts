@@ -68,7 +68,7 @@ describe('explicit interactive Markdown fences', () => {
     ]) {
       const result = renderInteractiveFence(info, code, 4);
       assert.ok(result.error);
-      assert.doesNotMatch(result.html, /data-demo-source|data-demo-run|<iframe/);
+      assert.doesNotMatch(result.html, /<template data-demo-source|data-demo-run|<iframe/);
     }
   });
 

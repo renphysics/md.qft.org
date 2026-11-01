@@ -30,6 +30,8 @@ export function exportScriptNonce(): string {
 
 /** Also serialized into portable HTML. Keep this function self-contained. */
 export function makeInteractivePrintCopy(root: ParentNode, snapshots: ReadonlyMap<string, string> = new Map()): void {
+  // Error cards also carry an authoring button, outside the normal controls row.
+  root.querySelectorAll('[data-demo-edit]').forEach((element) => element.remove());
   for (const card of root.querySelectorAll<HTMLElement>('.qft-demo[data-demo-id]')) {
     const poster = card.querySelector<HTMLElement>('[data-demo-poster]');
     const snapshot = snapshots.get(card.dataset.demoId ?? '');
@@ -248,7 +250,7 @@ export async function exportPortableHtml(
   value: DocumentSettings = DEFAULT_DOCUMENT_SETTINGS,
 ): Promise<void> {
   const settings = normalizeDocumentSettings(value);
-  const rendered = renderMarkdown(source, options);
+  const rendered = renderMarkdown(source, { ...options, editableDemos: false });
   if (!rendered.html && source.trim()) throw new Error(rendered.errors[0]?.message ?? 'The document could not be rendered.');
   const [mathStyle, html] = await Promise.all([standaloneMathCss(), embedImages(rendered.html)]);
   const hasDemos = html.includes('data-demo-id=');

@@ -36,7 +36,7 @@ export async function exportSlidesHtml(
   value: SlideSettings = DEFAULT_SLIDE_SETTINGS,
 ): Promise<void> {
   const settings = normalizeSlideSettings(value);
-  const rendered = renderSlides(source, options);
+  const rendered = renderSlides(source, { ...options, editableDemos: false });
   if (!rendered.slides.length) throw new Error(rendered.errors[0]?.message ?? 'Add some Markdown before exporting slides.');
   const { width, height } = slideDimensions(settings);
   const slideSections = rendered.slides.map((slide, index) => `<section class="qft-slide" data-slide-index="${index}">${slide.html}</section>`).join('\n');

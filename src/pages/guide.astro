@@ -64,7 +64,7 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
 - Explain the result.`,
 };
 ---
-<BaseLayout title={`Markdown, interactive slides & PDF guide — ${siteConfig.name}`} active="guide" description="Learn how to insert images, write KaTeX equations, add interactive physics demonstrations to Markdown slides, and export PDF, portable HTML, or editable bundles.">
+<BaseLayout title={`Markdown, interactive slides & PDF guide — ${siteConfig.name}`} active="guide" description="Create AI-assisted teaching slides, revise portable lesson projects and interactive demos, check compatibility, and export Markdown, PDF, or standalone HTML.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">From a useful answer to a lasting note</span>
     <h1>A guide to Markdown, math, and slides.</h1>
@@ -82,10 +82,22 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
       <p>Find a saved note with the document search. Presentation settings stay with that draft in this browser and do not change the downloaded Markdown. Cleanup adjusts formatting; it leaves wording and source links as supplied.</p>
     </section>
 
+    <section aria-labelledby="ai-lessons">
+      <h2 id="ai-lessons">From an AI brief to a classroom lesson</h2>
+      <ol>
+        <li><strong>Describe your class.</strong> Choose <strong>Create with AI</strong> and enter the topic, audience, language, duration, mathematical depth, and demonstrations. Copy the instructions into your AI tool. Download the starter ZIP if you want to give it a working example.</li>
+        <li><strong>Bring the complete lesson.</strong> Give your AI the chapter or source material there, and ask it for the project ZIP described in the instructions. Open that ZIP with <strong>Open AI lesson</strong>, <strong>Open file</strong>, or drag and drop. Your text and files are processed locally in the browser.</li>
+        <li><strong>Revise and check.</strong> Edit slide text directly. Choose <strong>Edit demo</strong> to change a built-in demonstration's starting values or a custom demo's HTML. Use <strong>Lesson files</strong> for other source files. <strong>Check lesson</strong> reports compatibility problems; copy its report to AI for a revision.</li>
+        <li><strong>Rehearse and keep a copy.</strong> Run the demos, choose <strong>Present</strong>, and check the explanation and slide fit. Download <strong>Project ZIP</strong> for editing and <strong>HTML</strong> for a classroom copy that opens independently. PDF is a static handout.</li>
+      </ol>
+      <p>When AI revises a lesson, give it the latest Project ZIP and ask it to preserve the project identity and paths. Reopen its ZIP to review the changes, then update the saved lesson or import a new copy. An update retains the earlier version as a recovery draft. A compatibility check does not establish scientific correctness or test JavaScript behavior; rehearse the actual presentation before class.</p>
+      <p>AI authors and developers can use the <a href={withBase('lesson-format-v2.md')}>version-2 lesson format guide</a> and <a href={withBase('lesson.schema.json')}>manifest JSON schema</a>. These describe ordinary Markdown, local pictures, and separate self-contained demo files. The site does not call an AI model or require an API key.</p>
+    </section>
+
     <section aria-labelledby="insert-images">
       <h2 id="insert-images">Add pictures and keep them with your work</h2>
       <p>Choose <strong>Insert image</strong>, paste an image into the editor, or drop image files onto the workspace. PNG, JPEG, WebP, and GIF are supported, up to <strong>8 MiB per image</strong>, <strong>24 MiB in total</strong>, and <strong>50 images per document</strong>. Imported pictures stay with the draft in this browser; they are not uploaded.</p>
-      <p>Choose <strong>Markdown + images</strong> in Download to save an editable ZIP bundle. It includes the Markdown, local pictures, and slide settings. Use <strong>Open file</strong> to reopen that ZIP here or in another browser. A plain Markdown download contains text and image references, so keep the bundle when your work includes imported pictures.</p>
+      <p>Choose <strong>Markdown + images</strong> in Download to save an editable ZIP bundle. It includes the Markdown, local pictures, and slide settings. For a lesson project, this option is called <strong>Project ZIP</strong> and also keeps its demo and source files. Use <strong>Open file</strong> to reopen that ZIP here or in another browser. A plain Markdown download contains text and image references, so keep the bundle when your work includes imported pictures.</p>
       <p>You can also link to an image on the web using Markdown:</p>
       <pre><code>{snippets.image}</code></pre>
       <p>Web images stay blocked until you enable <strong>Load remote images</strong> in Settings. Enabling them contacts the image host. Portable HTML embeds enabled remote images only when the host allows the required download. A Markdown file opened by itself cannot read neighboring image files; use an exported bundle to move local pictures with a draft.</p>
@@ -104,13 +116,15 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
     <section aria-labelledby="interactive-demonstrations">
       <h2 id="interactive-demonstrations">Teach with an interactive demonstration</h2>
       <p>Choose <strong>Interactive demo</strong> to add a ready-made physics demonstration or your own HTML, CSS, and JavaScript. Keep <strong>Add on a new slide</strong> selected to give it a slide of its own. The demonstration appears as a static preview until you choose <strong>Run demo</strong>. Its sliders, buttons, and canvas work inside the slide, including in fullscreen. <strong>Stop</strong> removes the running demonstration; <strong>Restart</strong> returns it to its initial state.</p>
-      <p>Timers and animations pause while a slide or browser tab is inactive and resume when you return. Editing the Markdown recreates the rendered demo; transient slider positions and animation time are not saved with its source.</p>
+      <p>Timers and animations pause while a slide or browser tab is inactive and resume when you return. Choose <strong>Edit demo</strong> to save a built-in demo's starting values or revise custom HTML. Editing the Markdown recreates the rendered demo; temporary slider positions and animation time during playback are not saved.</p>
       <p>The four built-in demonstrations are a spreading Gaussian wave packet, a rotatable Bloch sphere, a Schwarzschild scalar-field potential, and wave interference. Try the <a href={withBase('?example=interactive-physics')}>interactive physics lesson</a> to present them together.</p>
       <pre><code>{snippets.interactive}</code></pre>
-      <p>Replace <code>wave-packet</code> with <code>bloch-sphere</code>, <code>effective-potential</code>, or <code>interference</code>. Put one demonstration on a slide, with a short heading and explanation. Keep the surrounding Markdown concise so the plot and its controls have room.</p>
+      <p>Replace <code>wave-packet</code> with <code>bloch-sphere</code>, <code>effective-potential</code>, or <code>interference</code>. Put one demonstration on a slide with only a short heading. Put the prediction question and explanation on the preceding slide so the plot and its controls have room.</p>
+      <p>An empty built-in fence uses default parameters. A JSON object in the body defines saved initial values; <strong>Edit demo</strong> writes this for you. For example, a wave packet can use <code>{'{"sigma":1.2,"momentum":0.5,"time":0,"view":"density"}'}</code>. The values are restored when you run or restart the demonstration and are included in exports.</p>
       <h3>Bring your own HTML and JavaScript</h3>
       <p>Use an <code>interactive</code> fence with a title and self-contained HTML. Styles and scripts belong inside the block. Attach events with <code>addEventListener</code>; ordinary <code>html</code> and <code>javascript</code> fences still display code without running it.</p>
       <pre><code>{snippets.customDemo}</code></pre>
+      <p>A lesson project can instead keep the source in a separate file. Use an empty fence with <code>interactive src="demos/explore.html" title="Explore the model"</code>. Choose <strong>Edit demo</strong> on its preview to revise that file, or open it through <strong>Lesson files</strong>. Download <strong>Project ZIP</strong> to keep the Markdown and demo files together. A plain Markdown download cannot include a separately linked demo.</p>
       <p>Each running demonstration uses a separate sandboxed frame. It cannot read the editor’s drafts or change its interface. External scripts, module imports, network requests, embedded frames, and inline event attributes such as <code>onclick</code> are not supported. Include the needed code and styles directly, and use embedded raster data images for assets. The editor does not convert a React or Slidev project into a standalone demo.</p>
       <p>A document can contain up to <strong>20 demonstrations</strong>, with up to <strong>100,000 characters</strong> of source in each custom demo. The complete Markdown still has the editor’s 400,000-character preview limit.</p>
       <h3>Share the demonstration and print its explanation</h3>
@@ -166,7 +180,7 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
       <p>Mathematics is typeset by KaTeX, which supports a large subset of TeX math. A formula that cannot be rendered stays visible with an error; you can correct it without losing the surrounding document. Raw HTML is displayed as text. The explicit <code>interactive</code> syntax runs supported HTML and scripts only inside an isolated frame after you choose Run; MDX is not evaluated.</p>
       <p>Live preview, pasting, and the formatting tools support up to 400,000 characters. Work with smaller documents when a longer text exceeds that limit. Changing a document style leaves its Markdown source untouched.</p>
       <p>Imported pictures are stored separately from the Markdown text, so they do not consume its character allowance. PNG, JPEG, WebP, and GIF data URLs are also supported, but long embedded strings do count toward that limit.</p>
-      <p>Drafts save in this browser. Download <strong>Markdown</strong> for a text copy, <strong>Markdown + images</strong> for local pictures, or <strong>Slide bundle</strong> to retain a deck’s slide settings. <strong>HTML</strong> keeps a portable document or presentation, and <strong>Save PDF</strong> opens your browser’s print dialog. Clearing site data can remove local drafts, so keep downloaded copies of work you want to retain.</p>
+      <p>Drafts save in this browser. Download <strong>Project ZIP</strong> for a complete lesson project, <strong>Markdown</strong> for a text copy, <strong>Markdown + images</strong> for local pictures, or <strong>Slide bundle</strong> to retain a deck’s slide settings. <strong>HTML</strong> keeps a portable document or presentation, and <strong>Save PDF</strong> opens your browser’s print dialog. Clearing site data can remove local drafts, so keep downloaded copies of work you want to retain.</p>
     </section>
 
     <section aria-labelledby="keyboard-shortcuts">

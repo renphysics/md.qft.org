@@ -6,7 +6,7 @@ import Icon from './Icon.astro';
     <button class="export-button" data-export-toggle aria-expanded="false" aria-controls="export-menu" aria-label="Download document" title="Download document"><Icon name="download" size={16} /><span>Download</span><Icon name="down" size={14} /></button>
     <div class="dropdown-menu export-menu" id="export-menu" data-export-menu hidden>
       <button data-export-md><Icon name="file" /><span><span data-markdown-download-label>Markdown</span><small data-markdown-download-help>Keep an editable copy</small></span><kbd data-markdown-download-extension>.md</kbd></button>
-      <button data-export-bundle hidden><Icon name="sections" /><span>Slide bundle<small>Markdown and presentation settings together</small></span><kbd>.zip</kbd></button>
+      <button data-export-bundle hidden><Icon name="folder" /><span>Project ZIP<small>Slides, images, demos &amp; editable source</small></span><kbd>.zip</kbd></button>
       <button data-export-html><Icon name="code" /><span>Standalone HTML<small data-html-download-help>Math fonts included · opens offline</small></span><kbd>.html</kbd></button>
       <button data-print><Icon name="print" /><span>Print / Save PDF<small data-pdf-download-help>A clean, typeset document</small></span><kbd>⌘P</kbd></button>
     </div>

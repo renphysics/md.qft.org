@@ -13,8 +13,14 @@ import {
 import { renderMarkdown, MAX_SOURCE_LENGTH, type MarkdownResult, type RenderOptions } from '../lib/render-markdown';
 import { createImageObjectUrls, prepareImageFiles, imageMarkdown } from '../lib/image-assets';
 import { renderSlides, normalizeSlideSettings, type SlideResult, type SlideSettings } from '../lib/slides';
-import { interactiveFence } from '../lib/interactive-demos';
+import { interactiveFence, findInteractiveFences, replaceInteractiveFence } from '../lib/interactive-demos';
 import { DEMO_PRESETS } from '../lib/demo-presets';
+import { demoSettingFields, normalizeDemoSettings, type DemoSettings } from '../lib/demo-settings';
+import { createLessonProject, cloneLessonProject, validateLessonProject, projectFilePath, prepareProjectImages } from '../lib/lesson-project';
+import { generateLessonPrompt, createStarterLesson, type LessonAIInput } from '../lib/ai-lesson';
+import { checkLesson, formatLessonReport } from '../lib/lesson-check';
+import type { LessonFileChange } from '../lib/lesson-revision';
+import type { WorkspaceBundle } from '../lib/document-bundle';
 import { createInteractiveDemos, type InteractiveDemoController } from './interactive-demo-runtime';
 import type { SlidePreview, SlidePreviewState } from './slide-preview';
 import { downloadMarkdown, exportPortableHtml, printDocument, makeInteractivePrintCopy } from '../lib/export-document';
@@ -61,11 +67,17 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong. Download your Markdown to keep a copy.';
 }
 function draftOptions(draft: DraftOptions): DraftOptions {
-  return { images: draft.images, mode: draft.mode, slideTheme: draft.slideTheme, slideRatio: draft.slideRatio };
+  return { images: draft.images, mode: draft.mode, slideTheme: draft.slideTheme, slideRatio: draft.slideRatio, project: draft.project };
+}
+function copiedDraftOptions(draft: DraftOptions): DraftOptions {
+  const options = draftOptions(draft);
+  if (options.project) options.project = { ...cloneLessonProject(options.project), id:createDraftId() };
+  return options;
 }
 function sameDraftContent(a: Draft, b: Draft): boolean {
   return a.source === b.source && a.title === b.title && a.mode === b.mode
     && a.slideTheme === b.slideTheme && a.slideRatio === b.slideRatio
+    && JSON.stringify(a.project) === JSON.stringify(b.project)
     && (a.images?.length ?? 0) === (b.images?.length ?? 0)
     && (a.images ?? []).every((image, index) => image.id === b.images?.[index]?.id);
 }
@@ -128,6 +140,9 @@ class MarkdownWorkspace extends HTMLElement {
   private imageUrls?: ReturnType<typeof createImageObjectUrls>;
   private imageTarget?: string;
   private demoTarget?: string;
+  private demoEdit?: { id:string; entry:ReturnType<typeof findInteractiveFences>[number]; path?:string; originalFile?:string };
+  private lessonFiles?: { id:string; source:string; project:string; selected:string; edits:Map<string,string> };
+  private lessonImport?: { bundle:WorkspaceBundle; target:Draft; changes:LessonFileChange[] };
   private documentDemos?: InteractiveDemoController;
   private slidePreview?: SlidePreview;
   private slideLoading?: Promise<void>;
@@ -306,10 +321,10 @@ class MarkdownWorkspace extends HTMLElement {
           if (error.current) this.drafts.set(error.current.id, error.current);
           else this.drafts.delete(latest.id);
           try {
-            const recovery = await createDraft(`${latest.title.replace(/ \(recovered\)$/, '').slice(0, 188)} (recovered)`, latest.source, draftOptions(latest));
+            const recovery = await createDraft(`${latest.title.replace(/ \(recovered\)$/, '').slice(0, 188)} (recovered)`, latest.source, copiedDraftOptions(latest));
             const newest = this.current;
             const title = newest.title === latest.title ? recovery.title : newest.title;
-            this.current = { ...recovery, ...draftOptions(newest), title, source: newest.source };
+            this.current = { ...recovery, ...draftOptions(newest), project:recovery.project ? { ...(newest.project ?? recovery.project),id:recovery.project.id } : undefined, title, source: newest.source };
             this.dirty = !sameDraftContent(newest, latest);
             // Typing while the recovery was being created may have updated the
             // old map entry. Keep the other tab's committed version there.
@@ -368,7 +383,7 @@ class MarkdownWorkspace extends HTMLElement {
 
   private activate(draft: Draft): void {
     clearTimeout(this.previewTimer);
-    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-slide-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog], [data-demo-dialog]')) {
+    for (const dialog of this.querySelectorAll<HTMLDialogElement>('[data-pdf-dialog], [data-slide-pdf-dialog], [data-cleanup-dialog], [data-organize-dialog], [data-demo-dialog], [data-ai-dialog], [data-demo-edit-dialog], [data-lesson-files-dialog], [data-lesson-check-dialog], [data-lesson-update-dialog]')) {
       if (dialog.open) dialog.close();
     }
     this.current = { ...draft };
@@ -423,7 +438,8 @@ class MarkdownWorkspace extends HTMLElement {
     const active = this.current;
     const fresh = records.find((draft) => draft.id === active?.id);
     this.drafts = new Map(records.map((draft) => [draft.id, draft]));
-    if (active && (this.dirty || this.saveTask || active.id !== activeAtStart?.id || active.revision !== activeAtStart?.revision)) {
+    const lessonEditorOpen = this.q<HTMLDialogElement>('[data-demo-edit-dialog]').open || this.q<HTMLDialogElement>('[data-lesson-files-dialog]').open;
+    if (active && (this.dirty || this.saveTask || lessonEditorOpen || active.id !== activeAtStart?.id || active.revision !== activeAtStart?.revision)) {
       // A save (or conflict recovery) can finish after the read's snapshot.
       // Keep its newer local result until a subsequent refresh sees it.
       this.drafts.set(active.id, active);
@@ -514,7 +530,7 @@ class MarkdownWorkspace extends HTMLElement {
     const preview = this.q('[data-preview]');
     const scroller = this.q('[data-preview-scroll]');
     const previousTop = scroller.scrollTop;
-    const options = this.renderOptions();
+    const options = { ...this.renderOptions(), editableDemos:true };
     const isSlides = this.current.mode === 'slides';
     this.slidesRendered = isSlides ? renderSlides(this.current.source, options) : undefined;
     this.rendered = this.slidesRendered ?? renderMarkdown(this.current.source, options);
@@ -559,6 +575,7 @@ class MarkdownWorkspace extends HTMLElement {
   private renderOptions(allowRemoteImages = this.remoteImages): RenderOptions {
     return {
       allowRemoteImages,
+      project: this.current?.project,
       ...(this.imageUrls?.sources.size ? { imageSources: this.imageUrls.sources } : {}),
     };
   }
@@ -590,7 +607,8 @@ class MarkdownWorkspace extends HTMLElement {
     if (this.current.source.length - (selection.to - selection.from) + markdown.length > MAX_SOURCE_LENGTH) {
       throw new Error('These image references would exceed the 400,000-character preview limit.');
     }
-    this.current = { ...this.current, images: [...(this.current.images ?? []), ...prepared] };
+    const images = [...(this.current.images ?? []), ...prepared];
+    this.current = { ...this.current, images,project:this.current.project ? prepareProjectImages(this.current.project,images) : undefined };
     this.refreshImages();
     this.editor.dispatch({
       changes: { from: selection.from, to: selection.to, insert: markdown },
@@ -621,7 +639,17 @@ class MarkdownWorkspace extends HTMLElement {
     if (value.preset && !preset) throw new Error('Choose one of the available demonstrations.');
     const title = preset?.title ?? (value.title?.trim() || 'Interactive demonstration');
     if (!preset && !value.html?.trim()) throw new Error('Paste some HTML and JavaScript for your demonstration.');
-    const fence = interactiveFence(value);
+    let project = this.current.project;
+    let fence = interactiveFence(value);
+    if (project && !preset && value.html) {
+      const folder = project.document.split('/').slice(0,-1).join('/');
+      let index = 1;
+      let path:string;
+      do { path = `${folder ? `${folder}/` : ''}demos/demo-${index++}.html`; }
+      while (project.files.some((file) => file.path === path) || project.imagePaths.some((image) => image.path === path));
+      project = validateLessonProject({ ...project,files:[...project.files,{path,content:value.html}] });
+      fence = interactiveFence({ title,src:`demos/demo-${index-1}.html` });
+    }
     const selection = this.editor.state.selection.main;
     const from = newSlide ? this.current.source.length : selection.from;
     const to = newSlide ? from : selection.to;
@@ -636,7 +664,7 @@ class MarkdownWorkspace extends HTMLElement {
       this.current = { ...this.current, title };
       this.updateTitle();
     }
-    if (newSlide) this.current = { ...this.current, mode: 'slides' };
+    this.current = { ...this.current,project,...(newSlide ? { mode:'slides' as const } : {}) };
     this.editor.dispatch({
       changes: { from, to, insert: insertion },
       selection: { anchor: from + insertion.length },
@@ -670,6 +698,8 @@ class MarkdownWorkspace extends HTMLElement {
     this.q('[data-reading-time]').hidden = slides;
     this.q('[data-document-typeset]').hidden = slides;
     this.q('[data-slide-settings]').hidden = !slides;
+    this.q('[data-lesson-check]').hidden = !slides && !this.current?.project;
+    this.q('[data-lesson-files]').hidden = !this.current?.project;
     this.q<HTMLInputElement>('[data-sync]').disabled = slides;
     this.closeOutline();
     const settings = this.slideSettings();
@@ -677,10 +707,11 @@ class MarkdownWorkspace extends HTMLElement {
     this.q<HTMLSelectElement>('select[data-slide-ratio]').value = settings.ratio;
     this.q('[data-slide-stage]').style.setProperty('--slide-aspect', settings.ratio === '4:3' ? String(4 / 3) : String(16 / 9));
     const hasImages = !!this.current?.images?.length;
-    this.exportControl('[data-markdown-download-label]').textContent = hasImages ? 'Markdown + images' : slides ? 'Markdown slide deck' : 'Markdown';
-    this.exportControl('[data-markdown-download-help]').textContent = hasImages ? 'Editable Markdown and pictures in one ZIP' : 'Keep an editable copy';
-    this.exportControl('[data-markdown-download-extension]').textContent = hasImages ? '.zip' : '.md';
-    this.exportControl('[data-export-bundle]').hidden = !slides || hasImages;
+    const project = !!this.current?.project;
+    this.exportControl('[data-markdown-download-label]').textContent = project ? 'Project ZIP' : hasImages ? 'Markdown + images' : slides ? 'Markdown slide deck' : 'Markdown';
+    this.exportControl('[data-markdown-download-help]').textContent = project ? 'Slides, images, demos & editable source' : hasImages ? 'Editable Markdown and pictures in one ZIP' : 'Keep an editable copy';
+    this.exportControl('[data-markdown-download-extension]').textContent = project || hasImages ? '.zip' : '.md';
+    this.exportControl('[data-export-bundle]').hidden = project || !slides;
     this.exportControl('[data-html-download-help]').textContent = slides ? 'Interactive slides · opens offline' : 'Math fonts included · opens offline';
     this.exportControl('[data-pdf-download-help]').textContent = slides ? 'One slide per page' : 'A clean, typeset document';
   }
@@ -837,11 +868,15 @@ class MarkdownWorkspace extends HTMLElement {
   private async downloadSource(): Promise<void> {
     if (!this.current) return;
     this.closeExport();
+    if (this.current.project) {
+      const project = prepareProjectImages(this.current.project,this.current.images ?? []);
+      if (JSON.stringify(project) !== JSON.stringify(this.current.project)) { this.current = { ...this.current,project }; this.markDraftChanged(); }
+    }
     const snapshot = { ...this.current };
-    if (snapshot.images?.length) {
+    if (snapshot.images?.length || snapshot.project) {
       const { downloadDocumentBundle } = await import('../lib/document-bundle');
-      await downloadDocumentBundle(snapshot.source, snapshot.title, snapshot.images, draftOptions(snapshot));
-      this.notify('Markdown and images downloaded together. Open the ZIP here to continue editing.');
+      await downloadDocumentBundle(snapshot.source, snapshot.title, snapshot.images ?? [], draftOptions(snapshot));
+      this.notify(snapshot.project ? 'Project ZIP downloaded. Give it to your AI assistant or open it here to continue editing.' : 'Markdown and images downloaded together. Open the ZIP here to continue editing.');
     } else {
       downloadMarkdown(snapshot.source, snapshot.title);
       this.notify('Markdown download started.');
@@ -851,10 +886,16 @@ class MarkdownWorkspace extends HTMLElement {
   private async downloadBundle(): Promise<void> {
     if (!this.current) return;
     this.closeExport();
+    const project = prepareProjectImages(this.current.project ?? createLessonProject(),this.current.images ?? []);
+    if (JSON.stringify(project) !== JSON.stringify(this.current.project)) {
+      this.current = { ...this.current, project };
+      this.markDraftChanged();
+      this.syncContentMode();
+    }
     const snapshot = { ...this.current };
     const { downloadDocumentBundle } = await import('../lib/document-bundle');
     await downloadDocumentBundle(snapshot.source, snapshot.title, snapshot.images ?? [], draftOptions(snapshot));
-    this.notify('Slide bundle downloaded. Open this ZIP to restore its Markdown, images, and slide settings.');
+    this.notify('Project ZIP downloaded. Reopen a revised copy to review and update this lesson.');
   }
 
   private syncWelcome(): void {
@@ -956,7 +997,7 @@ class MarkdownWorkspace extends HTMLElement {
     const source = applyCleanup(snapshot.source, this.selectedCleanup());
     if (source === snapshot.source) return;
     const settings = { ...this.documentSettings };
-    const metadata = draftOptions(this.current);
+    const metadata = copiedDraftOptions(this.current);
     await this.newDocument(`${snapshot.title.slice(0, 88)} (formatted)`, snapshot.source, metadata);
     this.documentSettings = settings;
     this.persistDocumentSettings();
@@ -1235,8 +1276,12 @@ class MarkdownWorkspace extends HTMLElement {
     if (/\.zip$/i.test(file.name)) {
       const { importWorkspaceBundle } = await import('../lib/document-bundle');
       const imported = await importWorkspaceBundle(file);
+      await this.flush();
+      const matching = [...this.drafts.values()].filter((draft) => draft.project?.id === imported.project?.id && imported.project);
+      const target = matching.find((draft) => draft.id === this.current?.id) ?? matching.sort((a,b) => b.updatedAt-a.updatedAt)[0];
+      if (target) { await this.reviewLessonImport(imported, target); return; }
       await this.newDocument(imported.title, imported.source, imported);
-      this.notify('Opened the Markdown and its images as a new document.');
+      this.notify(imported.project ? 'Lesson opened. Check lesson helps you spot missing images, equations, or demo dependencies.' : 'Opened the Markdown and its images as a new document.');
       return;
     }
     if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose a Markdown (.md), plain text (.txt), or Markdown + images (.zip) file.');
@@ -1245,6 +1290,291 @@ class MarkdownWorkspace extends HTMLElement {
     if (source.length > MAX_SOURCE_LENGTH) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
     await this.newDocument(file.name.replace(/\.(md|markdown|txt)$/i, '').slice(0, 100) || 'Imported document', source);
     this.notify('Opened as a new document. Your original file is unchanged.');
+  }
+
+  private aiInput(): LessonAIInput {
+    return {
+      topic:this.q<HTMLTextAreaElement>('[data-ai-topic]').value.trim(),
+      audience:this.q<HTMLInputElement>('[data-ai-audience]').value.trim(),
+      language:this.q<HTMLInputElement>('[data-ai-language]').value.trim(),
+      duration:Number(this.q<HTMLInputElement>('[data-ai-duration]').value),
+      mathLevel:this.q<HTMLSelectElement>('[data-ai-math]').value,
+      demos:this.q<HTMLInputElement>('[data-ai-demos]').value.trim(),
+    };
+  }
+
+  private async copyLessonText(text: string, fallback: HTMLTextAreaElement): Promise<boolean> {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch { fallback.focus(); fallback.select(); return false; }
+  }
+
+  private async copyAIInstructions(): Promise<void> {
+    const prompt = generateLessonPrompt(this.aiInput());
+    const field = this.q<HTMLTextAreaElement>('[data-ai-prompt]');
+    const details = this.q<HTMLDetailsElement>('[data-ai-prompt-details]');
+    field.value = prompt;
+    details.hidden = false;
+    // Selection is a usable fallback in browsers that deny clipboard access.
+    details.open = true;
+    const copied = await this.copyLessonText(prompt, field);
+    details.open = !copied;
+    this.q('[data-ai-status]').textContent = copied
+      ? 'Copied. Paste into your AI assistant, attach your source material, and ask for the lesson ZIP.'
+      : 'Select and copy the instructions below, then paste them into your AI assistant.';
+  }
+
+  private async starterLesson(download: boolean): Promise<void> {
+    const input = this.aiInput();
+    if (!input.topic) input.topic = 'My next lesson';
+    const starter = createStarterLesson(input);
+    if (download) {
+      const { downloadDocumentBundle } = await import('../lib/document-bundle');
+      await downloadDocumentBundle(starter.source, starter.title, [], starter);
+      this.q('[data-ai-status]').textContent = 'Starter ZIP downloaded. Attach it to your AI assistant with the instructions above.';
+    } else {
+      this.q<HTMLDialogElement>('[data-ai-dialog]').close();
+      await this.newDocument(starter.title, starter.source, starter);
+      this.notify('Starter lesson opened. Edit the slides, try the demo, or download Project ZIP to continue with AI.');
+    }
+  }
+
+  private openLessonCheck(): void {
+    if (!this.current) return;
+    const report = checkLesson(this.current.source, this.renderOptions());
+    const errors = report.issues.filter((issue) => issue.severity === 'error').length;
+    const warnings = report.issues.filter((issue) => issue.severity === 'warning').length;
+    this.q('[data-lesson-check-summary]').textContent = `${this.current.title} · ${report.slides} ${report.slides === 1 ? 'slide' : 'slides'} · ${report.demos} ${report.demos === 1 ? 'demo' : 'demos'}`;
+    const result = this.q('[data-lesson-check-result]');
+    result.dataset.ready = String(!errors && !warnings);
+    result.textContent = errors ? `${errors} ${errors === 1 ? 'issue needs' : 'issues need'} a fix${warnings ? `, plus ${warnings} ${warnings === 1 ? 'item' : 'items'} to review` : ''}.`
+      : warnings ? `${warnings} ${warnings === 1 ? 'item' : 'items'} to review before presenting.` : 'The format check passed. Your lesson is ready for a rehearsal.';
+    const rows = report.issues.map((issue) => {
+      const row = document.createElement('li');
+      row.dataset.severity = issue.severity;
+      const label = document.createElement('strong');
+      label.textContent = `${issue.severity === 'error' ? 'Fix' : issue.severity === 'warning' ? 'Review' : 'Note'}${issue.line ? ` · Line ${issue.line}` : ''}`;
+      row.append(label, document.createTextNode(issue.message));
+      return row;
+    });
+    this.q('[data-lesson-check-list]').replaceChildren(...rows);
+    this.q<HTMLTextAreaElement>('[data-lesson-report]').value = formatLessonReport(report);
+    this.q<HTMLDetailsElement>('[data-lesson-report-details]').hidden = true;
+    this.q<HTMLDialogElement>('[data-lesson-check-dialog]').showModal();
+  }
+
+  private async reviewLessonImport(bundle: WorkspaceBundle, target: Draft): Promise<void> {
+    const { compareLessonRevision } = await import('../lib/lesson-revision');
+    const changes = await compareLessonRevision(target, bundle);
+    this.lessonImport = { bundle, target, changes };
+    this.q('[data-lesson-update-description]').textContent = `This ZIP is a revision of “${target.title}” in your workspace.`;
+    const summary = this.q('[data-lesson-update-summary]');
+    const title = document.createElement('p');
+    title.textContent = changes.length ? `${changes.length} ${changes.length === 1 ? 'file or setting has' : 'files or settings have'} changed.` : 'The lesson files and settings are unchanged.';
+    const list = document.createElement('ul');
+    for (const change of changes.slice(0,8)) {
+      const row = document.createElement('li');
+      row.textContent = `${change.path} · ${change.status}`;
+      list.append(row);
+    }
+    if (changes.length > 8) { const more = document.createElement('li'); more.textContent = `And ${changes.length-8} more. Open Review changes to see every file.`; list.append(more); }
+    summary.replaceChildren(title, list);
+    const select = this.q<HTMLSelectElement>('[data-lesson-change-file]');
+    select.replaceChildren(...changes.map((change,index) => new Option(`${change.path} · ${change.status}`,String(index))));
+    select.closest('details')!.hidden = !changes.length;
+    select.closest('details')!.open = false;
+    this.showLessonChange();
+    this.q('[data-lesson-update-status]').textContent = '';
+    this.q<HTMLButtonElement>('[data-lesson-update-apply]').disabled = !changes.length;
+    this.q<HTMLDialogElement>('[data-ai-dialog]').close();
+    this.q<HTMLDialogElement>('[data-lesson-update-dialog]').showModal();
+  }
+
+  private showLessonChange(): void {
+    const index = Number(this.q<HTMLSelectElement>('[data-lesson-change-file]').value);
+    const change = this.lessonImport?.changes[index];
+    this.q<HTMLTextAreaElement>('[data-lesson-before]').value = change?.before ?? '';
+    this.q<HTMLTextAreaElement>('[data-lesson-after]').value = change?.after ?? '';
+  }
+
+  private async applyLessonImport(asCopy: boolean): Promise<void> {
+    const pending = this.lessonImport;
+    if (!pending) return;
+    if (asCopy) {
+      const options = draftOptions(pending.bundle);
+      if (options.project) options.project = { ...cloneLessonProject(options.project), id:createDraftId() };
+      await this.newDocument(`${pending.bundle.title.slice(0,193)} (copy)`, pending.bundle.source, options);
+      this.lessonImport = undefined;
+      this.notify('Opened a separate lesson copy. It has its own project identity for future updates.');
+      return;
+    }
+    await this.flush();
+    if (!this.storageAvailable) throw new Error('Browser storage is unavailable. Open the ZIP as a new copy to keep both versions.');
+    const target = this.drafts.get(pending.target.id);
+    if (!target) throw new Error('That lesson was removed from the workspace. Open this ZIP as a new copy.');
+    if (!sameDraftContent(target,pending.target) || target.revision !== pending.target.revision) {
+      await this.reviewLessonImport(pending.bundle,target);
+      throw new Error('The lesson changed while this review was open. Review the updated comparison before applying it.');
+    }
+    // A recovery copy must be committed before an existing lesson is replaced.
+    // Use createDraft directly: unlike makeDraft, it cannot fall back to memory.
+    const activeBeforeUpdate = this.current;
+    const recoveryOptions = draftOptions(target);
+    if (recoveryOptions.project) recoveryOptions.project = { ...cloneLessonProject(recoveryOptions.project), id:createDraftId() };
+    const recovery = await createDraft(`${target.title.slice(0,184)} (before update)`,target.source,recoveryOptions);
+    this.drafts.set(recovery.id,recovery);
+    const savedSettings = readLocal(presentationKey(target.id));
+    if (savedSettings) writeLocal(presentationKey(recovery.id),savedSettings);
+    const latest = this.drafts.get(target.id);
+    if (!latest || !sameDraftContent(latest,target) || latest.revision !== target.revision) {
+      this.renderDocuments();
+      if (latest) await this.reviewLessonImport(pending.bundle,latest);
+      throw new Error('The lesson changed while its recovery copy was being saved. Review the latest version before updating.');
+    }
+    try {
+      const saved = await saveDraft({ ...target,...draftOptions(pending.bundle),title:pending.bundle.title,source:pending.bundle.source },target.revision);
+      this.drafts.set(saved.id,saved);
+      const editedDuringUpdate = activeBeforeUpdate && (this.current?.id !== activeBeforeUpdate.id || !sameDraftContent(this.current,activeBeforeUpdate));
+      if (editedDuringUpdate) {
+        // Closing this dialog never disables the editor. Save late typing;
+        // conflict recovery keeps it separately from the newly imported lesson.
+        await this.flush();
+        this.q<HTMLDialogElement>('[data-lesson-update-dialog]').close();
+        this.renderDocuments();
+      } else this.activate(saved);
+      this.lessonImport = undefined;
+      this.notify(editedDuringUpdate ? 'Lesson updated. Your newer edits are kept in the current document; the previous version is also saved as “before update”.' : 'Lesson updated. The previous version is saved in your workspace as “before update”.',9000);
+    } catch (error) {
+      this.renderDocuments();
+      if (isDraftConflict(error)) throw new Error('Another tab changed this lesson. Your versions are preserved. Close this review and reopen the ZIP to compare again.');
+      throw error;
+    }
+  }
+
+  private openLessonFiles(): void {
+    if (!this.current?.project) return;
+    const project = this.current.project;
+    const edits = new Map([[project.document,this.current.source],...project.files.map((file) => [file.path,file.content] as [string,string])]);
+    this.lessonFiles = { id:this.current.id,source:this.current.source,project:JSON.stringify(project),selected:project.document,edits };
+    this.q<HTMLSelectElement>('[data-lesson-file]').replaceChildren(...[...edits.keys()].map((path) => new Option(path,path)));
+    this.q<HTMLTextAreaElement>('[data-lesson-file-source]').value = this.current.source;
+    this.q('[data-lesson-file-note]').textContent = `${edits.size} editable ${edits.size === 1 ? 'file' : 'files'} · ${this.current.images?.length ?? 0} images. Images stay in the project; use Insert image to add more.`;
+    this.q('[data-lesson-files-status]').textContent = '';
+    this.q<HTMLDialogElement>('[data-lesson-files-dialog]').showModal();
+  }
+
+  private chooseLessonFile(): void {
+    if (!this.lessonFiles) return;
+    const field = this.q<HTMLTextAreaElement>('[data-lesson-file-source]');
+    this.lessonFiles.edits.set(this.lessonFiles.selected,field.value);
+    this.lessonFiles.selected = this.q<HTMLSelectElement>('[data-lesson-file]').value;
+    field.value = this.lessonFiles.edits.get(this.lessonFiles.selected) ?? '';
+  }
+
+  private saveLessonFiles(): void {
+    const edit = this.lessonFiles;
+    if (!edit || !this.current?.project || edit.id !== this.current.id) throw new Error('Open Lesson files again in the lesson you want to edit.');
+    if (this.current.source !== edit.source || JSON.stringify(this.current.project) !== edit.project) throw new Error('The lesson changed while these files were open. Copy your edits, then reopen Lesson files.');
+    edit.edits.set(edit.selected,this.q<HTMLTextAreaElement>('[data-lesson-file-source]').value);
+    const source = edit.edits.get(this.current.project.document) ?? this.current.source;
+    if (source.length > MAX_SOURCE_LENGTH) throw new Error('The slide source can contain up to 400,000 characters.');
+    const project = validateLessonProject({ ...this.current.project,files:this.current.project.files.map((file) => ({ ...file,content:edit.edits.get(file.path) ?? file.content })) });
+    this.current = { ...this.current,project };
+    this.replaceSource(source);
+    this.markDraftChanged();
+    this.render();
+    this.q<HTMLDialogElement>('[data-lesson-files-dialog]').close();
+    this.lessonFiles = undefined;
+    this.notify('Lesson files saved. Download Project ZIP to keep these changes or send them to AI.');
+  }
+
+  private openDemoEditor(key: string): void {
+    if (!this.current) return;
+    const entry = findInteractiveFences(this.current.source).find((fence) => fence.sourceKey === key);
+    if (!entry) throw new Error('This demo changed. Refresh the preview and choose Edit demo again.');
+    const preset = DEMO_PRESETS.find((item) => item.id === entry.preset);
+    const path = !preset && entry.src && this.current.project ? projectFilePath(entry.src,this.current.project.document) : undefined;
+    const file = path ? this.current.project?.files.find((item) => item.path === path) : undefined;
+    const missing = !preset && entry.src && !file;
+    this.demoEdit = { id:this.current.id,entry,path:file ? path : undefined,originalFile:file?.content };
+    this.q<HTMLInputElement>('[data-demo-edit-name]').value = entry.title || preset?.title || 'Interactive demonstration';
+    this.q('[data-demo-edit-description]').textContent = preset
+      ? 'Set the values your students see first. Run, Restart, and Reset use these saved values; classroom slider changes stay temporary.'
+      : `${path ? `Editing ${path}. ` : ''}Revise the self-contained demo below. Save it, then choose Run demo in the preview to try it.`;
+    const fields = this.q('[data-demo-setting-fields]');
+    fields.replaceChildren();
+    if (preset) {
+      let values:DemoSettings;
+      try { values = normalizeDemoSettings(preset.id,entry.settings); }
+      catch { values = normalizeDemoSettings(preset.id); }
+      for (const setting of demoSettingFields(preset.id)) {
+        const label = document.createElement('label');
+        label.append(document.createTextNode(setting.label));
+        let control:HTMLInputElement | HTMLSelectElement;
+        if (setting.type === 'select') {
+          control = document.createElement('select');
+          control.append(...(setting.options ?? []).map((option) => new Option(option.label,option.value)));
+        } else {
+          control = document.createElement('input'); control.type = 'number';
+          if (setting.min !== undefined) control.min = String(setting.min);
+          if (setting.max !== undefined) control.max = String(setting.max);
+          control.step = setting.step === undefined ? 'any' : String(setting.step);
+          control.required = true;
+        }
+        control.dataset.demoSetting = setting.key;
+        control.value = String(values[setting.key]);
+        label.append(control);
+        if (setting.min !== undefined && setting.max !== undefined) { const hint = document.createElement('small'); hint.textContent = `${setting.min} to ${setting.max}`; label.append(hint); }
+        fields.append(label);
+      }
+    }
+    this.q('[data-demo-edit-code]').hidden = !!preset;
+    this.q<HTMLTextAreaElement>('[data-demo-edit-source]').value = file?.content ?? entry.body;
+    this.q('[data-demo-edit-status]').textContent = missing ? 'The referenced HTML file is missing. Paste its code here to replace this reference with an inline demo, or cancel and restore the file in your ZIP.' : entry.error ?? '';
+    this.q<HTMLDialogElement>('[data-demo-edit-dialog]').showModal();
+  }
+
+  private saveDemoEditor(): void {
+    const edit = this.demoEdit;
+    if (!edit || !this.current || edit.id !== this.current.id) throw new Error('Open Edit demo again in the lesson you want to edit.');
+    const title = this.q<HTMLInputElement>('[data-demo-edit-name]').value.trim();
+    const preset = DEMO_PRESETS.find((item) => item.id === edit.entry.preset);
+    let fence:string;
+    let project = this.current.project;
+    if (preset) {
+      const settings:DemoSettings = {};
+      for (const input of this.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-demo-setting]')) settings[input.dataset.demoSetting!] = input instanceof HTMLInputElement ? Number(input.value) : input.value;
+      fence = interactiveFence({ preset:preset.id,title,settings:normalizeDemoSettings(preset.id,settings) });
+    } else {
+      const html = this.q<HTMLTextAreaElement>('[data-demo-edit-source]').value;
+      if (!html.trim()) throw new Error('Add the HTML and JavaScript for your demonstration.');
+      if (html.length > 100_000) throw new Error('A demo can contain up to 100,000 characters.');
+      if (edit.path) {
+        if (!project || project.files.find((file) => file.path === edit.path)?.content !== edit.originalFile) throw new Error('The demo file changed. Copy your edits, then reopen Edit demo.');
+        project = validateLessonProject({ ...project,files:project.files.map((file) => file.path === edit.path ? { ...file,content:html } : file) });
+        fence = interactiveFence({ src:edit.entry.src,title });
+      } else fence = interactiveFence({ title,html });
+    }
+    const source = replaceInteractiveFence(this.current.source,edit.entry,fence);
+    if (source.length > MAX_SOURCE_LENGTH) throw new Error('This change would exceed the document size limit.');
+    this.current = { ...this.current,project };
+    this.replaceSource(source);
+    this.markDraftChanged();
+    this.render();
+    this.q<HTMLDialogElement>('[data-demo-edit-dialog]').close();
+    this.demoEdit = undefined;
+    this.notify(preset ? 'Starting values saved. Run the demo to try them.' : 'Demo saved. Choose Run demo in the preview to try the revised code.');
+  }
+
+  private lessonAction(statusSelector: string, action: () => Promise<void> | void): void {
+    this.runAction(async () => {
+      const status = this.q(statusSelector);
+      status.dataset.error = 'false';
+      try { await action(); }
+      catch (error) {
+        status.dataset.error = 'true'; status.textContent = messageOf(error);
+        if (!status.closest('dialog')?.open) this.notify(messageOf(error),12_000);
+      }
+    });
   }
 
   private setShare(value: number): void {
@@ -1261,6 +1591,37 @@ class MarkdownWorkspace extends HTMLElement {
       root.querySelectorAll<HTMLElement>(selector).forEach((element) => element.addEventListener('click', handler, { signal }));
     };
     const headerExports = this.headerExports();
+    click('[data-create-ai]', () => { this.closeSidebar(); this.q<HTMLDialogElement>('[data-ai-dialog]').showModal(); });
+    click('[data-ai-close]', () => this.q<HTMLDialogElement>('[data-ai-dialog]').close());
+    this.q<HTMLFormElement>('[data-ai-form]').addEventListener('submit', (event) => { event.preventDefault(); this.lessonAction('[data-ai-status]', () => this.copyAIInstructions()); }, { signal });
+    click('[data-ai-starter]', () => this.lessonAction('[data-ai-status]', () => this.starterLesson(true)));
+    click('[data-ai-example]', () => this.lessonAction('[data-ai-status]', () => this.starterLesson(false)));
+    click('[data-ai-open]', () => { this.q<HTMLDialogElement>('[data-ai-dialog]').close(); this.q<HTMLInputElement>('[data-file-input]').click(); });
+    click('[data-lesson-check]', () => this.openLessonCheck());
+    click('[data-lesson-check-close]', () => this.q<HTMLDialogElement>('[data-lesson-check-dialog]').close());
+    click('[data-lesson-check-copy]', () => this.runAction(async () => {
+      const field = this.q<HTMLTextAreaElement>('[data-lesson-report]');
+      const details = this.q<HTMLDetailsElement>('[data-lesson-report-details]');
+      details.hidden = false; details.open = true;
+      if (await this.copyLessonText(field.value,field)) { details.open = false; this.notify('Compatibility report copied. Give it to your AI assistant with the Project ZIP.'); }
+    }));
+    click('[data-lesson-update-close]', () => { this.lessonImport = undefined; this.q<HTMLDialogElement>('[data-lesson-update-dialog]').close(); });
+    click('[data-lesson-update-copy]', () => this.lessonAction('[data-lesson-update-status]', () => this.applyLessonImport(true)));
+    click('[data-lesson-update-apply]', () => this.lessonAction('[data-lesson-update-status]', () => this.applyLessonImport(false)));
+    this.q<HTMLSelectElement>('[data-lesson-change-file]').addEventListener('change', () => this.showLessonChange(), { signal });
+    click('[data-lesson-files]', () => this.openLessonFiles());
+    click('[data-lesson-files-close]', () => { this.lessonFiles = undefined; this.q<HTMLDialogElement>('[data-lesson-files-dialog]').close(); });
+    this.q<HTMLSelectElement>('[data-lesson-file]').addEventListener('change', () => this.chooseLessonFile(), { signal });
+    this.q<HTMLFormElement>('[data-lesson-files-form]').addEventListener('submit', (event) => { event.preventDefault(); this.lessonAction('[data-lesson-files-status]', () => this.saveLessonFiles()); }, { signal });
+    click('[data-lesson-files-download]', () => this.lessonAction('[data-lesson-files-status]', async () => { this.saveLessonFiles(); await this.downloadBundle(); }));
+    click('[data-demo-edit-close]', () => { this.demoEdit = undefined; this.q<HTMLDialogElement>('[data-demo-edit-dialog]').close(); });
+    this.q<HTMLFormElement>('[data-demo-edit-form]').addEventListener('submit', (event) => { event.preventDefault(); this.lessonAction('[data-demo-edit-status]', () => this.saveDemoEditor()); }, { signal });
+    this.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-demo-edit]');
+      if (!button) return;
+      const key = button.closest<HTMLElement>('[data-demo-source-key]')?.dataset.demoSourceKey;
+      if (key) this.runAction(async () => this.openDemoEditor(key));
+    }, { signal });
     click('[data-paste], [data-welcome-paste]', () => this.openPaste());
     click('[data-insert-demo]', () => this.openDemos());
     click('[data-demo-close]', () => this.q<HTMLDialogElement>('[data-demo-dialog]').close());
@@ -1477,7 +1838,7 @@ class MarkdownWorkspace extends HTMLElement {
     click('[data-duplicate]', () => this.runAction(async () => {
       if (this.current) {
         const settings = { ...this.documentSettings };
-        await this.newDocument(`${this.current.title.slice(0, 193)} (copy)`, this.current.source, draftOptions(this.current));
+        await this.newDocument(`${this.current.title.slice(0, 193)} (copy)`, this.current.source, copiedDraftOptions(this.current));
         this.documentSettings = settings;
         this.persistDocumentSettings();
       }

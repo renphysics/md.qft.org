@@ -21,7 +21,7 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Where are my drafts saved? Can I open them on another device?',
-    answer: 'Drafts and imported pictures are saved in this browser. They do not automatically synchronize between browsers, profiles, devices, or website addresses. Clearing site data or using private browsing can remove them. Download Markdown + images for drafts with local pictures, or Slide bundle to retain a deck’s slide settings, then use Open file to import the ZIP elsewhere. Plain Markdown downloads contain source text and image references. Document PDF-style preferences are stored separately.',
+    answer: 'Drafts, imported pictures, and lesson source files are saved in this browser. They do not automatically synchronize between browsers, profiles, devices, or website addresses. Clearing site data or using private browsing can remove them. Download Project ZIP for a lesson with separate demo files, Markdown + images for drafts with local pictures, or Slide bundle to retain a deck’s slide settings, then use Open file to import the ZIP elsewhere. Plain Markdown downloads contain source text and references. Document PDF-style preferences are stored separately.',
   },
   {
     question: 'Does the website upload my text or load external images?',
@@ -40,12 +40,20 @@ export const siteFaqs: readonly SiteFaq[] = [
     answer: 'Yes. Choose Interactive demo to insert a wave packet, Bloch sphere, effective-potential plot, or interference demonstration, or paste self-contained HTML, CSS, and JavaScript. An explicit interactive fence creates a demo card; choose Run demo to start it. Stop removes the running frame and Restart begins again. Timers and animations pause on inactive slides or browser tabs. Ordinary HTML and JavaScript code blocks are still displayed as code.',
   },
   {
+    question: 'How do I ask AI to create slides with pictures and interactive demos?',
+    answer: 'Choose Create with AI, enter the class topic and teaching details, then copy the generated instructions into your AI tool. A downloadable starter project provides a working example. Ask the AI for the complete project ZIP and open it here. The website itself does not upload a chapter or call an AI service. Use Check lesson to find compatibility issues, then run each demo and rehearse the presentation before class.',
+  },
+  {
+    question: 'Can I revise an AI lesson without losing its images and demo files?',
+    answer: 'Yes. A Project ZIP keeps the Markdown, local pictures, separate self-contained HTML demos, and supported text source files together. Edit slides directly, use Edit demo for starting parameters or HTML, and use Lesson files for other source files. Give the latest Project ZIP to AI for revisions and ask it to preserve the project identity and file paths. Reopening the revised ZIP lets you review changes, update the saved lesson with a recovery copy, or import a new copy.',
+  },
+  {
     question: 'How are custom interactive demos isolated?',
     answer: 'Each demo runs in a sandboxed frame with a separate origin, so it cannot read the editor’s drafts or change its interface. Use self-contained source and addEventListener for controls; external scripts, module imports, network calls, inline event attributes, nested frames, and popup windows are not supported. The limit is 20 demos per document and 100,000 source characters per custom demo, within the editor’s overall source limit. A sandbox does not prevent inefficient or unbounded computations.',
   },
   {
     question: 'Do interactive demonstrations work in HTML and PDF exports?',
-    answer: 'Standalone HTML includes supported self-contained demos and their player. Recipients choose Run demo, and each demo starts from its source-defined initial state. PDF output is static: it uses the most recently captured canvas image when available, otherwise a built-in demo’s initial illustration or a labeled placeholder for a custom demo. Add an ordinary image for a custom visualization that needs a specific PDF figure. Markdown and ZIP bundles retain source, not transient slider positions or animation time.',
+    answer: 'Standalone HTML includes supported self-contained demos and their player. Recipients choose Run demo, and each demo starts from its source-defined initial state, including starting parameters saved with Edit demo. PDF output is static: it uses the most recently captured canvas image when available, otherwise a built-in demo’s initial illustration or a labeled placeholder for a custom demo. Add an ordinary image for a custom visualization that needs a specific PDF figure. Project ZIP keeps separate demo files; transient slider changes or animation time during playback are not saved.',
   },
   {
     question: 'Can I format and organize an AI-generated answer?',
@@ -53,7 +61,7 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Can I download editable Markdown or standalone HTML?',
-    answer: 'Yes. Markdown download preserves source text. With local pictures, the download becomes Markdown + images, an editable ZIP bundle. Slide bundle retains a deck’s slide settings even without pictures. Standalone HTML includes rendered content, fonts, images, and supported interactive demos, and opens independently of this editor. Document HTML includes the source in a disclosure; slide HTML also includes presentation playback. Enabled remote images must be embedded successfully, or export reports the problem. Reopening the editor website itself offline is not guaranteed.',
+    answer: 'Yes. Markdown download preserves source text. With local pictures, the download becomes Markdown + images, an editable ZIP bundle. Slide bundle retains a deck’s slide settings even without pictures. For a lesson project, Project ZIP keeps its Markdown, separate demo files, pictures, and other supported source files together. Standalone HTML includes rendered content, fonts, images, and supported interactive demos, and opens independently of this editor. Document HTML includes the source in a disclosure; slide HTML also includes presentation playback. Enabled remote images must be embedded successfully, or export reports the problem. Reopening the editor website itself offline is not guaranteed.',
   },
   {
     question: 'Can I reuse the source and host my own version?',

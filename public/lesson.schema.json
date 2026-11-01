@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://md.qft.org/lesson.schema.json",
+  "title": "QFT Markdown lesson project manifest version 2",
+  "description": "Manifest for an editable Markdown lesson ZIP. Archive contents and references require separate validation.",
+  "type": "object",
+  "required": ["format", "version", "projectId", "document", "title", "images"],
+  "properties": {
+    "format": { "const": "qft-markdown" },
+    "version": { "const": 2 },
+    "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", "description": "Stable lesson identity. Generate a UUID for a new project; preserve it on revision." },
+    "document": { "$ref": "#/$defs/path", "pattern": "\\.([mM][dD]|[mM][aA][rR][kK][dD][oO][wW][nN])$", "description": "Path of the main UTF-8 Markdown document, relative to the ZIP root." },
+    "title": { "type": "string", "maxLength": 200 },
+    "mode": { "enum": ["document", "slides"], "default": "slides" },
+    "slideTheme": { "enum": ["paper", "midnight", "serif"], "default": "paper" },
+    "slideRatio": { "enum": ["16:9", "4:3"], "default": "16:9" },
+    "images": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Optional browser attachment mappings. Use an empty array for new projects with ordinary relative image paths.",
+      "items": {
+        "type": "object",
+        "required": ["path", "reference"],
+        "properties": {
+          "path": { "$ref": "#/$defs/path" },
+          "reference": { "type": "string", "pattern": "^qft-image:[A-Za-z0-9][A-Za-z0-9_-]{0,99}$" },
+          "name": { "type": "string", "maxLength": 200, "pattern": "^[^\\/\\\\\\u0000-\\u001f]*$" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^(?!/)(?!.*\/$)(?!.*(?:^|/)(?:\\.|\\.\\.)(?:/|$))(?!.*//)[^\\\\:\\u0000-\\u001f\\u007f]+$",
+      "description": "Safe relative archive path. No absolute paths, backslashes, traversal, duplicate separators, or control characters."
+    }
+  },
+  "additionalProperties": false
+}

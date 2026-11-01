@@ -3,6 +3,7 @@ import MarkdownIt, { type Token } from 'markdown-it';
 import { katex as mathPlugin } from '@mdit/plugin-katex';
 import { footnote } from '@mdit/plugin-footnote';
 import type { DraftOptions } from './draft-store';
+import { createLessonProject, validateLessonProject, prepareProjectImages, safeProjectPath, isProjectTextPath, projectFilePath, relativeProjectPath, MAX_PROJECT_ENTRIES, type LessonProject } from './lesson-project';
 import {
   prepareImageFiles, imageReference, imageIdFromReference,
   validateImageAssets, type DraftImage,
@@ -24,7 +25,8 @@ export interface WorkspaceBundle extends DraftOptions {
 
 interface BundleManifest {
   format: 'qft-markdown';
-  version: 1;
+  version: 1 | 2;
+  projectId?: string;
   document: string;
   title: string;
   mode?: DraftOptions['mode'];
@@ -161,32 +163,51 @@ export async function createDocumentBundle(
   source: string, title: string, value: readonly DraftImage[], metadata: DraftOptions = {},
 ): Promise<Uint8Array> {
   if (source.length > MAX_SOURCE_LENGTH) throw new Error('This document is too large to bundle.');
+  const project = metadata.project ? prepareProjectImages(metadata.project, value) : undefined;
   const usedReferences = new Set<string>();
   rewriteImageReferences(source, (reference) => { usedReferences.add(reference); return undefined; });
-  // Drafts retain removed pictures for undo. Export only pictures that the
-  // current Markdown actually uses, never those hidden editing-history assets.
-  const images = validateImageAssets(value).filter((image) => usedReferences.has(imageReference(image.id)));
+  const retainedPaths = new Map(project?.imagePaths.map((entry) => [entry.imageId, entry.path]) ?? []);
+  // Project assets can also serve demos or future lesson revisions. Older drafts
+  // still export only pictures used by the current Markdown, not undo history.
+  const images = validateImageAssets(value).filter((image) => usedReferences.has(imageReference(image.id)) || retainedPaths.has(image.id));
+  for (const id of retainedPaths.keys()) {
+    if (!images.some((image) => image.id === id)) throw new Error('A lesson image is missing. Reopen the original project ZIP to recover it.');
+  }
   const files: Record<string, Uint8Array> = Object.create(null);
+  const documentPath = project?.document ?? `${baseName(title)}.md`;
+  const reservedPaths = new Set(['qft.json', documentPath, ...(project?.files.map((file) => file.path) ?? []), ...retainedPaths.values()]);
+  for (const file of project?.files ?? []) files[file.path] = strToU8(file.content);
+  const available = (path: string) => ![...reservedPaths].some((other) => other === path || other.startsWith(`${path}/`) || path.startsWith(`${other}/`));
   const references = new Map<string, string>();
   const manifestImages: BundleManifest['images'] = [];
   for (let index = 0; index < images.length; index += 1) {
     const image = images[index];
     const extension = image.type === 'image/jpeg' ? 'jpg' : image.type.split('/')[1];
-    const path = `images/${String(index + 1).padStart(2, '0')}-${baseName(image.name.replace(/\.[^.]+$/, ''))}.${extension}`;
-    references.set(imageReference(image.id), path);
+    let path = retainedPaths.get(image.id);
+    if (!path) {
+      const name = baseName(image.name.replace(/\.[^.]+$/, ''));
+      let serial = index + 1;
+      do { path = `images/${String(serial++).padStart(2, '0')}-${name}.${extension}`; } while (!available(path));
+      reservedPaths.add(path);
+    }
+    const relative = relativeProjectPath(path, documentPath).split('/').map((part) => part === '..' ? part : encodeURIComponent(part).replace(/[()]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
+    references.set(imageReference(image.id), relative);
     manifestImages.push({ path, reference: imageReference(image.id), name: image.name });
     files[path] = new Uint8Array(await image.blob.arrayBuffer());
   }
-  const documentPath = `${baseName(title)}.md`;
   files[documentPath] = strToU8(rewriteImageReferences(source, (reference) => references.get(reference)));
   const manifest: BundleManifest = {
-    format: 'qft-markdown', version: 1, document: documentPath, title: title.slice(0, 200),
+    format: 'qft-markdown', version: project ? 2 : 1, ...(project ? { projectId: project.id } : {}),
+    document: documentPath, title: title.slice(0, 200),
     mode: metadata.mode, slideTheme: metadata.slideTheme, slideRatio: metadata.slideRatio,
     images: manifestImages,
   };
   files[MANIFEST_NAME] = strToU8(JSON.stringify(manifest, null, 2));
-  // Raster images are already compressed; stored ZIP entries avoid blocking the
-  // editor with expensive, ineffective recompression of photographs.
+  if (files[MANIFEST_NAME].byteLength > 32 * 1024 || Object.keys(files).length > MAX_PROJECT_ENTRIES
+    || Object.values(files).reduce((sum, bytes) => sum + bytes.byteLength, 0) > MAX_ARCHIVE_BYTES) {
+    throw new Error('This lesson exceeds the 30 MB or 150-file project limit.');
+  }
+  // Raster assets are already compressed. Stored entries keep exporting quick.
   return zipSync(files, { level: 0 });
 }
 
@@ -206,35 +227,24 @@ export async function downloadDocumentBundle(
 }
 
 function safeArchivePath(path: string): boolean {
-  return !!path && !/[\\:\u0000-\u001f]/.test(path) && !path.startsWith('/')
-    && path.split('/').every((part, index, all) => part !== '..' && part !== '.' && (part !== '' || index === all.length - 1));
-}
-
-function relativeAsset(reference: string, documentPath: string): string | undefined {
-  if (/^[a-z][a-z0-9+.-]*:|^\/|^#/i.test(reference)) return undefined;
-  let path: string;
-  try { path = decodeURIComponent(reference.split(/[?#]/)[0]); } catch { return undefined; }
-  if (/[\\\u0000-\u001f]/.test(path)) return undefined;
-  const parts = documentPath.split('/').slice(0, -1);
-  for (const part of path.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') { if (!parts.length) return undefined; parts.pop(); }
-    else parts.push(part);
-  }
-  return parts.join('/');
+  return safeProjectPath(path.endsWith('/') ? path.slice(0, -1) : path);
 }
 
 function readManifest(value: Uint8Array | undefined): BundleManifest | undefined {
   if (!value) return undefined;
+  if (value.byteLength > 32 * 1024) throw new Error('The document bundle metadata is too large.');
   let parsed: unknown;
   try { parsed = JSON.parse(strFromU8(value)); } catch { throw new Error('The document bundle metadata is invalid.'); }
   if (!parsed || typeof parsed !== 'object') throw new Error('The document bundle metadata is invalid.');
   const manifest = parsed as Partial<BundleManifest>;
-  if (manifest.format !== 'qft-markdown' || manifest.version !== 1
-    || typeof manifest.document !== 'string' || !safeArchivePath(manifest.document)
+  if (manifest.format !== 'qft-markdown' || ![1, 2].includes(manifest.version ?? 0)
+    || typeof manifest.document !== 'string' || !safeProjectPath(manifest.document)
     || typeof manifest.title !== 'string' || manifest.title.length > 200
     || !Array.isArray(manifest.images) || manifest.images.length > 50) {
     throw new Error('This document bundle format is not supported.');
+  }
+  if (manifest.version === 2 && (typeof manifest.projectId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(manifest.projectId))) {
+    throw new Error('This lesson project needs a valid projectId.');
   }
   if (manifest.mode !== undefined && !['document', 'slides'].includes(manifest.mode)) throw new Error('Invalid document mode in the bundle.');
   if (manifest.slideTheme !== undefined && !['paper', 'midnight', 'serif'].includes(manifest.slideTheme)) throw new Error('Invalid slide theme in the bundle.');
@@ -242,7 +252,7 @@ function readManifest(value: Uint8Array | undefined): BundleManifest | undefined
   const paths = new Set<string>();
   const references = new Set<string>();
   for (const image of manifest.images) {
-    if (!image || typeof image.path !== 'string' || !safeArchivePath(image.path)
+    if (!image || typeof image.path !== 'string' || !safeProjectPath(image.path)
       || typeof image.reference !== 'string' || !imageIdFromReference(image.reference)
       || (image.name !== undefined && (typeof image.name !== 'string' || image.name.length > 200 || /[\\/\u0000-\u001f]/.test(image.name)))
       || paths.has(image.path) || references.has(image.reference)) throw new Error('Invalid image mapping in the document bundle.');
@@ -252,38 +262,59 @@ function readManifest(value: Uint8Array | undefined): BundleManifest | undefined
   return manifest as BundleManifest;
 }
 
-/** Read our bundles and ordinary ZIPs containing one Markdown file plus images. */
+/** Read portable lessons, older bundles, and ordinary ZIPs with one Markdown file. */
 export async function importWorkspaceBundle(file: File): Promise<WorkspaceBundle> {
   if (!file.size || file.size > MAX_ARCHIVE_BYTES) throw new Error('Choose a Markdown ZIP bundle smaller than 30 MB.');
   const bytes = new Uint8Array(await file.arrayBuffer());
   let totalBytes = 0;
   let entries = 0;
   const seen = new Set<string>();
+  const unsupported: string[] = [];
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(bytes, { filter: (entry) => {
       entries += 1;
-      if (entries > 150 || !safeArchivePath(entry.name) || seen.has(entry.name)) throw new Error('Invalid or duplicate archive path.');
+      if (entries > MAX_PROJECT_ENTRIES || !safeArchivePath(entry.name) || seen.has(entry.name)) throw new Error('Invalid or duplicate archive path.');
       seen.add(entry.name);
-      if (entry.name.endsWith('/') || entry.name.startsWith('__MACOSX/')) return false;
-      const supported = /\.(?:md|markdown|txt|png|jpe?g|webp|gif)$/i.test(entry.name) || entry.name === MANIFEST_NAME;
-      if (!supported) return false;
-      const limit = entry.name === MANIFEST_NAME ? 32 * 1024 : /\.(?:md|markdown|txt)$/i.test(entry.name) ? MAX_TEXT_BYTES : 8 * 1024 * 1024;
+      if (entry.name.endsWith('/')) return false;
+      const supported = isProjectTextPath(entry.name) || /\.(?:png|jpe?g|webp|gif)$/i.test(entry.name);
+      // Count every file before deciding whether to retain it. Hidden or unknown
+      // entries cannot evade the expanded-archive limit.
       totalBytes += entry.originalSize;
-      if (entry.originalSize > limit || totalBytes > MAX_ARCHIVE_BYTES) throw new Error('The expanded archive is too large.');
+      if (totalBytes > MAX_ARCHIVE_BYTES) throw new Error('The expanded archive is too large.');
+      if (entry.name.startsWith('__MACOSX/') || /(?:^|\/)(?:\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(entry.name)) return false;
+      if (!supported) { unsupported.push(entry.name); return false; }
+      const limit = entry.name === MANIFEST_NAME ? 32 * 1024 : isProjectTextPath(entry.name) ? MAX_TEXT_BYTES : 8 * 1024 * 1024;
+      if (entry.originalSize > limit) throw new Error('The expanded archive is too large.');
       return true;
     } });
   } catch (error) {
     throw new Error(`This ZIP bundle could not be opened. ${error instanceof Error ? error.message : 'Choose a valid Markdown ZIP bundle.'}`);
   }
+  // Operating systems commonly ZIP the enclosing folder. Recognize exactly one
+  // complete project root without guessing among unrelated documents.
+  if (!files[MANIFEST_NAME]) {
+    const manifests = Object.keys(files).filter((path) => path.endsWith(`/${MANIFEST_NAME}`));
+    if (manifests.length === 1) {
+      const prefix = manifests[0].slice(0, -MANIFEST_NAME.length);
+      if (Object.keys(files).every((path) => path.startsWith(prefix))) {
+        files = Object.fromEntries(Object.entries(files).map(([path, content]) => [path.slice(prefix.length), content]));
+      }
+    }
+  }
   const manifest = readManifest(files[MANIFEST_NAME]);
+  if (manifest?.version === 2 && unsupported.length) {
+    throw new Error(`This lesson contains an unsupported file: ${unsupported[0]}. Use Markdown, HTML, CSS, JavaScript, JSON, text, or PNG/JPEG/WebP/GIF images.`);
+  }
   const candidates = Object.keys(files).filter((name) => /\.(?:md|markdown)$/i.test(name));
   if (!manifest && candidates.length !== 1) throw new Error('A ZIP bundle must contain one Markdown document, or a QFT document manifest.');
   const documentPath = manifest?.document ?? candidates[0];
   if (!files[documentPath] || !/\.(?:md|markdown)$/i.test(documentPath)) throw new Error('The Markdown document is missing from this bundle.');
-  let source: string;
-  try { source = new TextDecoder('utf-8', { fatal: true }).decode(files[documentPath]); }
-  catch { throw new Error('The Markdown document must use UTF-8 text.'); }
+  const decode = (bytes: Uint8Array, path: string) => {
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch { throw new Error(`The source file “${path}” must use UTF-8 text.`); }
+  };
+  let source = decode(files[documentPath], documentPath);
   if (source.length > MAX_SOURCE_LENGTH) throw new Error('The Markdown document is too large to preview.');
   const imagePaths = Object.keys(files).filter((name) => /\.(?:png|jpe?g|webp|gif)$/i.test(name));
   const images = await prepareImageFiles(imagePaths.map((name) => new File([new Uint8Array(files[name]).buffer], name.split('/').pop()!)));
@@ -296,9 +327,14 @@ export async function importWorkspaceBundle(file: File): Promise<WorkspaceBundle
     oldReferences.set(mapping.reference, reference);
   }
   source = rewriteImageReferences(source, (reference) => oldReferences.get(reference)
-    ?? imageMap.get(relativeAsset(reference, documentPath) ?? ''));
+    ?? imageMap.get(projectFilePath(reference, documentPath) ?? ''));
+  const project: LessonProject = createLessonProject(documentPath, manifest?.version === 2 ? manifest.projectId : undefined);
+  project.files = Object.entries(files)
+    .filter(([path]) => path !== documentPath && path !== MANIFEST_NAME && isProjectTextPath(path))
+    .map(([path, content]) => ({ path, content: decode(content, path) }));
+  project.imagePaths = imagePaths.map((path, index) => ({ path, imageId: images[index].id }));
   return {
     title: manifest?.title || documentPath.split('/').pop()!.replace(/\.[^.]+$/, '').slice(0, 200),
-    source, images, mode: manifest?.mode, slideTheme: manifest?.slideTheme, slideRatio: manifest?.slideRatio,
+    source, images, project: validateLessonProject(project), mode: manifest?.mode, slideTheme: manifest?.slideTheme, slideRatio: manifest?.slideRatio,
   };
 }

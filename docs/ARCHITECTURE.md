@@ -74,7 +74,15 @@ Named drafts are stored in IndexedDB through a small storage layer. Draft identi
 
 Document search filters the local draft list by title and source text. Document PDF-style preferences are stored in localStorage using the draft ID and the same deployment-path namespace. They are allowlisted on read and remain separate from the Markdown and the IndexedDB draft schema. Changing paper size or document style does not rewrite the user's source. These preferences are not embedded in a Markdown download or transferred when it is imported at another address.
 
-Image blobs and slide mode/theme/aspect ratio are part of the IndexedDB draft revision, so they are committed and recovered together with its source. Duplicate, formatting-copy, and conflict recovery retain that complete snapshot. Demo source is part of Markdown; live frame state and captured canvas images are session data, not persisted draft metadata.
+Image blobs, slide mode/theme/aspect ratio, and optional lesson project metadata are part of the IndexedDB draft revision, so they are committed and recovered together with its source. Duplicate, formatting-copy, and conflict recovery retain that complete snapshot. Demo source can be inline Markdown or a preserved project HTML file; saved built-in parameters are a validated JSON object in the fence. Live frame state and captured canvas images remain session data.
+
+## Portable lesson projects and AI handoff
+
+`lesson-project.ts` validates version-2 project identity, the main Markdown path, supported UTF-8 text files, and image-to-path mappings. `document-bundle.ts` reads and writes the ZIP, retains source paths, rewrites only genuine Markdown image destinations, and continues to accept version-1 bundles. Archive entry/path, text, image, and expanded-size limits apply before storage. Extra text files are preserved as inert source; the renderer resolves only explicitly referenced self-contained HTML demos. Keeping separate JavaScript or CSS source in a project does not authorize loading it as a demo dependency.
+
+`ai-lesson.ts` creates a copyable lesson brief and a working portable starter without calling a model or sending document content anywhere. `lesson-check.ts` reuses the slide renderer for structural and math diagnostics and inspects parsed picture/demo references for missing assets and unsupported dependencies. It does not execute code or validate the lesson's scientific claims. The public version-2 format guide and manifest schema provide the same authoring contract to external AI tools.
+
+A stable project ID identifies a candidate lesson for revision; it is not authority to overwrite a draft. The workspace presents an incoming project for review and supports an explicit update or separate copy. Updating keeps the complete earlier project as a recovery draft. Rehearsal and the standalone HTML export provide the final classroom check after structural validation.
 
 Another browser tab can edit the same stored draft. The storage layer detects stale revisions and preserves competing text as a conflict copy instead of silently overwriting a newer revision. Draft switching, import, and example loading must first preserve any outstanding edits.
 

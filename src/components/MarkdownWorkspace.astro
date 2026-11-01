@@ -1,17 +1,20 @@
 ---
 import Icon from './Icon.astro';
+import TeacherWorkflow from './TeacherWorkflow.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 import { DEMO_PRESETS } from '../lib/demo-presets';
 import 'katex/dist/katex.min.css';
 import '../styles/document.css';
 import '../styles/interactive-demos.css';
+import '../styles/teacher-workflow.css';
 ---
 <qft-markdown-workspace data-view="split" class="workspace" id="main-content">
   <aside class="document-sidebar" aria-label="Documents" data-sidebar>
     <div class="sidebar-heading"><span>Your workspace</span><button class="icon-button mobile-sidebar-close" data-close-sidebar aria-label="Close document sidebar"><Icon name="close" /></button></div>
     <button class="new-document" data-new><Icon name="plus" size={17} /> New document <kbd>N</kbd></button>
-    <button class="open-file" data-open><Icon name="upload" size={16} /> Open file <span class="sr-only">Markdown or ZIP with images</span></button>
+    <button class="create-ai-button" data-create-ai><Icon name="spark" size={16} /> Create with AI</button>
+    <button class="open-file" data-open><Icon name="upload" size={16} /> Open file <span class="sr-only">Markdown or lesson ZIP</span></button>
     <div class="sidebar-section-title">MY DOCUMENTS <span data-doc-count>0</span></div>
     <label class="document-search"><Icon name="search" size={15} /><span class="sr-only">Search documents</span><input type="search" data-document-search placeholder="Find a document…" autocomplete="off" /></label>
     <div class="document-list" data-documents role="list" aria-label="Saved documents"><p class="loading-documents">Opening your workspace…</p></div>
@@ -22,6 +25,7 @@ import '../styles/interactive-demos.css';
       <span class="current-document-label">CURRENT DOCUMENT</span>
       <button class="document-title" data-rename title="Rename document" aria-label="Rename current document"><span data-document-title>Opening document</span><Icon name="edit" size={13} /></button>
       <span class="save-state" data-save-state role="status"><span class="save-dot" aria-hidden="true"></span><span data-save-label>Getting ready</span></span>
+      <button class="lesson-files-button" data-lesson-files hidden><Icon name="folder" size={14} /> Lesson files</button>
     </div>
     <nav class="sidebar-project-links" aria-label="Project information"><a href={siteConfig.repositoryUrl} target="_blank" rel="noopener noreferrer">Source code</a><span aria-hidden="true">·</span><a href={withBase('about/#license')}>MIT license</a><span aria-hidden="true">·</span><a href={withBase('faq/')}>FAQ</a></nav>
   </aside>
@@ -64,7 +68,7 @@ import '../styles/interactive-demos.css';
       </section>
       <div class="panel-resizer" data-resizer role="separator" aria-label="Resize editor and preview" aria-orientation="vertical" aria-valuenow="50" aria-valuemin="25" aria-valuemax="75" tabindex="0"><span></span></div>
       <section class="preview-panel" aria-label="Document preview">
-        <div class="panel-heading"><div class="preview-format" role="group" aria-label="Preview format"><button data-content-mode="document" aria-pressed="true">Document</button><button data-content-mode="slides" aria-pressed="false">Slides</button></div><div class="panel-tools"><span class="live-label" data-render-state><span></span> Live</span><button class="slide-present-button" data-slide-present hidden><Icon name="play" size={13} /> Present</button><button class="icon-button small" data-outline-toggle aria-label="Toggle document outline" aria-expanded="false" title="Document outline"><Icon name="list" size={17} /></button></div></div>
+        <div class="panel-heading"><div class="preview-format" role="group" aria-label="Preview format"><button data-content-mode="document" aria-pressed="true">Document</button><button data-content-mode="slides" aria-pressed="false">Slides</button></div><div class="panel-tools"><span class="live-label" data-render-state><span></span> Live</span><button class="lesson-check-button" data-lesson-check hidden><Icon name="check" size={13} /> Check lesson</button><button class="slide-present-button" data-slide-present hidden><Icon name="play" size={13} /> Present</button><button class="icon-button small" data-outline-toggle aria-label="Toggle document outline" aria-expanded="false" title="Document outline"><Icon name="list" size={17} /></button></div></div>
         <div class="preview-body">
           <div class="outline-panel" data-outline-panel hidden><div class="outline-heading">IN THIS DOCUMENT<button class="icon-button small" data-outline-close aria-label="Close outline"><Icon name="close" size={14} /></button></div><nav data-outline aria-label="Document outline"></nav></div>
           <div class="preview-scroll" data-preview-scroll tabindex="0" aria-label="Rendered document"><article class="markdown-document" data-preview><p class="preview-placeholder">Good ideas begin with a few words.</p></article></div>
@@ -76,6 +80,7 @@ import '../styles/interactive-demos.css';
     <div class="diagnostics" data-diagnostics hidden><button class="diagnostics-heading" data-diagnostics-toggle aria-expanded="true"><span data-error-heading>Check your document</span><Icon name="down" size={14} /></button><div data-error-list></div></div>
     <footer class="workspace-footer"><div class="document-stats"><span data-word-count>0 words</span><span class="stat-divider">·</span><span data-char-count>0 characters</span><span class="stat-divider">·</span><span data-math-count>0 equations</span></div><label class="sync-control"><input type="checkbox" data-sync checked /><span class="switch-track"></span><Icon name="link" size={13} /> Sync scrolling</label><span class="footer-note">A little space to think.</span></footer>
   </main>
+  <TeacherWorkflow />
   <input type="file" data-file-input accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip" hidden />
   <input type="file" data-image-input accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" multiple hidden />
   <input type="file" data-demo-file-input accept=".html,.htm,text/html" hidden />

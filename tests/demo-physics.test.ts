@@ -2,7 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { gaussianState, blochState, schwarzschildPotential, schwarzschildPeak, interferenceState } from '../src/lib/demo-physics';
-import { DEMO_PRESETS } from '../src/lib/demo-presets';
+import { DEMO_PRESETS, configureDemoPreset } from '../src/lib/demo-presets';
+import { normalizeDemoSettings } from '../src/lib/demo-settings';
 import { EXAMPLES } from '../src/lib/examples';
 
 function close(actual: number, expected: number, tolerance = 1e-10) {
@@ -110,8 +111,10 @@ function runDemo(html: string) {
     element.value = match[0].match(/\bvalue="([^"]+)"/)?.[1] ?? '';
     elements.set(match[1], element);
   }
-  if (elements.has('view')) elements.get('view')!.value = 'density';
-  if (elements.has('dispersion')) elements.get('dispersion')!.value = 'quadratic';
+  for (const match of html.matchAll(/<select[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
+    elements.get(match[1])!.value = match[2].match(/<option\s+value="([^"]+)"\s+selected\b/)?.[1]
+      ?? match[2].match(/<option\s+value="([^"]+)"/)?.[1] ?? '';
+  }
   const frames = new Map<number, (time: number) => void>();
   let frameId = 0;
   const environment = {
@@ -168,5 +171,37 @@ describe('portable interactive teaching examples', () => {
     assert.equal(example.mode, 'slides');
     for (const preset of DEMO_PRESETS) assert.ok(example.source.includes('~~~interactive ' + preset.id));
     assert.equal(example.source.split('\n---\n').length, 5);
+  });
+
+  it('saved initial parameters drive the actual scripts, static posters, and reset behavior', () => {
+    const wavePreset = configureDemoPreset('wave-packet', { sigma: 1.5, momentum: -1, time: 2, view: 'amplitude' });
+    const wave = runDemo(wavePreset.html);
+    assert.match(wave.elements.get('state')!.textContent, /Center ⟨x⟩ = -2\.00/);
+    assert.equal(wave.elements.get('view')!.value, 'amplitude');
+    assert.match(wavePreset.poster, /σ₀ = 1\.5, k₀ = -1, t = 2/);
+    wave.elements.get('time')!.value = '5';
+    wave.elements.get('reset')!.dispatch('click');
+    assert.equal(wave.elements.get('time')!.value, '2');
+    const sphere = configureDemoPreset('bloch-sphere', { theta: 180, phi: 90 });
+    assert.match(runDemo(sphere.html).elements.get('state')!.textContent, /P\(0\) = 0\.000/);
+    assert.match(sphere.poster, /P\(0\) = 0\.000/);
+    const potential = runDemo(configureDemoPreset('effective-potential', { mass: 1.5, ell: 3 }).html);
+    potential.elements.get('mass')!.value = '2';
+    potential.elements.get('ell')!.value = '5';
+    potential.elements.get('reset')!.dispatch('click');
+    assert.equal(potential.elements.get('mass')!.value, '1.5');
+    assert.equal(potential.elements.get('ell')!.value, '3');
+    const waves = runDemo(configureDemoPreset('interference', { dispersion: 'linear', time: 3, k: 1.5, delta: 0.25 }).html);
+    assert.match(waves.elements.get('state')!.textContent, /Envelope Δω\/Δk = 1\.200.*Carrier ω̄\/k₀ = 1\.200/);
+    assert.equal(waves.elements.get('time')!.value, '3');
+  });
+
+  it('invalid settings are rejected before any built-in HTML is generated', () => {
+    assert.equal(normalizeDemoSettings('wave-packet', { time: 2 }).sigma, 1);
+    for (const value of [null, [], { theta: '90' }, { theta: 181 }, { theta: 1.5 }, { script: 'alert(1)' }, { phi: Infinity }]) {
+      assert.throws(() => configureDemoPreset('bloch-sphere', value));
+    }
+    assert.throws(() => configureDemoPreset('interference', { dispersion: '<script>' }));
+    assert.throws(() => configureDemoPreset('constructor', {}));
   });
 });

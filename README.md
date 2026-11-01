@@ -7,6 +7,8 @@ Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application
 ## What you can do
 
 - Start with a blank document, paste plain text or Markdown, open a file, or choose an example. Returning visitors resume their saved draft.
+- Choose **Create with AI** for a copyable lesson brief and working starter ZIP. Open the AI's project, run **Check lesson**, and copy a compatibility report back to the AI when needed. The website does not require an AI account or API key.
+- Keep editable slide source, separate demo HTML files, pictures, and notes together in a **Project ZIP**. Reopen an AI revision, review the changes, and update the existing lesson with a recovery copy or import a new copy.
 - Paste into a new document or append text to the current one, with an optional section title.
 - Review conservative formatting cleanup before creating a formatted copy. The original draft is retained, and the changes can also be undone in the editor.
 - Move complete peer sections, including their nested headings, equations, code, and paragraphs. Undo section moves from the organizer.
@@ -70,6 +72,25 @@ Slides reuse the document Markdown/KaTeX renderer, including all four math delim
 
 In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, images, and supported interactive demonstrations in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This format does not implement Marp directives or Slidev components. Ordinary HTML and script fences remain displayed source; executable demos use the explicit syntax below.
 
+## From an AI brief to a classroom lesson
+
+1. Choose **Create with AI**. Enter the topic, audience, language, duration, mathematical depth, and desired demonstrations. Copy the generated instructions into Codex or another AI tool. You can also download a working starter ZIP to give the AI as a reference.
+2. Give the AI the relevant chapter or source material in that tool. Ask for a complete version-2 project ZIP with `qft.json`, `slides.md`, local pictures, and self-contained HTML demos. The website itself does not upload material or call an AI model.
+3. Open the ZIP in the workspace. Edit the Markdown directly, choose **Edit demo** to revise a demonstration, or use **Lesson files** for other source files. Built-in demos have editable starting values; custom demos keep their HTML in the project.
+4. Choose **Check lesson**. The static check reports Markdown/math failures, missing assets, unsupported demo dependencies, and potentially crowded slides. Copy the report back to AI for fixes. It does not verify scientific correctness or execute demo JavaScript: run the controls and rehearse with **Present**.
+5. Download **Project ZIP** for the next revision and **HTML** for a classroom copy that opens independently. If AI revises the project, keep its `projectId` and paths; reopening the ZIP lets you review before updating the saved lesson or importing a copy. An update keeps the previous version as a recovery draft.
+
+The [version-2 format guide](public/lesson-format-v2.md) and [manifest JSON schema](public/lesson.schema.json) are public, stable authoring references. Version-1 image/slide bundles remain readable. A lesson project preserves the main Markdown path, supported extra text files, local pictures, and separate demo source. It can be unpacked and edited in an ordinary text editor without using this website.
+
+````markdown
+## Predict, then explore
+
+```interactive src="demos/explore.html" title="Explore the model"
+```
+````
+
+Keep a demo slide to its short heading and interactive block, with prediction questions on the preceding slide. The referenced file contains all needed HTML, CSS, and JavaScript. Linked `.js` and `.css` files can be kept as editable project source, but a running demo requires their code to be inlined. Relative references resolve from the main Markdown file's directory. Project files stay in this browser until downloaded; clearing site data can remove them.
+
 ## Interactive teaching demonstrations
 
 Choose **Interactive demo** in the toolbar. Four built-in choices are ready to insert: a spreading Gaussian wave packet, a Bloch sphere with a rotatable camera, a Schwarzschild scalar-field potential, and wave interference. Keep **Add on a new slide** selected for a clean teaching slide. **Open the complete physics lesson** creates a deck containing all four.
@@ -81,7 +102,7 @@ Choose **Interactive demo** in the toolbar. Four built-in choices are ready to i
 ```
 ````
 
-The other preset identifiers are `bloch-sphere`, `effective-potential`, and `interference`. A preset fence is empty: its identifier selects the built-in source and initial illustration. The HTML exporter includes the complete demo code, so exported presentations do not require this website or a CDN.
+The other preset identifiers are `bloch-sphere`, `effective-potential`, and `interference`. An empty preset fence uses defaults. **Edit demo** can save starting parameters as a JSON object in the fence, for example `{"sigma":1.2,"momentum":0.5,"time":0,"view":"density"}` for a wave packet. Those values travel with the lesson and are used on Run or Restart. The HTML exporter includes the complete demo code, so exported presentations do not require this website or a CDN.
 
 Choose **Run demo** on a preview to start it. The plot and controls work in both the workspace and fullscreen presentation. Timers and animations pause when the slide or browser tab becomes inactive and resume when it returns. **Stop** removes the running frame; **Restart** begins from the initial state. Editing Markdown recreates the affected rendered cards, and running demo state is not part of saved Markdown.
 
@@ -108,7 +129,7 @@ Demos run only after an explicit **Run demo** action. The workspace uses a same-
 
 ### Interactive HTML and static PDF
 
-Both document and slide HTML exports retain supported demos and their isolated player. Recipients choose **Run demo** themselves; the demo starts from its source-defined initial state. Markdown and ZIP bundles keep the code or preset name, not transient control values or animation time.
+Both document and slide HTML exports retain supported demos and their isolated player. Recipients choose **Run demo** themselves; the demo starts from its source-defined initial state. Project ZIPs keep separate demo files and saved starting settings. Markdown and ZIP bundles do not record transient control changes or animation time during playback.
 
 PDF output uses the most recently captured canvas PNG when available. Otherwise a built-in demo uses its initial SVG illustration; a custom demo uses a labeled static placeholder. Printing never starts a demo just to capture it. For a custom visualization without a canvas, include an ordinary image in the Markdown if the PDF needs a specific illustration. A PDF has no sliders or animation; use HTML for the interactive version.
 

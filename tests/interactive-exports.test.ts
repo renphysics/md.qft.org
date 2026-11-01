@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { renderMarkdown } from '../src/lib/render-markdown';
+import { renderMarkdown, type RenderOptions } from '../src/lib/render-markdown';
 import { renderSlides, normalizeSlideSettings, slideDimensions, DEFAULT_SLIDE_SETTINGS } from '../src/lib/slides';
 import { escapeHtml } from '../src/lib/render-markdown';
 import { interactiveFence } from '../src/lib/interactive-demos';
@@ -36,13 +36,13 @@ const defaults = {
   siteConfig: { name: 'QFT Markdown' },
 };
 
-async function exported(kind: 'slides' | 'document', source: string): Promise<string> {
+async function exported(kind: 'slides' | 'document', source: string, options: RenderOptions = {}): Promise<string> {
   let html = '';
   const dependencies = { ...defaults, download: (content: string) => { html = content; } };
   const module = kind === 'slides'
     ? functionsFrom('export-slides.ts', ['staticSlideCss', 'exportSlidesHtml'], dependencies)
     : functionsFrom('export-document.ts', ['exportPortableHtml'], dependencies);
-  await (kind === 'slides' ? module.exportSlidesHtml : module.exportPortableHtml)(source, 'A <safe> title');
+  await (kind === 'slides' ? module.exportSlidesHtml : module.exportPortableHtml)(source, 'A <safe> title', options);
   return html;
 }
 
@@ -121,6 +121,23 @@ describe('portable interactive HTML exports', () => {
     await executeParent(mainScript(html));
   });
 
+  it('embeds separate lesson files and saved preset parameters in both portable exports', async () => {
+    const source = interactiveFence({ src: 'demos/counter.html', title: 'Counter' }) + '\n---\n\n'
+      + interactiveFence({ preset: 'bloch-sphere', settings: { theta: 180, phi: 90 } });
+    for (const kind of ['slides', 'document'] as const) {
+      const html = await exported(kind, source, { editableDemos: true, project: {
+        version: 2, id: 'export-test', document: 'slides.md', imagePaths: [],
+        files: [{ path: 'demos/counter.html', content: '<p>Portable local source</p><script>const initialCount=7;</script>' }],
+      } });
+      assert.equal((html.match(/<template data-demo-source>/g) ?? []).length, 2);
+      assert.match(html, /Portable local source/);
+      assert.match(html, /initialCount=7/);
+      assert.match(html, /P\(0\) = 0\.000/);
+      assert.doesNotMatch(html, /<button[^>]*data-demo-edit|src="demos\/counter.html"/);
+      await executeParent(mainScript(html));
+    }
+  });
+
   it('prints only slide sections and reports their true numbers when Reveal adds background duplicates', async () => {
     const html = await exported('slides', '# First\n\n---\n\n# Second');
     const context = await executeParent(mainScript(html));
@@ -175,13 +192,14 @@ describe('static interactive print copies', () => {
     const helpers = functionsFrom('export-document.ts', ['makeInteractivePrintCopy'], {
       document: { createElement: (tag: string) => { const element = { tag, dataset: {} }; created.push(element); return element; } },
     });
-    helpers.makeInteractivePrintCopy({ querySelectorAll: () => [card] }, new Map(snapshot ? [['demo-fixture', snapshot]] : []));
+    helpers.makeInteractivePrintCopy({ querySelectorAll: (selector: string) => selector === '[data-demo-edit]'
+      ? [{ remove: () => removed.push('edit button on error card') }] : [card] }, new Map(snapshot ? [['demo-fixture', snapshot]] : []));
     return { created, removed, poster, card, label, explanation, caption };
   }
 
   it('removes executable surfaces and keeps a usable placeholder when a custom demo has not run', () => {
     const result = fixture();
-    assert.deepEqual(result.removed, ['iframe', 'frame slot', 'controls', 'source template']);
+    assert.deepEqual(result.removed, ['edit button on error card', 'iframe', 'frame slot', 'controls', 'source template']);
     assert.equal(result.card.dataset.demoState, 'static');
     assert.equal(result.poster.hidden, false);
     assert.equal(result.created.some((element) => element.tag === 'iframe'), false);
