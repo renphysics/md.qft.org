@@ -29,9 +29,10 @@ import {
   documentPresentationCss, documentPageMetrics, inspectPrintLayout, type DocumentSettings,
 } from '../lib/document-presentation';
 import {
-  getCleanupSuggestions, applyCleanup, getDocumentSections, moveDocumentSection,
+  getDocumentSections, moveDocumentSection,
   suggestDocumentTitle, appendDocumentSection,
 } from '../lib/document-tools';
+import { cleanupOptions, reviewCleanup, cleanupDiff, type CleanupTarget, type CleanupReview } from '../lib/cleanup-review';
 import { connectScrollSync } from '../lib/scroll-sync';
 import { EXAMPLES } from '../lib/examples';
 import { siteConfig } from '../config/site';
@@ -154,6 +155,10 @@ class MarkdownWorkspace extends HTMLElement {
   private documentSettings: DocumentSettings = { ...DEFAULT_DOCUMENT_SETTINGS };
   private dismissedWelcome = new Set<string>();
   private cleanupSnapshot?: { id: string; title: string; source: string };
+  private cleanupTarget: CleanupTarget = 'markdown';
+  private cleanupReview?: CleanupReview;
+  private cleanupBusy = false;
+  private cleanupGeneration = 0;
   private organizeHistory: { id: string; before: string; after: string }[] = [];
   private pdfSnapshot?: DraftOptions & { id: string; title: string; source: string; allowRemoteImages: boolean };
   private pdfRendered?: MarkdownResult;
@@ -948,14 +953,24 @@ class MarkdownWorkspace extends HTMLElement {
 
   private openCleanup(): void {
     if (!this.current?.source.trim()) { this.openPaste(); return; }
+    this.cleanupGeneration += 1;
+    this.cleanupBusy = false;
     this.cleanupSnapshot = { id: this.current.id, title: this.current.title, source: this.current.source };
-    const suggestions = getCleanupSuggestions(this.current.source);
+    this.q<HTMLSelectElement>('[data-cleanup-target]').value = this.cleanupTarget;
+    this.renderCleanupOptions();
+    this.updateCleanupPreview();
+    this.q<HTMLDialogElement>('[data-cleanup-dialog]').showModal();
+  }
+
+  private renderCleanupOptions(previous = new Map<string, boolean>()): void {
+    if (!this.cleanupSnapshot) return;
+    const suggestions = cleanupOptions(this.cleanupSnapshot.source, this.cleanupTarget);
     const options = suggestions.map((suggestion) => {
       const label = document.createElement('label');
       label.className = 'cleanup-option';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = true;
+      checkbox.checked = previous.get(suggestion.id) ?? true;
       checkbox.dataset.cleanupId = suggestion.id;
       const text = document.createElement('span');
       const heading = document.createElement('strong');
@@ -967,9 +982,6 @@ class MarkdownWorkspace extends HTMLElement {
       return label;
     });
     this.q('[data-cleanup-options]').replaceChildren(...options);
-    this.q('[data-cleanup-before]').textContent = this.current.source;
-    this.updateCleanupPreview();
-    this.q<HTMLDialogElement>('[data-cleanup-dialog]').showModal();
   }
 
   private selectedCleanup(): string[] {
@@ -978,23 +990,106 @@ class MarkdownWorkspace extends HTMLElement {
 
   private updateCleanupPreview(): void {
     if (!this.cleanupSnapshot) return;
-    const source = applyCleanup(this.cleanupSnapshot.source, this.selectedCleanup());
-    const changed = source !== this.cleanupSnapshot.source;
-    this.q('[data-cleanup-after]').textContent = source;
-    this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = !changed;
-    this.q('[data-cleanup-status]').textContent = changed
-      ? 'Ready to create a formatted copy. Equations, code, and wording are preserved.'
-      : 'No formatting changes selected. Your document is already ready to style and export.';
+    const review = reviewCleanup(this.cleanupSnapshot.source, this.cleanupTarget, this.selectedCleanup());
+    this.cleanupReview = review;
+    const diff = cleanupDiff(this.cleanupSnapshot.source, review.source);
+    for (const [selector, lines] of [['[data-cleanup-before]', diff.before], ['[data-cleanup-after]', diff.after]] as const) {
+      this.q(selector).replaceChildren(...lines.map((line, index) => {
+        const span = document.createElement('span');
+        span.className = `cleanup-source-line${line.changed ? ' is-changed' : ''}`;
+        span.textContent = line.text + (index < lines.length - 1 ? '\n' : '');
+        return span;
+      }));
+    }
+    this.q('[data-cleanup-preview-note]').hidden = !diff.truncated;
+    this.q<HTMLDetailsElement>('[data-cleanup-full-source]').hidden = !diff.truncated;
+    this.q<HTMLTextAreaElement>('[data-cleanup-full-before]').value = diff.truncated ? this.cleanupSnapshot.source : '';
+    this.q<HTMLTextAreaElement>('[data-cleanup-full-after]').value = diff.truncated ? review.source : '';
+    this.q('[data-cleanup-status]').textContent = review.status;
+    this.q('[data-cleanup-help]').textContent = this.cleanupTarget === 'hackmd'
+      ? 'Prepare Markdown for HackMD. Review any compatibility notes, then copy the result into its editor.'
+      : 'Choose the formatting changes you want. Code and mathematical content are preserved.';
+    this.q('[data-cleanup-copy-label]').textContent = review.limited ? 'Copy original Markdown' : this.cleanupTarget === 'hackmd' ? 'Copy for HackMD' : 'Copy Markdown';
+    this.q('[data-cleanup-changes]').hidden = !review.changes.length;
+    this.q('[data-cleanup-changes-label]').textContent = `${review.changes.length} ${review.changes.length === 1 ? 'change' : 'changes'} in this copy`;
+    const items = (entries: { line?: number; message: string }[], limit: number) => {
+      const nodes = entries.slice(0, limit).map((entry) => {
+        const item = document.createElement('li');
+        item.textContent = `${entry.line ? `Line ${entry.line}: ` : ''}${entry.message}`;
+        return item;
+      });
+      if (entries.length > limit) {
+        const more = document.createElement('li');
+        more.textContent = `${entries.length - limit} more items. Review the remaining source before sharing.`;
+        nodes.push(more);
+      }
+      return nodes;
+    };
+    this.q('[data-cleanup-change-list]').replaceChildren(...items(review.changes, 40));
+    this.q('[data-cleanup-issues]').hidden = !review.issues.length;
+    this.q('[data-cleanup-issue-list]').replaceChildren(...items(review.issues, 12));
+    this.q('[data-cleanup-copy-fallback]').hidden = true;
+    this.q('[data-cleanup-copy-status]').textContent = '';
+    this.updateCleanupButtons();
+    this.cleanupIsCurrent();
+  }
+
+  private updateCleanupButtons(): void {
+    const stale = !this.cleanupSnapshot || this.current?.id !== this.cleanupSnapshot.id || this.current.source !== this.cleanupSnapshot.source;
+    this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = this.cleanupBusy || stale || !this.cleanupReview?.changed;
+    this.q<HTMLButtonElement>('[data-cleanup-copy]').disabled = this.cleanupBusy || stale || !this.cleanupReview?.source.trim();
+    this.q<HTMLSelectElement>('[data-cleanup-target]').disabled = this.cleanupBusy || stale;
+    for (const input of this.querySelectorAll<HTMLInputElement>('[data-cleanup-id]')) input.disabled = this.cleanupBusy || stale;
+  }
+
+  private cleanupIsCurrent(): boolean {
+    const snapshot = this.cleanupSnapshot;
+    if (!snapshot) return false;
+    if (this.current?.id === snapshot.id && this.current.source === snapshot.source) return true;
+    this.q('[data-cleanup-status]').textContent = 'This document changed while the panel was open. Close and reopen Clean up to review the latest text.';
+    this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = true;
+    this.q<HTMLButtonElement>('[data-cleanup-copy]').disabled = true;
+    return false;
+  }
+
+  private async copyCleanupMarkdown(): Promise<void> {
+    if (this.cleanupBusy || !this.cleanupIsCurrent()) return;
+    const generation = this.cleanupGeneration;
+    const snapshot = this.cleanupSnapshot;
+    const currentReview = () => generation === this.cleanupGeneration && snapshot === this.cleanupSnapshot;
+    const review = reviewCleanup(this.cleanupSnapshot!.source, this.cleanupTarget, this.selectedCleanup());
+    if (!review.source.trim()) return;
+    this.cleanupBusy = true;
+    this.updateCleanupButtons();
+    try {
+      await navigator.clipboard.writeText(review.source);
+      if (!currentReview()) return;
+      this.q('[data-cleanup-copy-fallback]').hidden = true;
+      this.q('[data-cleanup-copy-status]').textContent = this.cleanupTarget === 'hackmd' && !review.limited
+        ? `Copied. Paste into HackMD${review.issues.length ? ' and review the compatibility notes above' : ''}.`
+        : 'Markdown copied to the clipboard.';
+    } catch {
+      if (!currentReview()) return;
+      this.q('[data-cleanup-copy-fallback]').hidden = false;
+      const fallback = this.q<HTMLTextAreaElement>('[data-cleanup-copy-text]');
+      fallback.value = review.source;
+      fallback.focus();
+      fallback.select();
+      this.q('[data-cleanup-copy-status]').textContent = 'Clipboard access was unavailable. The complete result is selected; press Ctrl/⌘ C to copy it.';
+    } finally {
+      if (currentReview()) {
+        this.cleanupBusy = false;
+        this.updateCleanupButtons();
+        this.cleanupIsCurrent();
+      }
+    }
   }
 
   private async applyFormatting(): Promise<void> {
     const snapshot = this.cleanupSnapshot;
-    if (!snapshot) return;
-    if (this.current?.id !== snapshot.id || this.current.source !== snapshot.source) {
-      this.q('[data-cleanup-status]').textContent = 'This document changed while the panel was open. Close and reopen Clean up to review the latest text.';
-      return;
-    }
-    const source = applyCleanup(snapshot.source, this.selectedCleanup());
+    if (!snapshot || !this.current) return;
+    if (!this.cleanupIsCurrent()) return;
+    const source = reviewCleanup(snapshot.source, this.cleanupTarget, this.selectedCleanup()).source;
     if (source === snapshot.source) return;
     const settings = { ...this.documentSettings };
     const metadata = copiedDraftOptions(this.current);
@@ -1726,12 +1821,27 @@ class MarkdownWorkspace extends HTMLElement {
     }, { signal });
     click('[data-cleanup]', () => this.openCleanup());
     click('[data-cleanup-close]', () => this.q<HTMLDialogElement>('[data-cleanup-dialog]').close());
+    this.q<HTMLDialogElement>('[data-cleanup-dialog]').addEventListener('close', () => {
+      if (this.q<HTMLDialogElement>('[data-cleanup-dialog]').open) return;
+      this.cleanupGeneration += 1;
+      this.cleanupBusy = false;
+    }, { signal });
+    this.q<HTMLSelectElement>('[data-cleanup-target]').addEventListener('change', (event) => {
+      const previous = new Map([...this.querySelectorAll<HTMLInputElement>('[data-cleanup-id]')].map((input) => [input.dataset.cleanupId!, input.checked]));
+      this.cleanupTarget = (event.target as HTMLSelectElement).value === 'hackmd' ? 'hackmd' : 'markdown';
+      this.renderCleanupOptions(previous);
+      this.updateCleanupPreview();
+    }, { signal });
     this.q('[data-cleanup-options]').addEventListener('change', () => this.updateCleanupPreview(), { signal });
+    click('[data-cleanup-copy]', () => { void this.copyCleanupMarkdown(); });
     click('[data-cleanup-apply]', () => {
-      this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = true;
+      if (this.cleanupBusy) return;
+      const generation = this.cleanupGeneration;
+      this.cleanupBusy = true;
+      this.updateCleanupButtons();
       this.runAction(async () => {
-        try { await this.applyFormatting(); }
-        finally { this.q<HTMLButtonElement>('[data-cleanup-apply]').disabled = false; }
+        try { if (generation === this.cleanupGeneration) await this.applyFormatting(); }
+        finally { if (generation === this.cleanupGeneration) { this.cleanupBusy = false; this.updateCleanupButtons(); } }
       });
     });
     click('[data-organize]', () => this.openOrganizer());

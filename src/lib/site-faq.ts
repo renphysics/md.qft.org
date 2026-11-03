@@ -57,7 +57,15 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Can I format and organize an AI-generated answer?',
-    answer: 'Yes. Paste the answer as plain text or Markdown, then use Clean up to review formatting changes before creating a formatted copy. The original draft is retained. Organize moves complete sections, including their nested headings, equations, and code, and offers Undo move. These tools do not call an AI model, rewrite or summarize the answer, verify its claims, or validate its citations.',
+    answer: 'Yes. Paste the answer as plain text or Markdown, then open Clean up and choose General Markdown or HackMD. Review the highlighted changes and compatibility notes, then copy the result or create a formatted draft. The original draft is retained. Organize moves complete sections, including their nested headings, equations, and code, and offers Undo move. These tools work locally and preserve the wording; they do not summarize the answer, verify its claims, or validate its citations.',
+  },
+  {
+    question: 'Why is Create formatted copy disabled in Clean up?',
+    answer: 'A formatted copy requires selected changes that alter the original text. The dialog explains whether its checks found no changes, suggestions are unchecked, or the document exceeds a processing limit. Copy Markdown or Copy for HackMD remains available for nonempty output even when no changes are found. No changes found by these checks is not a guarantee that every feature will render in another editor.',
+  },
+  {
+    question: 'How do I prepare AI-generated mathematics for HackMD?',
+    answer: String.raw`Choose Clean up, select HackMD under Format for, and review Prepare mathematics for HackMD. The formatter converts recognized \(...\) and \[...\] delimiters to dollar syntax and safely handles conflicts such as a standalone = line becoming a Markdown heading, even inside $$ delimiters. Use Copy for HackMD and check the result in HackMD's preview. Code and genuine TeX row breaks are preserved; ambiguous escaping is left for review. Copying does not publish a note, upload local pictures, or transfer interactive demo playback. Custom mathematical macros may need adjustment for HackMD's MathJax configuration.`,
   },
   {
     question: 'Can I download editable Markdown or standalone HTML?',

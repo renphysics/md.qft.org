@@ -16,6 +16,11 @@ $$
 \[
 \int_0^1 x^2\,dx=\frac13
 \]`,
+  hackmd: String.raw`$$
+ds_{\mathrm{ind}}^2 =
+-\sin^2\theta_0\,dt^2
++4L^2\sin^2\theta_0\,d\Omega_5^2.
+$$`,
   aligned: String.raw`$$
 \begin{aligned}
 (a+b)^2 &= a^2+2ab+b^2 \\
@@ -74,12 +79,21 @@ i\hbar\,\partial_t|\psi\rangle=\hat H|\psi\rangle
       <h2 id="paste-to-document">From pasted text to PDF</h2>
       <ol>
         <li><strong>Bring your text.</strong> Choose <strong>Paste</strong>, then add plain text or Markdown to a new document or the current one. An optional title becomes the new document name or an appended section heading. For equations and code, copy their Markdown or TeX source when it is available.</li>
-        <li><strong>Review the formatting.</strong> <strong>Clean up</strong> can remove an outer Markdown wrapper, raise heading levels together, and trim outer blank lines. Review the original and result, then create a formatted copy. Your original stays in the document list; editor Undo is available too.</li>
+        <li><strong>Review the formatting.</strong> Open <strong>Clean up</strong> and choose <strong>General Markdown</strong>. It can remove an outer Markdown wrapper, raise heading levels together, and trim outer blank lines. Review the highlighted changes, then choose <strong>Copy Markdown</strong> or <strong>Create formatted copy</strong>. Your original stays in the document list; editor Undo is available too.</li>
         <li><strong>Arrange your sections.</strong> <strong>Organize</strong> moves whole sections with their paragraphs, smaller headings, code, and equations. A document title and its introduction stay in place. Use <strong>Undo move</strong> to reverse a move.</li>
         <li><strong>Choose a presentation.</strong> Open <strong>Save PDF</strong> and choose Clean, Study Notes, or Academic. Adjust paper, margins, and text size, then save through the browser’s print dialog. <strong>Download HTML</strong> uses the same style.</li>
       </ol>
       <p>The typography preview shows your chosen appearance; the browser’s print preview shows final page boundaries. Document details include an optional author, a table of contents, and page breaks before major sections. <strong>Add a title if missing</strong> preserves the headings in your source.</p>
       <p>Find a saved note with the document search. Presentation settings stay with that draft in this browser and do not change the downloaded Markdown. Cleanup adjusts formatting; it leaves wording and source links as supplied.</p>
+    </section>
+
+    <section aria-labelledby="hackmd-formatting">
+      <h2 id="hackmd-formatting">Prepare Markdown for HackMD</h2>
+      <p>Open <strong>Clean up</strong>, choose <strong>HackMD</strong> under <strong>Format for</strong>, and review the suggested changes. <strong>Prepare mathematics for HackMD</strong> converts recognized backslash math delimiters to dollar delimiters and repairs mathematical lines that could be interpreted as Markdown structure when it can do so safely.</p>
+      <p>A line containing only <code>=</code> can become a heading underline even between <code>$$</code> delimiters. Keeping the equals sign with the left-hand side avoids that conflict:</p>
+      <pre><code>{snippets.hackmd}</code></pre>
+      <p>Choose <strong>Copy for HackMD</strong>, then paste into HackMD's editor and check its preview. Choose <strong>Create formatted copy</strong> when you want to keep editing the result here. Copying remains available when the checks find no changes; creating a new formatted draft requires selected changes. If clipboard access fails, select and copy the visible result.</p>
+      <p>Review any compatibility notes. The formatter preserves code examples and genuine mathematical row breaks, and leaves ambiguous escaping for review. Custom macros may render differently in HackMD's MathJax configuration. Copying source does not upload local pictures or transfer interactive demonstrations; upload the pictures there or use accessible image URLs, and use an HTML export for working demos.</p>
     </section>
 
     <section aria-labelledby="ai-lessons">

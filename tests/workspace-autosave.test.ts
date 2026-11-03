@@ -10,6 +10,7 @@ import { scopedStorageKey } from '../src/lib/storage-scope.ts';
 import { siteConfig } from '../src/config/site.ts';
 import { DEFAULT_DOCUMENT_SETTINGS, type DocumentSettings } from '../src/lib/document-presentation.ts';
 import { appendDocumentSection, suggestDocumentTitle, applyCleanup } from '../src/lib/document-tools.ts';
+import { cleanupOptions, reviewCleanup, cleanupDiff, type CleanupReview } from '../src/lib/cleanup-review.ts';
 import { renderMarkdown } from '../src/lib/render-markdown.ts';
 import { EXAMPLES } from '../src/lib/examples.ts';
 import { createLessonProject, cloneLessonProject } from '../src/lib/lesson-project.ts';
@@ -56,6 +57,12 @@ interface Workspace {
   replaceSource(source: string): void;
   syncWelcome(): void;
   selectedCleanup(): string[];
+  copyCleanupMarkdown(): Promise<void>;
+  cleanupTarget: 'markdown' | 'hackmd';
+  cleanupReview?: CleanupReview;
+  cleanupBusy: boolean;
+  cleanupGeneration: number;
+  updateCleanupButtons(): void;
   persistDocumentSettings(): void;
   cleanupSnapshot?: { id: string; title: string; source: string };
   print(): Promise<void>;
@@ -105,6 +112,7 @@ function workspace(storage: Partial<Storage> = {}, browserDependencies: Record<s
     document: { addEventListener: noop, getElementById: (id: string) => id === 'workspace-exports' ? headerExports : null }, window: { addEventListener: noop },
     createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
     DEFAULT_DOCUMENT_SETTINGS, appendDocumentSection, suggestDocumentTitle, applyCleanup,
+    cleanupOptions, reviewCleanup, cleanupDiff,
     renderMarkdown, EXAMPLES, cloneLessonProject,
     MAX_SOURCE_LENGTH: 400_000,
     createDraft: async (title: string, source: string, options: DraftOptions = {}) => ({ ...draft('new', source, 1, title), ...options }),
@@ -367,6 +375,125 @@ describe('workspace draft coordination', () => {
     await app.applyFormatting();
     assert.equal(created, 0);
     assert.equal(app.current.source, 'initial');
+  });
+
+  it('copies unchanged Markdown without creating a draft and prevents concurrent copy actions', async () => {
+    const copying = deferred<void>();
+    const written: string[] = [];
+    let created = 0;
+    const { app } = workspace({ createDraft: async () => { created++; return draft('unexpected'); } }, {
+      navigator: { clipboard: { writeText: async (text: string) => { written.push(text); await copying.promise; } } },
+    });
+    const original = '# Already formatted\n\nA note.';
+    edit(app, original);
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: original };
+    app.selectedCleanup = () => [];
+    app.cleanupReview = reviewCleanup(original, 'markdown', []);
+    const nodes = new Map<string, { disabled: boolean; hidden: boolean; textContent: string }>();
+    app.q = (selector) => {
+      if (!nodes.has(selector)) nodes.set(selector, { disabled: false, hidden: false, textContent: '' });
+      return nodes.get(selector);
+    };
+    const pending = app.copyCleanupMarkdown();
+    await app.copyCleanupMarkdown();
+    assert.deepEqual(written, [original]);
+    assert.equal(nodes.get('[data-cleanup-copy]')?.disabled, true);
+    copying.resolve();
+    await pending;
+    assert.equal(nodes.get('[data-cleanup-copy]')?.disabled, false);
+    assert.equal(nodes.get('[data-cleanup-apply]')?.disabled, true);
+    assert.match(nodes.get('[data-cleanup-copy-status]')!.textContent, /copied/i);
+    assert.equal(created, 0);
+    assert.equal(app.current.source, original);
+  });
+
+  it('exposes the complete selectable result when clipboard permission is denied', async () => {
+    const { app } = workspace({}, { navigator: { clipboard: { writeText: async () => { throw new Error('Denied'); } } } });
+    const original = '# Title\n\n' + 'A paragraph\n'.repeat(1_100) + 'Last line';
+    edit(app, original);
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: original };
+    app.selectedCleanup = () => [];
+    app.cleanupReview = reviewCleanup(original, 'markdown', []);
+    let selected = 0;
+    const field = { value: '', focus() {}, select() { selected++; } };
+    const nodes = new Map<string, { disabled: boolean; hidden: boolean; textContent: string }>();
+    app.q = (selector) => {
+      if (selector === '[data-cleanup-copy-text]') return field;
+      if (!nodes.has(selector)) nodes.set(selector, { disabled: false, hidden: true, textContent: '' });
+      return nodes.get(selector);
+    };
+    await app.copyCleanupMarkdown();
+    assert.equal(field.value, original);
+    assert.equal(selected, 1);
+    assert.equal(nodes.get('[data-cleanup-copy-fallback]')?.hidden, false);
+    assert.match(nodes.get('[data-cleanup-copy-status]')!.textContent, /unavailable/);
+    assert.equal(app.current.source, original);
+  });
+
+  it('refuses to copy an outdated cleanup snapshot', async () => {
+    let copies = 0;
+    const { app } = workspace({}, { navigator: { clipboard: { writeText: async () => { copies++; } } } });
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: 'old source' };
+    app.selectedCleanup = () => [];
+    await app.copyCleanupMarkdown();
+    assert.equal(copies, 0);
+  });
+
+  it('ignores a delayed clipboard failure after a different cleanup review opens', async () => {
+    let rejectCopy!: (error: Error) => void;
+    const waiting = new Promise<void>((_resolve, reject) => { rejectCopy = reject; });
+    const { app } = workspace({}, { navigator: { clipboard: { writeText: () => waiting } } });
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: app.current.source };
+    app.selectedCleanup = () => [];
+    app.cleanupReview = reviewCleanup(app.current.source, 'markdown', []);
+    let fallbackRequests = 0;
+    app.q = (selector) => {
+      if (selector === '[data-cleanup-copy-text]') fallbackRequests++;
+      return { disabled: false, hidden: true, textContent: '', focus() {}, select() {} };
+    };
+    const copying = app.copyCleanupMarkdown();
+    edit(app, 'A different document');
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: app.current.source };
+    app.cleanupGeneration++;
+    app.cleanupBusy = false;
+    rejectCopy(new Error('Permission denied after the review changed'));
+    await copying;
+    assert.equal(fallbackRequests, 0, 'Old text must never appear in the new review fallback.');
+  });
+
+  it('keeps stale review actions disabled when refreshing their busy state', () => {
+    const { app } = workspace();
+    app.cleanupSnapshot = { id: 'old', title: 'old', source: '## An old source' };
+    app.cleanupReview = reviewCleanup('## An old source', 'markdown', ['heading-levels']);
+    const nodes = new Map<string, { disabled: boolean }>();
+    app.q = (selector) => {
+      if (!nodes.has(selector)) nodes.set(selector, { disabled: false });
+      return nodes.get(selector);
+    };
+    app.updateCleanupButtons();
+    assert.equal(nodes.get('[data-cleanup-copy]')?.disabled, true);
+    assert.equal(nodes.get('[data-cleanup-apply]')?.disabled, true);
+    assert.equal(nodes.get('[data-cleanup-target]')?.disabled, true);
+  });
+
+  it('creates a HackMD formatted draft from the reviewed metric while keeping the original', async () => {
+    const { app } = workspace();
+    const original = String.raw`\[
+ds_{\mathrm{ind}}^2
+=
+-\sin^2\theta_0\,dt^2
++4L^2\sin^2\theta_0\,d\Omega_5^2.
+\]`;
+    edit(app, original, 'Induced metric');
+    app.cleanupSnapshot = { id: 'old', title: 'Induced metric', source: original };
+    app.cleanupTarget = 'hackmd';
+    app.selectedCleanup = () => ['hackmd-format'];
+    await app.applyFormatting();
+    assert.equal(app.drafts.get('old')?.source, original);
+    assert.equal(app.current.id, 'new');
+    assert.match(app.current.source, /\$\$/);
+    assert.doesNotMatch(app.current.source, /^=\s*$/m);
+    assert.match(app.current.title, /\(formatted\)$/);
   });
 
   it('finishes edits and an autosave started during creation before switching documents', async () => {

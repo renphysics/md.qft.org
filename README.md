@@ -10,7 +10,7 @@ Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application
 - Choose **Create with AI** for a copyable lesson brief and working starter ZIP. Open the AI's project, run **Check lesson**, and copy a compatibility report back to the AI when needed. The website does not require an AI account or API key.
 - Keep editable slide source, separate demo HTML files, pictures, and notes together in a **Project ZIP**. Reopen an AI revision, review the changes, and update the existing lesson with a recovery copy or import a new copy.
 - Paste into a new document or append text to the current one, with an optional section title.
-- Review conservative formatting cleanup before creating a formatted copy. The original draft is retained, and the changes can also be undone in the editor.
+- Review formatting changes in **Clean up**, choose **General Markdown** or **HackMD**, and copy the result or create a formatted draft. Changed lines and compatibility notes help you review the output; the original draft is retained.
 - Move complete peer sections, including their nested headings, equations, code, and paragraphs. Undo section moves from the organizer.
 - Search saved document titles and text.
 - Choose **Clean**, **Study Notes**, or **Academic** presentation for PDF and HTML. Adjust paper size, orientation, margins, text size, spacing, optional author, contents, and major-section page breaks.
@@ -32,7 +32,7 @@ Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application
 ## From pasted text to a document
 
 1. Choose **Paste** and insert plain text or Markdown. Use the source form of equations and code when it is available from the application you are copying from. Pasting does not import rich HTML or call an AI service.
-2. Choose **Clean up** to review formatting suggestions. It can remove a complete outer `md`/`markdown` code fence, raise document headings together, and trim outer blank lines. Select the changes you want and create a formatted copy; the wording, formulas, and code remain intact.
+2. Choose **Clean up** and select **General Markdown** to review formatting suggestions. It can remove a complete outer `md`/`markdown` code fence, raise document headings together, and trim outer blank lines. Review the highlighted changes, then choose **Copy Markdown** or **Create formatted copy**. The copy action is available even when no changes are needed; creating a new draft requires a change.
 3. Use **Organize** to move whole sections. A unique first heading above the others is kept as the document title, together with its introduction. Each move updates the editable Markdown and can be undone.
 4. Open **Save PDF**, choose a style, and review the typography preview. **Save PDF** then opens the browser's print dialog; choose its PDF destination and check the final pagination. **Download HTML** uses the same document presentation.
 
@@ -41,6 +41,24 @@ The PDF setup includes A4/US Letter, portrait/landscape, three margin presets, 1
 Document PDF-style preferences are saved per draft in localStorage, separately from its Markdown. Slide mode, theme, and aspect ratio save with the draft and travel in an exported ZIP bundle. Plain Markdown contains source text and references, not these application preferences or local image bytes. Cleanup and organization are formatting tools; they do not summarize text, validate citations, or rewrite claims.
 
 Live preview, the paste dialog, and structural tools support up to 400,000 characters. Keep longer material in smaller documents for these features. Markdown downloads preserve the source independently of the rendered preview.
+
+## Copy Markdown for HackMD
+
+Open **Clean up**, choose **HackMD** under **Format for**, and review the selected changes. **Prepare mathematics for HackMD** converts recognized `\(...\)` and `\[...\]` delimiters to dollar delimiters and handles Markdown-sensitive mathematical lines when it can do so safely. For example, a standalone `=` can become a Markdown heading underline even inside `$$`; the formatter can join it to the preceding mathematical line:
+
+```markdown
+$$
+ds_{\mathrm{ind}}^2 =
+-\sin^2\theta_0\,dt^2
++4L^2\sin^2\theta_0\,d\Omega_5^2.
+$$
+```
+
+Use **Copy for HackMD** to paste the reviewed result into HackMD, or **Create formatted copy** to keep editing it here. Both actions use the selected changes. If clipboard access is unavailable, select and copy the visible result. The original document remains available. Processing happens in this browser; copying does not publish or upload a HackMD note.
+
+The dialog distinguishes no applicable changes, unchecked suggestions, and processing limits. **No changes found by these checks** describes the formatter's checks, not a guarantee that every feature will render in another editor. Code examples, genuine TeX row breaks, and comment semantics are preserved. Ambiguous delimiters or escaping are kept with a compatibility note instead of being globally unescaped; review these notes before copying.
+
+Check the destination preview, especially when using custom macros or mathematical extensions. HackMD's MathJax configuration can differ from this editor's KaTeX renderer. Copying Markdown does not upload browser-local images or transfer custom interactive demo playback: upload the images or use accessible URLs, and share an HTML export when you need a working demonstration.
 
 ## Pictures and portable drafts
 

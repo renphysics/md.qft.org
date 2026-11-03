@@ -138,13 +138,19 @@ import '../styles/teacher-workflow.css';
   </dialog>
 
   <dialog class="app-dialog cleanup-dialog" data-cleanup-dialog aria-labelledby="cleanup-dialog-title">
-    <div class="dialog-heading"><span class="eyebrow">A LITTLE POLISH</span><button class="icon-button" data-cleanup-close aria-label="Close cleanup"><Icon name="close" /></button></div>
-    <h2 id="cleanup-dialog-title">Let the structure shine.</h2>
-    <p>Choose the formatting changes you want and review the result. Your original document is kept.</p>
+    <div class="cleanup-heading"><div><h2 id="cleanup-dialog-title">Clean up Markdown</h2><p>Review a formatted copy of your text. Your original document is kept.</p></div><button class="icon-button" data-cleanup-close aria-label="Close cleanup"><Icon name="close" /></button></div>
+    <label class="cleanup-target">Format for <select data-cleanup-target aria-describedby="cleanup-format-help"><option value="markdown">General Markdown</option><option value="hackmd">HackMD</option></select></label>
+    <p class="cleanup-help" id="cleanup-format-help" data-cleanup-help>Choose the formatting changes you want. Code and mathematical content are preserved.</p>
     <div class="cleanup-options" data-cleanup-options></div>
-    <p class="cleanup-status" data-cleanup-status role="status"></p>
-    <div class="cleanup-comparison"><section aria-labelledby="cleanup-before-label"><h3 id="cleanup-before-label">ORIGINAL</h3><pre data-cleanup-before tabindex="0" aria-label="Original Markdown"></pre></section><section aria-labelledby="cleanup-after-label"><h3 id="cleanup-after-label">AFTER CLEANUP</h3><pre data-cleanup-after tabindex="0" aria-label="Markdown after selected changes"></pre></section></div>
-    <div class="dialog-actions"><button class="button-secondary" data-cleanup-close>Cancel</button><button class="button-primary" data-cleanup-apply><Icon name="check" size={16} /> Create formatted copy</button></div>
+    <p class="cleanup-status" id="cleanup-dialog-status" data-cleanup-status role="status"></p>
+    <details class="cleanup-changes" data-cleanup-changes hidden><summary data-cleanup-changes-label>Changes</summary><ul data-cleanup-change-list></ul></details>
+    <div class="cleanup-issues" data-cleanup-issues hidden><h3>Review before sharing</h3><ul data-cleanup-issue-list></ul></div>
+    <div class="cleanup-comparison"><section aria-labelledby="cleanup-before-label"><h3 id="cleanup-before-label">ORIGINAL <span>Changed lines highlighted</span></h3><pre data-cleanup-before tabindex="0" aria-label="Original Markdown"></pre></section><section aria-labelledby="cleanup-after-label"><h3 id="cleanup-after-label">RESULT <span>Changed lines highlighted</span></h3><pre data-cleanup-after tabindex="0" aria-label="Markdown after selected changes"></pre></section></div>
+    <p class="cleanup-preview-note" data-cleanup-preview-note hidden>Showing the beginning of this long document. Copy and Create formatted copy use the complete text.</p>
+    <details class="cleanup-full-source" data-cleanup-full-source hidden><summary>View complete original and result</summary><div class="cleanup-comparison"><label>Original<textarea data-cleanup-full-before readonly spellcheck="false"></textarea></label><label>Result<textarea data-cleanup-full-after readonly spellcheck="false"></textarea></label></div></details>
+    <div class="cleanup-copy-fallback" data-cleanup-copy-fallback hidden><label for="cleanup-copy-text">Select and copy the complete Markdown</label><textarea id="cleanup-copy-text" data-cleanup-copy-text readonly spellcheck="false"></textarea></div>
+    <p class="cleanup-copy-status" data-cleanup-copy-status role="status"></p>
+    <div class="dialog-actions cleanup-actions"><button class="button-secondary" data-cleanup-close>Close</button><button class="button-secondary" data-cleanup-copy><Icon name="copy" size={16} /><span data-cleanup-copy-label>Copy Markdown</span></button><button class="button-primary" data-cleanup-apply aria-describedby="cleanup-dialog-status"><Icon name="check" size={16} /> Create formatted copy</button></div>
   </dialog>
 
   <dialog class="app-dialog organize-dialog" data-organize-dialog aria-labelledby="organize-dialog-title">
