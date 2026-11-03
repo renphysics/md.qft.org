@@ -23,6 +23,13 @@ const metric = String.raw`ds_{\mathrm{ind}}^2
 =
 -\sin^2\theta_0\,dt^2
 +4L^2\sin^2\theta_0\,d\Omega_5^2.`;
+const susceptibility = String.raw`\left.
+\frac{\partial\mu}{\partial Q_c}
+\right|_{U,\mu=1}
+=
+\frac{4Gb(b^2+2)}
+{(b^2+1)(3b^4+4b^2+2)}
+>0.`;
 
 function tokens(source: string) {
   return markdown.parse(source, {});
@@ -49,6 +56,7 @@ function renderedMath(tex: string): string {
 
 function assertOneIntactDisplay(source: string, originalTex: string): void {
   assert.equal(tokens(source).filter((token) => token.type === 'heading_open').length, 0);
+  assert.equal(tokens(source).filter((token) => token.type === 'blockquote_open').length, 0);
   const equations = displayMathAfterBlockParsing(source);
   assert.equal(equations.length, 1, 'The complete equation must remain in one Markdown block.');
   assert.equal(renderedMath(equations[0]), renderedMath(originalTex));
@@ -169,11 +177,85 @@ test('running the converter again preserves an already compatible metric and its
 });
 
 test('other Markdown block conflicts inside equations are reported for review', () => {
-  for (const tex of ['x\n---\ny', 'x\n\ny', 'A\n> B']) {
+  for (const tex of ['x\n---\ny', 'x\n\ny']) {
     const source = '$$\n' + tex + '\n$$';
     assert.equal(displayMathAfterBlockParsing(source).length, 0);
     const result = prepareHackmd(source);
     assert.equal(result.source, source);
     assert.ok(result.issues.length > 0, 'Math split across Markdown blocks must not pass the compatibility checks silently.');
   }
+});
+
+test('the reported susceptibility source creates both a heading and a blockquote before math rendering', () => {
+  const source = '$$\n' + susceptibility + '\n$$';
+  const parsed = tokens(source);
+  assert.equal(parsed.filter((token) => token.type === 'heading_open').length, 1);
+  assert.equal(parsed.filter((token) => token.type === 'blockquote_open').length, 1);
+  assert.equal(displayMathAfterBlockParsing(source).length, 0);
+  assert.doesNotThrow(() => renderedMath(susceptibility));
+});
+
+for (const [name, open, close] of [
+  ['bracket', String.raw`\[`, String.raw`\]`],
+  ['dollar', '$$', '$$'],
+] as const) {
+  test('the exact susceptibility equation survives HackMD block parsing from ' + name + ' delimiters', () => {
+    const source = open + '\n' + susceptibility + '\n' + close;
+    const result = prepareHackmd(source);
+    assert.notEqual(result.source, source);
+    assert.deepEqual(result.issues, []);
+    assertOneIntactDisplay(result.source, susceptibility);
+  });
+}
+
+test('greater-than and greater-or-equal continuation lines retain their mathematical meaning', () => {
+  for (const continuation of ['>0.', '> 0', '>=0', '> = 0', '  > 0', '> B']) {
+    const tex = 'x\n' + continuation;
+    const source = '$$\n' + tex + '\n$$';
+    assert.equal(tokens(source).filter((token) => token.type === 'blockquote_open').length, 1);
+    const result = prepareHackmd(source);
+    assert.deepEqual(result.issues, [], continuation);
+    assertOneIntactDisplay(result.source, tex);
+  }
+});
+
+test('real prose blockquotes outside a converted inequality are preserved', () => {
+  const before = '> The thermodynamic response is measured at fixed U.\n> Compare the two ensembles.\n\n';
+  const after = '\n\n> This quoted interpretation must remain a blockquote.\n';
+  const source = before + String.raw`\[` + '\n' + susceptibility + '\n' + String.raw`\]` + after;
+  const result = prepareHackmd(source);
+  assert.deepEqual(result.issues, []);
+  assert.ok(result.source.startsWith(before));
+  assert.ok(result.source.endsWith(after));
+  const parsed = tokens(result.source);
+  assert.equal(parsed.filter((token) => token.type === 'blockquote_open').length, 2);
+  assert.equal(parsed.filter((token) => token.type === 'heading_open').length, 0);
+  const equations = displayMathAfterBlockParsing(result.source);
+  assert.equal(equations.length, 1);
+  assert.equal(renderedMath(equations[0]), renderedMath(susceptibility));
+});
+
+test('inequality reflow does not absorb a comparison into a TeX comment or rewrite macro definitions', () => {
+  for (const tex of [
+    'x % Keep the comparison outside this comment.\n>0',
+    'x\n>0 % The next comparison must remain outside this comment.\n>-1',
+    String.raw`\def\bound{0}
+x
+>\bound`,
+  ]) {
+    const source = '$$\n' + tex + '\n$$';
+    const result = prepareHackmd(source);
+    assert.equal(result.source, source);
+    assert.ok(result.issues.length > 0);
+  }
+});
+
+test('the converted susceptibility equation is stable on a second preparation', () => {
+  const source = String.raw`\[` + '\n' + susceptibility + '\n' + String.raw`\]`;
+  const first = prepareHackmd(source);
+  const second = prepareHackmd(first.source);
+  assert.equal(second.source, first.source);
+  assert.deepEqual(second.changes, []);
+  assert.deepEqual(second.issues, []);
+  assertOneIntactDisplay(second.source, susceptibility);
 });

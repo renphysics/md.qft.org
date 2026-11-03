@@ -143,29 +143,42 @@ function makeParser(normalizedSource: string): { parser: MarkdownParser; scans: 
   return { parser, scans };
 }
 
-/** Keep equation row commands and comments intact; only join a bare '=' line. */
-function reflowEquals(body: string, firstLine: number): { body: string; changes: HackmdMessage[]; issue?: HackmdMessage } {
+function mathLineConflict(text: string): 'heading' | 'blockquote' | undefined {
+  if (/^[ \t]*=[ \t]*$/.test(text)) return 'heading';
+  if (/^[ \t]*>/.test(text)) return 'blockquote';
+}
+
+/** Join source lines that Markdown would interpret as structure, keeping TeX intact. */
+function reflowMathLines(body: string, firstLine: number): { body: string; changes: HackmdMessage[]; issue?: HackmdMessage } {
   const lines = sourceLines(body);
-  const equals = lines.some((line) => /^[ \t]*=[ \t]*$/.test(line.text));
-  if (!equals) return { body, changes: [] };
+  if (!lines.some((line) => mathLineConflict(line.text))) return { body, changes: [] };
   if (/\\(?:[gex]?def|let|futurelet|newcommand|renewcommand|providecommand|catcode|verb)\b|\\begin\{(?:verbatim|Verbatim)\}/.test(body)) {
-    return { body, changes: [], issue: { line: firstLine, message: 'A standalone equals sign occurs in math containing a macro definition or verbatim command. Review its line breaks manually for HackMD.' } };
+    return { body, changes: [], issue: { line: firstLine, message: 'Math containing a macro definition or verbatim command needs manual review before its source lines can be joined for HackMD.' } };
   }
   const result: { parts: string[]; ending: string; safe: boolean }[] = [];
   const changes: HackmdMessage[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!/^[ \t]*=[ \t]*$/.test(line.text)) {
+    const conflict = mathLineConflict(line.text);
+    if (!conflict) {
       result.push({ parts: [line.text], ending: line.ending, safe: !!line.text.trim() && !hasComment(line.text) });
       continue;
     }
     const previous = result[result.length - 1];
     if (!previous?.safe) {
-      return { body, changes: [], issue: { line: firstLine + index, message: 'A standalone equals sign may become a Markdown heading in HackMD. Its preceding line is blank or contains a TeX comment, so it was left unchanged for review.' } };
+      const problem = conflict === 'heading'
+        ? 'A standalone equals sign may become a Markdown heading in HackMD.'
+        : 'A math line starting with > may become a Markdown blockquote in HackMD.';
+      return { body, changes: [], issue: { line: firstLine + index, message: `${problem} Its preceding line is blank or contains a TeX comment, so it was left unchanged for review.` } };
     }
-    previous.parts.push(' =');
+    previous.parts.push(conflict === 'heading' ? ' =' : ' ' + line.text);
     previous.ending = line.ending;
-    changes.push({ line: firstLine + index, message: 'Joined a standalone equals sign to the preceding math line so HackMD cannot interpret it as a heading.' });
+    // A joined inequality may end in a comment. Keep its newline so another
+    // continuation cannot be swallowed by that comment on a subsequent pass.
+    previous.safe = !hasComment(line.text);
+    changes.push({ line: firstLine + index, message: conflict === 'heading'
+      ? 'Joined a standalone equals sign to the preceding math line so HackMD cannot interpret it as a heading.'
+      : 'Joined a math line starting with > to the preceding math line so HackMD cannot interpret it as a blockquote.' });
   }
   return { body: result.map((line) => line.parts.join('') + line.ending).join(''), changes };
 }
@@ -235,7 +248,7 @@ export function prepareHackmd(source: string): HackmdPreparation {
       const last = lines[end - 1];
       const closing = token.markup === '\\[' ? '\\]' : '$$';
       if (token.level !== 0 || !opening || !last) {
-        if (token.markup === '\\[' || /(?:^|\n)[ \t]*=[ \t]*(?:\n|$)/.test(token.content)) {
+        if (token.markup === '\\[' || token.content.split('\n').some((line) => mathLineConflict(line))) {
           issue(first + 1, 'Math inside a list, quote, or another Markdown container was preserved. Convert it outside the container or review its indentation manually.');
         }
         continue;
@@ -265,7 +278,7 @@ export function prepareHackmd(source: string): HackmdPreparation {
         issue(first + 1, 'An existing escaped equals-sign workaround was preserved. Review it in HackMD before changing its backslashes.');
         continue;
       }
-      const reflow = reflowEquals(body, first + 1);
+      const reflow = reflowMathLines(body, first + 1);
       if (reflow.issue) { issue(reflow.issue.line, reflow.issue.message); continue; }
       let inner = reflow.body;
       if (token.markup === '\\[') {

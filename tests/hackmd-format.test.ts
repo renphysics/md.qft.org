@@ -24,6 +24,56 @@ test('existing dollar display math gets the same equals repair without extra del
   assert.deepEqual(result.issues, []);
 });
 
+test('greater-than continuations join within display math while retaining their source text', () => {
+  for (const continuation of ['>0.', '> 0', '>=0', '>', '  >0.  ']) {
+    const source = '$$\r\nx\r\n' + continuation + '\r\n$$';
+    const result = prepareHackmd(source);
+    assert.equal(result.source, '$$\r\nx ' + continuation + '\r\n$$');
+    assert.deepEqual(result.issues, []);
+    assert.deepEqual(result.changes.map(({ line }) => line), [3]);
+    assert.match(result.changes[0].message, /blockquote/);
+  }
+});
+
+test('greater-than reflow preserves TeX row commands and escaped percent signs', () => {
+  const body = String.raw`\begin{aligned}
+x &= 1 \\
+> 50\%
+> 0
+\end{aligned}`;
+  const result = prepareHackmd('\\[\n' + body + '\n\\]');
+  assert.equal(result.source, '$$\n' + body.replace('\n> 50', ' > 50').replace('\n> 0', ' > 0') + '\n$$');
+  assert.deepEqual(result.issues, []);
+});
+
+test('inequality comments cannot consume subsequent mathematical lines during reflow', () => {
+  for (const body of [
+    'x % keep this newline\n>0',
+    'x\n>0 % keep this newline\n>y',
+    'x\n>0 % keep this newline\n=\ny',
+    'x\n\n>0',
+    '>0',
+  ]) {
+    const source = '$$\n' + body + '\n$$';
+    const result = prepareHackmd(source);
+    assert.equal(result.source, source);
+    assert.deepEqual(result.changes, []);
+    assert.match(result.issues[0].message, /blank|comment/);
+  }
+  const source = '$$\nx\n>0 % keep this newline\n+y\n$$';
+  const result = prepareHackmd(source);
+  assert.equal(result.source, '$$\nx >0 % keep this newline\n+y\n$$');
+  assert.deepEqual(result.issues, []);
+});
+
+test('dollar equations inside Markdown containers report unsafe greater-than continuations', () => {
+  const source = '> $$\n> x\n> >0\n> $$';
+  const result = prepareHackmd(source);
+  assert.equal(result.source, source);
+  assert.deepEqual(result.changes, []);
+  assert.match(result.issues[0].message, /container|quote/);
+});
+
 test('single-line display math receives source line boundaries and retains indentation', () => {
   assert.equal(prepareHackmd(String.raw`\[x + y\]`).source, '$$\nx + y\n$$');
   assert.equal(prepareHackmd(String.raw`  \[x + y\]`).source, '  $$\nx + y\n$$');
@@ -224,7 +274,7 @@ test('local assets and interactive demos get compatibility notices, while litera
 });
 
 test('additional Markdown block collisions are reported without speculative equation rewriting', () => {
-  for (const body of ['x\n---\ny', 'x\n\ny', 'x\n> y']) {
+  for (const body of ['x\n---\ny', 'x\n\ny']) {
     const source = '$$\n' + body + '\n$$';
     const result = prepareHackmd(source);
     assert.equal(result.source, source);

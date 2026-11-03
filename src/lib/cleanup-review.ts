@@ -25,7 +25,7 @@ export function cleanupOptions(source: string, target: CleanupTarget): CleanupOp
     const result = prepareHackmd(candidate);
     if (result.source !== candidate) options.push({
       id: 'hackmd-format', label: 'Prepare mathematics for HackMD',
-      description: 'Convert math delimiters and repair safe line breaks that Markdown could interpret as headings. Keep TeX commands and equation rows intact.',
+      description: 'Convert math delimiters and repair safe line breaks that Markdown could interpret as headings or blockquotes. Keep TeX commands and equation rows intact.',
     });
   }
   return options;

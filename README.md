@@ -56,6 +56,8 @@ $$
 
 Use **Copy for HackMD** to paste the reviewed result into HackMD, or **Create formatted copy** to keep editing it here. Both actions use the selected changes. If clipboard access is unavailable, select and copy the visible result. The original document remains available. Processing happens in this browser; copying does not publish or upload a HackMD note.
 
+A math line beginning with `>`, such as `>0.`, can start a Markdown blockquote. Within recognized display math, the formatter joins that continuation to the preceding mathematical line when safe. This also works with existing dollar delimiters and preserves the inequality, TeX row breaks, and comments. A comment or macro definition that prevents safe joining is reported for review.
+
 The dialog distinguishes no applicable changes, unchecked suggestions, and processing limits. **No changes found by these checks** describes the formatter's checks, not a guarantee that every feature will render in another editor. Code examples, genuine TeX row breaks, and comment semantics are preserved. Ambiguous delimiters or escaping are kept with a compatibility note instead of being globally unescaped; review these notes before copying.
 
 Check the destination preview, especially when using custom macros or mathematical extensions. HackMD's MathJax configuration can differ from this editor's KaTeX renderer. Copying Markdown does not upload browser-local images or transfer custom interactive demo playback: upload the images or use accessible URLs, and share an HTML export when you need a working demonstration.
