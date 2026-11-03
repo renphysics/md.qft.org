@@ -1,5 +1,6 @@
 import { applyCleanup, DOCUMENT_TOOLS_LIMIT, getCleanupSuggestions, type CleanupSuggestion } from './document-tools';
 import { prepareHackmd } from './hackmd-format';
+import { cleanLinkTracking } from './link-tracking';
 
 export type CleanupTarget = 'markdown' | 'hackmd';
 export interface CleanupOption { id: string; label: string; description: string }
@@ -27,6 +28,10 @@ export function cleanupOptions(source: string, target: CleanupTarget): CleanupOp
       id: 'hackmd-format', label: 'Prepare mathematics for HackMD',
       description: 'Convert math delimiters and repair safe line breaks that Markdown could interpret as headings or blockquotes. Keep TeX commands and equation rows intact.',
     });
+    if (cleanLinkTracking(candidate).source !== candidate) options.push({
+      id: 'link-tracking', label: 'Remove link tracking',
+      description: 'Remove UTM tags and common tracking IDs from links. Keep other URL parameters, anchors, and link text.',
+    });
   }
   return options;
 }
@@ -47,8 +52,14 @@ export function reviewCleanup(source: string, target: CleanupTarget, selectedIds
     review.source = result;
   }
   if (target === 'hackmd') {
+    const links = cleanLinkTracking(review.source);
+    review.issues.push(...links.issues);
+    if (selected.has('link-tracking')) {
+      review.source = links.source;
+      review.changes.push(...links.changes);
+    }
     const result = prepareHackmd(review.source);
-    review.issues = result.issues;
+    review.issues.push(...result.issues);
     if (selected.has('hackmd-format')) {
       review.source = result.source;
       review.changes.push(...result.changes);

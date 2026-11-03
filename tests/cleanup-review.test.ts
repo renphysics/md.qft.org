@@ -31,6 +31,45 @@ test('General Markdown leaves mathematical source intact while HackMD provides a
   assert.doesNotMatch(review.source, /^=\s*$/m);
 });
 
+test('HackMD review offers tracking removal for the exact AI citation and respects the selection', () => {
+  const source = '[arxiv.org](https://arxiv.org/html/0808.2691v3?utm_source=chatgpt.com)';
+  const clean = '[arxiv.org](https://arxiv.org/html/0808.2691v3)';
+  const ids = cleanupOptions(source, 'hackmd').map(({ id }) => id);
+  assert.deepEqual(ids, ['link-tracking']);
+  const review = reviewCleanup(source, 'hackmd', ids);
+  assert.equal(review.source, clean);
+  assert.equal(review.changed, true);
+  assert.deepEqual(review.issues, []);
+  assert.match(review.changes[0].message, /utm_source/);
+  assert.equal(reviewCleanup(source, 'hackmd', []).source, source);
+  assert.equal(reviewCleanup(source, 'markdown', ids).source, source);
+  assert.deepEqual(cleanupOptions(source, 'markdown'), []);
+});
+
+test('link tracking and math preparation can be selected independently in the same review', () => {
+  const link = '[Paper](https://arxiv.org/abs/0808.2691?utm_source=chatgpt.com&id=2#section)';
+  const clean = '[Paper](https://arxiv.org/abs/0808.2691?id=2#section)';
+  const source = link + '\n\n' + metric;
+  const ids = cleanupOptions(source, 'hackmd').map(({ id }) => id);
+  assert.deepEqual(ids, ['hackmd-format', 'link-tracking']);
+  assert.equal(reviewCleanup(source, 'hackmd', ['link-tracking']).source, clean + '\n\n' + metric);
+  assert.ok(reviewCleanup(source, 'hackmd', ['hackmd-format']).source.startsWith(link));
+  const review = reviewCleanup(source, 'hackmd', ids);
+  assert.ok(review.source.startsWith(clean));
+  assert.doesNotMatch(review.source, /^=\s*$/m);
+  assert.deepEqual(review.issues, []);
+});
+
+test('tracking cleanup inside an AI Markdown wrapper requires the selected unwrap operation', () => {
+  const link = '[Paper](https://arxiv.org/abs/0808.2691?utm_source=chatgpt.com)';
+  const source = '```markdown\n' + link + '\n```';
+  const ids = cleanupOptions(source, 'hackmd').map(({ id }) => id);
+  assert.ok(ids.includes('unwrap-fence'));
+  assert.ok(ids.includes('link-tracking'));
+  assert.equal(reviewCleanup(source, 'hackmd', ids).source, '[Paper](https://arxiv.org/abs/0808.2691)\n');
+  assert.equal(reviewCleanup(source, 'hackmd', ['link-tracking']).source, source);
+});
+
 test('math inside an enclosing AI Markdown fence is converted after the chosen unwrap', () => {
   const original = '```markdown\n' + metric + '\n```';
   const ids = cleanupOptions(original, 'hackmd').map(({ id }) => id);
