@@ -241,7 +241,17 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   if (page) await page.screenshot({ path: resolve(artifacts, 'presentation-failure.png'), fullPage: true }).catch(() => {});
-  const result = { failed: error.stack || String(error), passed: checks, pageErrors, consoleErrors, failedRequests, externalRequests, serverOutput };
+  const frames = page ? await Promise.all(page.frames().map(async frame => {
+    try {
+      return await frame.evaluate(() => ({
+        url: location.href,
+        app: document.getElementById('app')?.outerHTML.slice(0, 40_000),
+        visibleText: document.body?.innerText.slice(0, 4_000),
+        scripts: [...document.scripts].map(script => ({ type: script.type, src: script.getAttribute('src'), length: script.textContent?.length })),
+      }));
+    } catch { return { url: frame.url(), detached: true }; }
+  })) : [];
+  const result = { failed: error.stack || String(error), passed: checks, pageErrors, consoleErrors, failedRequests, externalRequests, frames, serverOutput };
   await writeFile(resolve(artifacts, 'presentation-browser-results.json'), JSON.stringify(result, null, 2));
   console.error(JSON.stringify(result, null, 2));
   process.exitCode = 1;
