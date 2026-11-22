@@ -76,6 +76,22 @@ async function setDestructiveInterference(frame) {
   return slider;
 }
 
+async function capturePresentation(targetPage, frame, name) {
+  // Let Vue finish its natural slide fade and the nested frames publish their
+  // resize paints. Forcing animations to finish during a full-page capture can
+  // capture an empty compositor surface even after a successful interaction.
+  await until(() => frame.evaluate(() => document.getAnimations().every(animation =>
+    animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity)), 'slide transitions to settle', 5_000);
+  const child = await frame.frameElement();
+  const shell = await frame.parentFrame().frameElement();
+  for (const element of [child, shell, frame.locator('.slidev-page-3 .slidev-layout')]) {
+    const bounds = await element.boundingBox();
+    assert.ok(bounds && bounds.width > 250 && bounds.height > 100, 'The isolated slide and both frames must have usable painted dimensions');
+  }
+  await targetPage.waitForTimeout(350);
+  await targetPage.screenshot({ path: resolve(artifacts, name) });
+}
+
 function observe(targetPage) {
   observedPages.push(targetPage);
   targetPage.on('pageerror', error => pageErrors.push({ page: targetPage.url(), message: error.message }));
@@ -143,7 +159,7 @@ try {
     await until(async () => Number(await slider.inputValue()) > 181, 'the phase animation to advance');
     await frame.getByRole('button', { name: 'Pause animation', exact: true }).click();
     await setDestructiveInterference(frame);
-    await page.screenshot({ path: resolve(artifacts, 'presentation-desktop.png'), fullPage: true, animations: 'disabled' });
+    await capturePresentation(page, frame, 'presentation-desktop.png');
     assert.equal(externalRequests.length, 0, 'Playback must not request external resources');
   });
 
@@ -199,7 +215,7 @@ try {
       return bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391;
     }, 'the responsive dialog layout');
     await frame.evaluate(() => document.fonts.ready);
-    await page.screenshot({ path: resolve(artifacts, 'presentation-mobile.png'), fullPage: true, animations: 'disabled' });
+    await capturePresentation(page, frame, 'presentation-mobile.png');
     const bounds = await dialog.boundingBox();
     assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391, 'The mobile dialog must fit the viewport');
     await page.locator('[data-pres-close]').click();
@@ -231,7 +247,7 @@ try {
     const offlineFrame = await presentationFrame(offlinePage);
     await goToDemo(offlineFrame);
     await setDestructiveInterference(offlineFrame);
-    await offlinePage.screenshot({ path: resolve(artifacts, 'presentation-offline.png'), fullPage: true, animations: 'disabled' });
+    await capturePresentation(offlinePage, offlineFrame, 'presentation-offline.png');
     await offlineContext.close();
   });
 
@@ -243,7 +259,7 @@ try {
   await writeFile(resolve(artifacts, 'presentation-browser-results.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
-  if (page) await page.screenshot({ path: resolve(artifacts, 'presentation-failure.png'), fullPage: true, animations: 'disabled' }).catch(() => {});
+  if (page) await page.screenshot({ path: resolve(artifacts, 'presentation-failure.png') }).catch(() => {});
   const frames = await Promise.all(observedPages.filter(targetPage => !targetPage.isClosed()).flatMap(targetPage => targetPage.frames()).map(async frame => {
     try {
       return await frame.evaluate(() => ({
