@@ -24,6 +24,7 @@ function library(dependencies: { inspect?: (file: File) => Promise<unknown>; sav
     if (!controls.has(selector)) controls.set(selector, {
       textContent: '', hidden: false, listeners: new Map<string, (event?: unknown) => void>(),
       classList: { add() {}, remove() {}, contains: () => false },
+      style: { setProperty() {} },
       addEventListener(name: string, listener: (event?: unknown) => void) { this.listeners.set(name, listener); },
       replaceChildren() {}, close() { calls.closed++; },
       requestFullscreen() { calls.fullscreen++; return Promise.resolve(); },

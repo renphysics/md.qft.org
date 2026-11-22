@@ -70,6 +70,8 @@ These tools support compilation, checking, testing, and deployment. They are not
 | `@types/markdown-it` | 14.2.0 | MIT |
 | `astro` | 7.4.4 | MIT |
 | `fake-indexeddb` | 6.2.6 | Apache-2.0 |
+| `esbuild` | 0.28.2 | MIT |
+| `playwright` | 1.62.1 | Apache-2.0 |
 | `tsx` | 4.23.15 | MIT |
 | `typescript` | 6.0.3 | Apache-2.0 |
 

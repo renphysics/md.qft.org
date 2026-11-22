@@ -5,6 +5,14 @@
  * Nothing is shared with md.qft.org, other decks, tabs, or the network.
  */
 (() => {
+  // The host owns presentation/fullscreen mode. Slidev checks API presence,
+  // rather than permission, and would otherwise offer a blocked control here.
+  // Keep its normal control when opening a build with fullscreen permission.
+  if (document.fullscreenEnabled === false) {
+    const style = document.createElement('style');
+    style.textContent = '.slidev-icon-btn[title="Enter fullscreen"],.slidev-icon-btn[title="Close fullscreen"]{display:none!important}';
+    document.head.append(style);
+  }
   const memoryStorage = () => {
     const values = new Map();
     return {

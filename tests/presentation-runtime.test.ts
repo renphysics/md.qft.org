@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { build } from 'esbuild';
 import ts from 'typescript';
 import { exportPresentationHtml, preparePresentationDocument, presentationRunnerDocument, presentationRuntimeSource } from '../src/lib/presentation-runtime';
 
@@ -9,7 +11,7 @@ const runnerHtml = readFileSync(new URL('../public/presentation-sandbox.html', i
 const runnerScript = runnerHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 assert.ok(runnerScript);
 
-function runner(origin: string, topLevel = false) {
+function runner(origin: string, topLevel = false, script = runnerScript!) {
   const messages: any[] = [];
   const parent = { postMessage(value: unknown) { messages.push(value); } };
   const packages: Blob[] = [];
@@ -20,7 +22,7 @@ function runner(origin: string, topLevel = false) {
   let violation: ((event: any) => void) | undefined;
   const window = { origin, parent: parent as object, addEventListener(name: string, listener: any) { if (name === 'message') receive = listener; if (name === 'pagehide') dispose = listener; } };
   if (topLevel) window.parent = window;
-  vm.runInNewContext(runnerScript!, {
+  vm.runInNewContext(script, {
     window, parent, Blob,
     URL: { createObjectURL(value: Blob) { packages.push(value); return `blob:null/package-${packages.length}`; }, revokeObjectURL(value: string) { revoked.push(value); } },
     document: {
@@ -39,7 +41,9 @@ function runner(origin: string, topLevel = false) {
 function compiledFunction(name: string, dependencies: Record<string, unknown>): any {
   const path = new URL('../src/lib/presentation-runtime.ts', import.meta.url);
   const source = ts.createSourceFile('presentation-runtime.ts', readFileSync(path, 'utf8'), ts.ScriptTarget.ES2022, true);
-  const nodes = source.statements.filter((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  const factory = source.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'presentationRuntimeFactory');
+  assert.ok(factory?.body);
+  const nodes = factory.body.statements.filter((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.equal(nodes.length, 1);
   const printed = ts.createPrinter().printFile(ts.factory.updateSourceFile(source, nodes));
   const javascript = ts.transpileModule(`${printed}\nexports.result=${name};`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
@@ -281,4 +285,102 @@ test('portable exports keep hostile source inert in the parent and serialize val
   assert.equal((context as any).__injected, undefined);
   assert.equal((context as any).__escape, undefined);
   assert.equal((context as any).__titleAttack, undefined);
+});
+
+test('a production-minified export starts and completes its isolated handshake without the original bundle', async () => {
+  const compiled = await build({
+    entryPoints: [fileURLToPath(new URL('../src/lib/presentation-runtime.ts', import.meta.url))],
+    bundle: true,
+    write: false,
+    minify: true,
+    platform: 'browser',
+    format: 'iife',
+    globalName: 'BundledPresentation',
+    target: 'es2022',
+  });
+  // Generate the actual downloadable file from renamed production functions,
+  // then open its script in a fresh realm with none of the bundle's bindings.
+  const exported = vm.runInNewContext(`${compiled.outputFiles[0].text}\nBundledPresentation.exportPresentationHtml('<p>Portable lesson</p>', 'Portable lesson');`, { crypto }) as string;
+  const outerScript = exported.match(/<script nonce="[a-f0-9]{36}">([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(outerScript);
+  const nodes = new Map<string, any>();
+  const frames: any[] = [];
+  const listeners = new Map<string, (...args: any[]) => void>();
+  const timers = new Map<number, () => void>();
+  let timerId = 0;
+  const getElementById = (id: string) => {
+    if (!nodes.has(id)) nodes.set(id, {
+      listeners: new Map<string, (...args: any[]) => void>(),
+      children: [] as any[],
+      addEventListener(name: string, listener: (...args: any[]) => void) { this.listeners.set(name, listener); },
+      replaceChildren(...children: any[]) { this.children = children; },
+    });
+    return nodes.get(id);
+  };
+  vm.runInNewContext(outerScript, {
+    crypto, AbortController,
+    document: {
+      getElementById,
+      createElement(tag: string) {
+        // The fixture has no resource or root attributes; its inert template
+        // preserves that known fragment while exercising the real preparer.
+        if (tag === 'template') return { innerHTML: '', content: { querySelector: () => null, querySelectorAll: () => [] } };
+        assert.equal(tag, 'iframe');
+        const frame = {
+          attrs: {} as Record<string, string>, style: {}, contentWindow: {} as any,
+          sent: [] as any[], load: () => {}, removed: false,
+          setAttribute(name: string, value: string) { this.attrs[name] = value; },
+          addEventListener(name: string, listener: () => void) { if (name === 'load') this.load = listener; },
+          focus() {}, remove() { this.removed = true; },
+        };
+        frame.contentWindow.postMessage = (message: any) => frame.sent.push(message);
+        frames.push(frame);
+        return frame;
+      },
+    },
+    window: {
+      addEventListener(name: string, listener: (...args: any[]) => void) { listeners.set(name, listener); },
+      setTimeout(listener: () => void) { timers.set(++timerId, listener); return timerId; },
+      clearTimeout(id: number) { timers.delete(id); },
+    },
+  });
+  assert.equal(frames.length, 0);
+  getElementById('start').listeners.get('click')();
+  assert.equal(getElementById('status').textContent, 'Opening presentation…');
+  assert.equal(frames.length, 1);
+  const outer = frames[0];
+  assert.equal(outer.attrs.sandbox, 'allow-scripts');
+  outer.load();
+  assert.equal(outer.sent.length, 1);
+  assert.match(outer.sent[0].html, /<p>Portable lesson<\/p>/);
+  assert.match(outer.srcdoc, /frame-src blob:/);
+
+  // The runner and inner bootstrap are serialized again inside the exported
+  // factory. Execute each in its own realm and relay a real ready handshake.
+  const shellScript = outer.srcdoc.match(/<script nonce="[a-f0-9]{36}">([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(shellScript);
+  const shell = runner('null', false, shellScript);
+  shell.send(shell.parent, outer.sent[0]);
+  assert.equal(shell.packages.length, 1);
+  const prepared = await shell.packages[0].text();
+  const bootstrap = prepared.match(/<script nonce="[a-f0-9]{36}">([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(bootstrap);
+  const childListeners = new Map<string, (...args: any[]) => void>();
+  vm.runInNewContext(bootstrap, {
+    parent: { postMessage(message: unknown) { shell.send(shell.frames[0].contentWindow, message); } },
+    window: {
+      localStorage: { length: 0 }, sessionStorage: { length: 0 },
+      addEventListener(name: string, listener: (...args: any[]) => void) { childListeners.set(name, listener); },
+    },
+    document: { addEventListener() {} },
+    requestAnimationFrame(callback: () => void) { callback(); },
+  });
+  childListeners.get('load')!();
+  assert.equal(shell.messages.length, 1);
+  listeners.get('message')!({ source: outer.contentWindow, data: shell.messages[0] });
+  assert.equal(getElementById('status').textContent, 'Live · use the slide controls or arrow keys');
+  assert.equal(timers.size, 0);
+  getElementById('stop').listeners.get('click')();
+  assert.equal(outer.removed, true);
+  assert.equal(getElementById('status').textContent, 'Ready to present · works offline');
 });

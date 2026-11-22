@@ -89,7 +89,9 @@ qft-presentation-library { display: contents; }
   .presentation-dialog .presentation-view-switch button { padding: 7px; gap: 4px; font-size: 10px; }
   .presentation-dialog .presentation-deck-actions { gap: 4px; }
   .presentation-dialog .presentation-deck-actions .button-secondary, .presentation-dialog .presentation-deck-actions .button-primary { padding: 6px; font-size: 10px; gap: 4px; }
-  .presentation-dialog .presentation-preview { padding: 8px 8px 0; }
+  .presentation-dialog .presentation-preview { padding: 8px 8px 0; justify-content: center; }
+  .presentation-dialog .presentation-stage { flex: 0 0 auto; min-height: 0; aspect-ratio: var(--presentation-aspect, 16 / 9); }
+  .presentation-dialog .presentation-stage:has([data-pres-start]:not([hidden])) { min-height: 300px; }
   .presentation-dialog .presentation-keyboard-hint { display: none; }
   .presentation-dialog .presentation-dialog-footer { padding: 9px 12px; font-size: 9px; }
   .presentation-dialog .presentation-dialog-footer a { white-space: nowrap; }

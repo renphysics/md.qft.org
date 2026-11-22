@@ -18,6 +18,7 @@ const pageErrors = [];
 const consoleErrors = [];
 const failedRequests = [];
 const externalRequests = [];
+const observedPages = [];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 async function until(check, label, timeout = 30_000) {
@@ -76,6 +77,7 @@ async function setDestructiveInterference(frame) {
 }
 
 function observe(targetPage) {
+  observedPages.push(targetPage);
   targetPage.on('pageerror', error => pageErrors.push({ page: targetPage.url(), message: error.message }));
   targetPage.on('console', message => {
     if (message.type() === 'error') consoleErrors.push({ page: targetPage.url(), message: message.text() });
@@ -134,13 +136,14 @@ try {
     await page.locator('[data-pres-start-button]').click();
     frame = await presentationFrame(page);
     await until(async () => (await page.locator('[data-pres-player-status]').textContent()) === 'Playing locally', 'playback readiness');
+    assert.equal(await frame.getByRole('button', { name: 'Enter fullscreen', exact: true }).count(), 0, 'The isolated deck must not offer an unavailable inner fullscreen control');
     await goToDemo(frame);
     const slider = await setDestructiveInterference(frame);
     await frame.getByRole('button', { name: 'Animate phase', exact: true }).click();
     await until(async () => Number(await slider.inputValue()) > 181, 'the phase animation to advance');
     await frame.getByRole('button', { name: 'Pause animation', exact: true }).click();
     await setDestructiveInterference(frame);
-    await page.screenshot({ path: resolve(artifacts, 'presentation-desktop.png'), fullPage: true });
+    await page.screenshot({ path: resolve(artifacts, 'presentation-desktop.png'), fullPage: true, animations: 'disabled' });
     assert.equal(externalRequests.length, 0, 'Playback must not request external resources');
   });
 
@@ -196,7 +199,7 @@ try {
       return bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391;
     }, 'the responsive dialog layout');
     await frame.evaluate(() => document.fonts.ready);
-    await page.screenshot({ path: resolve(artifacts, 'presentation-mobile.png'), fullPage: true });
+    await page.screenshot({ path: resolve(artifacts, 'presentation-mobile.png'), fullPage: true, animations: 'disabled' });
     const bounds = await dialog.boundingBox();
     assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391, 'The mobile dialog must fit the viewport');
     await page.locator('[data-pres-close]').click();
@@ -228,7 +231,7 @@ try {
     const offlineFrame = await presentationFrame(offlinePage);
     await goToDemo(offlineFrame);
     await setDestructiveInterference(offlineFrame);
-    await offlinePage.screenshot({ path: resolve(artifacts, 'presentation-offline.png'), fullPage: true });
+    await offlinePage.screenshot({ path: resolve(artifacts, 'presentation-offline.png'), fullPage: true, animations: 'disabled' });
     await offlineContext.close();
   });
 
@@ -240,8 +243,8 @@ try {
   await writeFile(resolve(artifacts, 'presentation-browser-results.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
-  if (page) await page.screenshot({ path: resolve(artifacts, 'presentation-failure.png'), fullPage: true }).catch(() => {});
-  const frames = page ? await Promise.all(page.frames().map(async frame => {
+  if (page) await page.screenshot({ path: resolve(artifacts, 'presentation-failure.png'), fullPage: true, animations: 'disabled' }).catch(() => {});
+  const frames = await Promise.all(observedPages.filter(targetPage => !targetPage.isClosed()).flatMap(targetPage => targetPage.frames()).map(async frame => {
     try {
       return await frame.evaluate(() => ({
         url: location.href,
@@ -250,7 +253,7 @@ try {
         scripts: [...document.scripts].map(script => ({ type: script.type, src: script.getAttribute('src'), length: script.textContent?.length })),
       }));
     } catch { return { url: frame.url(), detached: true }; }
-  })) : [];
+  }));
   const result = { failed: error.stack || String(error), passed: checks, pageErrors, consoleErrors, failedRequests, externalRequests, frames, serverOutput };
   await writeFile(resolve(artifacts, 'presentation-browser-results.json'), JSON.stringify(result, null, 2));
   console.error(JSON.stringify(result, null, 2));

@@ -265,6 +265,7 @@ export class PresentationLibrary extends HTMLElement {
     this.q('[data-pres-title]').textContent = pkg.manifest.title;
     this.q('[data-pres-subtitle]').textContent = `Slidev · ${pkg.files.length} files · ${bytesLabel(pkg.archive.size)}`;
     this.q('[data-pres-start-title]').textContent = pkg.manifest.title;
+    this.q('[data-pres-stage]').style.setProperty('--presentation-aspect', pkg.manifest.aspectRatio === '4:3' ? '4 / 3' : '16 / 9');
     this.q('[data-pres-start-detail]').textContent = pkg.manifest.source ? 'Editable source included in the ZIP' : 'Built presentation · source not included';
     this.q('[data-pres-storage]').textContent = saved ? 'Saved in this browser. Keep a downloaded ZIP as your backup.' : 'Local package. Your original ZIP is unchanged.';
     this.q('[data-pres-library]').hidden = true;
