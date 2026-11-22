@@ -122,6 +122,24 @@ export async function packageSlidev({ dist, source, out, title, sourceEntry = 's
           if (!args.path.startsWith('.') && !args.path.startsWith('/')) throw new Error(`Unbundled module ${args.path}. Complete the Slidev build before packaging.`);
           return { path: await assetPath(args.path, args.importer || resolve(distRoot, 'index.html')) };
         });
+        plugin.onLoad({ filter: /\.(?:mjs|cjs|js)$/ }, async args => {
+          let code = await readFile(args.path, 'utf8');
+          const imports = parseImports(code)[0].filter(item => item.d >= 0);
+          // esbuild turns import() into ordinary namespace objects when
+          // combining chunks. Preserve native module identity: Vue's async
+          // component loader relies on this tag to unwrap the default export.
+          // Without it the route works but every Slidev slide is renderless.
+          // Insert around lexer ranges so backtick paths and nested expressions
+          // work too. Any imports left after tree shaking are rejected below.
+          const insertions = imports.flatMap(item => [
+            { index: item.ss, text: '(' },
+            { index: item.se, text: ').then(module=>{if(module[Symbol.toStringTag]!=="Module")Object.defineProperty(module,Symbol.toStringTag,{value:"Module"});return module})' },
+          ]).sort((a, b) => b.index - a.index);
+          for (const insertion of insertions) {
+            code = code.slice(0, insertion.index) + insertion.text + code.slice(insertion.index);
+          }
+          return { contents: code, loader: 'js', resolveDir: dirname(args.path) };
+        });
       } }],
     });
     const javascript = result.outputFiles.filter(file => file.path.endsWith('.js'));

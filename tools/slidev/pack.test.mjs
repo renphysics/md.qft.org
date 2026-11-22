@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { unzipSync, strFromU8 } from 'fflate';
 import { parse as parseHtml } from 'parse5';
 import { init, parse as parseImports } from 'es-module-lexer';
@@ -49,6 +50,29 @@ test('bundles module and lazy-import graphs, embeds CSS assets, and preserves so
     assert.equal(parseImports(script.childNodes.map(child => child.value ?? '').join(''))[0].length, 0);
   }
   assert.match(html, /An actual bundled module/);
+});
+
+test('bundled dynamic imports retain module identity for Vue async slide components', async t => {
+  const input = await fixture(t);
+  await writeFile(resolve(input.dist, 'assets/main.js'), `
+    globalThis.ready = Promise.all([import('./lazy.js'), import(\`./lazy.js\`)]).then(([first, second]) => {
+      globalThis.first = first;
+      globalThis.second = second;
+      globalThis.component = first && (first.__esModule || first[Symbol.toStringTag] === 'Module') ? first.default : first;
+    });
+  `);
+  await writeFile(resolve(input.dist, 'assets/lazy.js'), 'export default {name:"ActualSlide",render:()=>"Slide content"};');
+  await packageSlidev(input);
+  const files = unzipSync(new Uint8Array(await readFile(input.out)));
+  const scripts = descendants(parseHtml(strFromU8(files['presentation.html']))).filter(node => node.tagName === 'script');
+  const code = scripts.at(-1).childNodes.map(child => child.value ?? '').join('');
+  const context = {};
+  runInNewContext(code, context);
+  await context.ready;
+  assert.equal(Object.prototype.toString.call(context.first), '[object Module]');
+  assert.equal(context.first, context.second, 'Repeated imports must preserve the module namespace identity');
+  assert.equal(context.component.name, 'ActualSlide');
+  assert.equal(context.component.render(), 'Slide content');
 });
 
 test('remote stylesheet and missing assets give actionable failures', async t => {
