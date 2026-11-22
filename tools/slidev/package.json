@@ -1,0 +1,27 @@
+{
+  "name": "qft-slidev-portable-starter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "test": "node --test pack.test.mjs",
+    "dev": "slidev slides.md",
+    "build": "slidev build slides.md --out .build",
+    "pack": "node pack.mjs --dist .build --source . --out lesson.zip --title 'Quantum interference — Slidev'",
+    "package": "npm run build && npm run pack"
+  },
+  "dependencies": {
+    "@slidev/cli": "53.1.0",
+    "@slidev/theme-default": "0.25.0"
+  },
+  "devDependencies": {
+    "es-module-lexer": "1.7.0",
+    "esbuild": "0.27.2",
+    "fflate": "0.8.3",
+    "parse5": "8.0.0"
+  }
+}

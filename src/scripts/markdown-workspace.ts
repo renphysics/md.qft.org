@@ -18,6 +18,7 @@ import { DEMO_PRESETS } from '../lib/demo-presets';
 import { demoSettingFields, normalizeDemoSettings, type DemoSettings } from '../lib/demo-settings';
 import { createLessonProject, cloneLessonProject, validateLessonProject, projectFilePath, prepareProjectImages } from '../lib/lesson-project';
 import { generateLessonPrompt, createStarterLesson, type LessonAIInput } from '../lib/ai-lesson';
+import { generateSlidevPrompt } from '../lib/slidev-prompt';
 import { checkLesson, formatLessonReport } from '../lib/lesson-check';
 import type { LessonFileChange } from '../lib/lesson-revision';
 import type { WorkspaceBundle } from '../lib/document-bundle';
@@ -38,6 +39,7 @@ import { EXAMPLES } from '../lib/examples';
 import { siteConfig } from '../config/site';
 import { scopedStorageKey } from '../lib/storage-scope';
 import { withBase } from '../lib/site-path';
+import type { PresentationLibrary } from './presentation-library';
 
 type ViewMode = 'editor' | 'split' | 'preview';
 interface Preferences { fontSize: number; wrap: boolean; sync: boolean; view: ViewMode; share: number }
@@ -1369,6 +1371,9 @@ class MarkdownWorkspace extends HTMLElement {
 
   private async openFile(file: File): Promise<void> {
     if (/\.zip$/i.test(file.name)) {
+      await this.flush();
+      await customElements.whenDefined('qft-presentation-library');
+      if (await this.q<PresentationLibrary>('qft-presentation-library').tryOpenFile(file)) return;
       const { importWorkspaceBundle } = await import('../lib/document-bundle');
       const imported = await importWorkspaceBundle(file);
       await this.flush();
@@ -1379,7 +1384,7 @@ class MarkdownWorkspace extends HTMLElement {
       this.notify(imported.project ? 'Lesson opened. Check lesson helps you spot missing images, equations, or demo dependencies.' : 'Opened the Markdown and its images as a new document.');
       return;
     }
-    if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose a Markdown (.md), plain text (.txt), or Markdown + images (.zip) file.');
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose Markdown (.md), plain text (.txt), a lesson ZIP, or a prepared Slidev presentation ZIP.');
     if (file.size > MAX_SOURCE_LENGTH * 4) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
     const source = await file.text();
     if (source.length > MAX_SOURCE_LENGTH) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
@@ -1404,7 +1409,8 @@ class MarkdownWorkspace extends HTMLElement {
   }
 
   private async copyAIInstructions(): Promise<void> {
-    const prompt = generateLessonPrompt(this.aiInput());
+    const prompt = this.q<HTMLSelectElement>('[data-ai-format]').value === 'slidev'
+      ? generateSlidevPrompt(this.aiInput()) : generateLessonPrompt(this.aiInput());
     const field = this.q<HTMLTextAreaElement>('[data-ai-prompt]');
     const details = this.q<HTMLDetailsElement>('[data-ai-prompt-details]');
     field.value = prompt;
@@ -1419,6 +1425,20 @@ class MarkdownWorkspace extends HTMLElement {
   }
 
   private async starterLesson(download: boolean): Promise<void> {
+    if (this.q<HTMLSelectElement>('[data-ai-format]').value === 'slidev') {
+      if (download) {
+        const link = document.createElement('a');
+        link.href = withBase('slidev/interactive-physics.zip');
+        link.download = 'slidev-starter.zip';
+        document.body.append(link); link.click(); link.remove();
+        this.q('[data-ai-status]').textContent = 'Slidev starter download started. Give the ZIP and instructions to your coding assistant.';
+      } else {
+        this.q<HTMLDialogElement>('[data-ai-dialog]').close();
+        await customElements.whenDefined('qft-presentation-library');
+        await this.q<PresentationLibrary>('qft-presentation-library').openExample();
+      }
+      return;
+    }
     const input = this.aiInput();
     if (!input.topic) input.topic = 'My next lesson';
     const starter = createStarterLesson(input);
@@ -1692,6 +1712,13 @@ class MarkdownWorkspace extends HTMLElement {
     click('[data-ai-starter]', () => this.lessonAction('[data-ai-status]', () => this.starterLesson(true)));
     click('[data-ai-example]', () => this.lessonAction('[data-ai-status]', () => this.starterLesson(false)));
     click('[data-ai-open]', () => { this.q<HTMLDialogElement>('[data-ai-dialog]').close(); this.q<HTMLInputElement>('[data-file-input]').click(); });
+    this.q<HTMLSelectElement>('[data-ai-format]').addEventListener('change', () => {
+      const slidev = this.q<HTMLSelectElement>('[data-ai-format]').value === 'slidev';
+      this.q('[data-ai-format-help]').textContent = slidev ? 'Your coding assistant builds the Slidev package. Open it here to present; revise its source and rebuild for changes.' : 'Markdown lessons can be revised directly in the editor.';
+      this.q('[data-ai-workflow-help]').textContent = slidev ? 'Ask for the built Slidev ZIP with source included. Open it here, test each interaction, and present.' : 'Ask for a lesson ZIP. Open it here, check it, and make your final edits.';
+      this.q<HTMLDetailsElement>('[data-ai-prompt-details]').hidden = true;
+      this.q('[data-ai-status]').textContent = 'Copy the instructions and download the matching starter ZIP.';
+    }, { signal });
     click('[data-lesson-check]', () => this.openLessonCheck());
     click('[data-lesson-check-close]', () => this.q<HTMLDialogElement>('[data-lesson-check-dialog]').close());
     click('[data-lesson-check-copy]', () => this.runAction(async () => {
@@ -1878,6 +1905,21 @@ class MarkdownWorkspace extends HTMLElement {
       dialog.addEventListener('close', () => dialog.querySelector('[data-dialog-notice]')?.remove(), { signal });
     }
     click('[data-new]', () => this.runAction(() => this.newDocument()));
+    click('[data-open-presentations]', () => this.runAction(async () => {
+      await this.flush();
+      await customElements.whenDefined('qft-presentation-library');
+      await this.q<PresentationLibrary>('qft-presentation-library').openLibrary();
+    }));
+    this.addEventListener('presentation-open', () => {
+      this.closeExport();
+      this.closeSidebar();
+      this.slidePreview?.exitPresentation();
+      this.slidePreview?.resetDemos();
+      this.documentDemos?.destroy();
+      this.documentDemos = undefined;
+      void this.flush();
+    }, { signal });
+    this.addEventListener('presentation-close', () => this.render(), { signal });
     click('[data-open]', () => this.q<HTMLInputElement>('[data-file-input]').click());
     this.q<HTMLInputElement>('[data-file-input]').addEventListener('change', (event) => {
       const input = event.target as HTMLInputElement;

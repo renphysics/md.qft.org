@@ -12,6 +12,12 @@ import { withBase } from '../lib/site-path';
     <h1>Markdown examples to make your own.</h1>
     <p class="page-lead">Teach with interactive physics demonstrations, explore a quantum phase presentation, or start from study notes and mathematical derivations. Open an example as a new local draft, make it your own, and try Present, Save PDF, or a portable HTML download.</p>
     <div class="example-grid">
+      <article class="example-card">
+        <span class="example-number">SLIDEV</span>
+        <h2>Quantum interference</h2>
+        <p>A compiled Slidev lesson with equations and a live Vue demonstration. Adjust relative phase, predict the intensity, and explore constructive and destructive interference. Source is included for revision.</p>
+        <a class="button-secondary" href={withBase('?presentation=slidev-example')}>Open Slidev presentation <Icon name="arrow" size={16} /></a>
+      </article>
       {EXAMPLES.map((example, index) => (
         <article class="example-card">
           <span class="example-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>

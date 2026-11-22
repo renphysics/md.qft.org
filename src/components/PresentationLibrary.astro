@@ -1,0 +1,62 @@
+---
+import Icon from './Icon.astro';
+import { withBase } from '../lib/site-path';
+import '../styles/presentations.css';
+---
+<qft-presentation-library data-sandbox-url={withBase('presentation-sandbox.html')} data-example-url={withBase('slidev/interactive-physics.zip')}>
+  <dialog class="app-dialog presentation-dialog" data-pres-dialog aria-labelledby="presentation-dialog-title">
+    <header class="presentation-topbar">
+      <button class="icon-button" data-pres-back aria-label="All Slidev presentations" title="All presentations" hidden><Icon name="previous" size={18} /></button>
+      <span class="presentation-mark" aria-hidden="true"><Icon name="play" size={18} /></span>
+      <div class="presentation-heading"><h2 id="presentation-dialog-title" data-pres-title>Slidev presentations</h2><p data-pres-subtitle>Interactive lessons. Ready for the classroom.</p></div>
+      <button class="icon-button" data-pres-close aria-label="Close presentations" title="Close"><Icon name="close" size={19} /></button>
+    </header>
+    <p class="presentation-notice" data-pres-notice role="status" aria-live="polite" hidden></p>
+    <section class="presentation-library" data-pres-library aria-label="Slidev presentation library">
+      <div class="presentation-welcome">
+        <div>
+          <span class="eyebrow">A LITTLE MORE INTERACTION</span>
+          <h3>Let your audience<br />explore the idea.</h3>
+          <p>Open a prepared Slidev ZIP to present slides with live diagrams, sliders, and demonstrations. Your files stay in this browser.</p>
+          <div class="presentation-welcome-actions"><button class="button-primary" data-pres-open><Icon name="upload" size={16} /> Open presentation ZIP</button><a href={withBase('guide/#slidev')}>How it works <Icon name="arrow" size={15} /></a></div>
+        </div>
+        <button class="presentation-example" data-pres-example aria-label="Try the interactive Slidev physics example">
+          <svg viewBox="0 0 360 120" aria-hidden="true"><defs><linearGradient id="presentation-wave-color"><stop stop-color="#d8a5ae" /><stop offset="1" stop-color="#b9d2c1" /></linearGradient></defs><path d="M0 60H360M180 0V120" fill="none" stroke="#ffffff20" /><path d="M0 60C20 60 20 25 40 25S60 95 80 95S100 10 120 10S140 110 160 110S180 10 200 10S220 95 240 95S260 25 280 25S300 60 320 60S340 70 360 70" fill="none" stroke="url(#presentation-wave-color)" stroke-width="2.5" /><path d="M0 60C60 60 100 5 180 5S280 60 360 60M0 60C60 60 100 115 180 115S280 60 360 60" fill="none" stroke="#ffffff25" stroke-dasharray="3 5" /></svg>
+          <span class="presentation-example-caption"><span><strong>Quantum interference</strong><small>A real Slidev deck with a live demo</small></span><span class="presentation-example-play"><Icon name="play" size={18} /></span></span>
+        </button>
+      </div>
+      <div class="presentation-library-heading"><h3>Saved in this browser <span data-pres-count>0</span></h3><a href={withBase('slidev/interactive-physics.zip')} download>Download starter ZIP <Icon name="download" size={14} /></a></div>
+      <div class="presentation-saved-list" data-pres-list role="list"><p class="presentation-empty">Your imported presentations will appear here.</p></div>
+      <p class="presentation-library-note">For editable Markdown slides, use <strong>Slides</strong> in the workspace. Slidev packages keep a built presentation and its source together.</p>
+    </section>
+    <section class="presentation-deck" data-pres-deck hidden aria-label="Imported Slidev presentation">
+      <div class="presentation-toolbar">
+        <div class="presentation-view-switch" role="group" aria-label="Presentation view"><button data-pres-view="preview" aria-pressed="true"><Icon name="play" size={14} /> Presentation</button><button data-pres-view="source" aria-pressed="false"><Icon name="code" size={14} /> Source files</button></div>
+        <div class="presentation-deck-actions"><button class="button-secondary" data-pres-zip title="Download the original package, including source"><Icon name="download" size={15} /><span>ZIP</span></button><button class="button-secondary" data-pres-html title="Download a standalone offline player"><Icon name="code" size={15} /><span>HTML</span></button><button class="button-primary" data-pres-present><Icon name="play" size={15} /> Present</button></div>
+      </div>
+      <div class="presentation-preview" data-pres-preview>
+        <div class="presentation-stage" data-pres-stage>
+          <div class="presentation-frame-host" data-pres-host></div>
+          <div class="presentation-start" data-pres-start>
+            <span class="presentation-engine">SLIDEV</span><h3 data-pres-start-title>Your presentation is ready.</h3>
+            <p>Slides and demonstrations run locally when you press Start.</p>
+            <button class="button-primary" data-pres-start-button><Icon name="play" size={17} /> Start presentation</button>
+            <p class="presentation-start-detail" data-pres-start-detail></p>
+          </div>
+          <button class="presentation-exit-fullscreen" data-pres-exit-fullscreen hidden><Icon name="close" size={16} /> Exit fullscreen</button>
+        </div>
+        <div class="presentation-player-bar"><span class="presentation-player-status" data-pres-player-status role="status">Ready to start</span><div><button data-pres-stop hidden>Stop</button><button data-pres-restart hidden><Icon name="refresh" size={13} /> Restart</button><span class="presentation-keyboard-hint">Use the slide controls or arrow keys</span></div></div>
+      </div>
+      <div class="presentation-source" data-pres-source hidden>
+        <div class="presentation-source-heading"><label for="presentation-source-file">Package file<select id="presentation-source-file" data-pres-file></select></label><button class="button-secondary" data-pres-copy><Icon name="copy" size={15} /> Copy source</button></div>
+        <textarea data-pres-source-text readonly spellcheck="false" aria-label="Presentation source file"></textarea>
+        <p data-pres-file-info></p><p class="presentation-source-note">Source is preserved exactly as imported. Revise it with your editor or AI assistant, rebuild the presentation, then open the new ZIP. The compiled slides do not change when source files are edited elsewhere.</p>
+      </div>
+    </section>
+    <footer class="presentation-dialog-footer"><span><span class="presentation-local-dot" aria-hidden="true"></span><span data-pres-storage>No uploads. Playback has no external connections.</span></span><a href={withBase('guide/#slidev')}>Slidev guide <Icon name="external" size={12} /></a></footer>
+  </dialog>
+  <input type="file" data-pres-input accept=".zip,application/zip" hidden />
+</qft-presentation-library>
+<script>
+  import '../scripts/presentation-library';
+</script>

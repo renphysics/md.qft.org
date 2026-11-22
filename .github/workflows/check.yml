@@ -17,7 +17,7 @@ jobs:
   check:
     name: Type check, test, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +28,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/slidev/package-lock.json
       - name: Use the documented npm version
         run: npm install --global npm@11.9.0
       - name: Install dependencies from the lockfile
@@ -36,5 +39,21 @@ jobs:
         run: npm run check
       - name: Run rendering and persistence tests
         run: npm test
+      - name: Install the portable Slidev tooling from its lockfile
+        run: npm ci --prefix tools/slidev
+      - name: Verify Slidev bundling and portable package boundaries
+        run: npm test --prefix tools/slidev
       - name: Build the static website
         run: npm run build
+      - name: Install Chromium for presentation checks
+        run: npx playwright install --with-deps chromium
+      - name: Verify interactive and offline presentation playback
+        run: npm run test:browser
+      - name: Keep presentation screenshots and test details
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: presentation-browser-checks
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

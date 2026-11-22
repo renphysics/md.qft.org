@@ -4,6 +4,8 @@ QFT Markdown is distributed under the MIT license in [LICENSE](LICENSE), with co
 
 The built-in interactive physics demonstrations, their static illustrations, and the isolated demo controller are original application code distributed under that same MIT license. They add no external plotting or 3D library dependency. Standalone HTML exports include the applicable application, reveal.js, and KaTeX notices with their bundled code.
 
+The optional Slidev starter at `public/slidev/interactive-physics.zip` includes Slidev, Vue, its theme, mathematical fonts, and their dependencies. Its archive contains a generated `THIRD_PARTY_NOTICES.txt`, and the compiled presentation embeds those notices so they remain present in standalone HTML exports. The reusable source and packager in `tools/slidev` use the application's MIT license; bundled dependencies retain their original licenses. Playwright is an Apache-2.0 development dependency used only for browser verification.
+
 ## Browser libraries and fonts
 
 This inventory records the installed browser-facing dependencies and their transitive package dependencies. Some packages are used only in part after bundling. The versions come from the installed packages corresponding to package-lock.json; license texts are reproduced from their distributed license and notice files.
