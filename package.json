@@ -14,7 +14,8 @@
     "test": "node --import tsx --test --test-isolation=none tests/*.test.ts",
     "prebuild": "node scripts/clean-build.mjs",
     "build": "astro build",
-    "preview": "astro preview --host 0.0.0.0"
+    "preview": "astro preview --host 0.0.0.0",
+    "test:browser": "node tests/browser/presentations.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
@@ -43,7 +44,9 @@
     "@types/katex": "0.16.8",
     "@types/markdown-it": "14.2.0",
     "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
     "fake-indexeddb": "6.2.6",
+    "playwright": "1.62.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3"
   },

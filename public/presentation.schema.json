@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://md.qft.org/presentation.schema.json",
+  "title": "QFT portable presentation manifest",
+  "description": "Metadata for a self-contained compiled Slidev presentation with optional editable source. The browser validates archive paths, resource isolation, sizes, and entry integrity separately.",
+  "type": "object",
+  "required": ["format", "version", "engine", "title", "entry"],
+  "properties": {
+    "format": { "const": "qft-presentation" },
+    "version": { "const": 1 },
+    "engine": { "const": "slidev" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "entry": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Relative path to self-contained compiled HTML, normally presentation.html." },
+    "source": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Optional primary source path, normally source/slides.md. Source is viewed as inert text." },
+    "aspectRatio": { "enum": ["16:9", "4:3"] },
+    "generator": { "type": "string", "maxLength": 200 }
+  },
+  "additionalProperties": false
+}

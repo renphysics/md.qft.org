@@ -92,7 +92,56 @@ $$
 
 Slides reuse the document Markdown/KaTeX renderer, including all four math delimiters and the same image permissions. Choose **Paper**, **Midnight**, or **Academic**, and **16:9** or **4:3**. **Present** opens fullscreen playback; use arrows to navigate. Keep content short enough to fit each slide.
 
-In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, images, and supported interactive demonstrations in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This format does not implement Marp directives or Slidev components. Ordinary HTML and script fences remain displayed source; executable demos use the explicit syntax below.
+In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, images, and supported interactive demonstrations in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This Reveal.js Markdown format does not implement Marp directives or Slidev components. Prepared Slidev ZIPs use the separate presentation player described below. Ordinary HTML and script fences remain displayed source; executable demos use the explicit syntax below.
+
+## Portable Slidev presentations
+
+Reveal.js remains the directly editable Markdown slide engine. Slidev is an
+additional imported presentation type with its own isolated player.
+
+- Use **Open file** for a prepared Slidev ZIP, or **Slidev presentations** in
+  the sidebar to browse saved packages and try the real quantum interference
+  example.
+- **Start presentation** runs the deck locally; **Present** opens fullscreen.
+  Imported code is inert until a playback action. Stop destroys the running
+  application, and Restart begins again.
+- **Source files** displays inert source text for copying. **ZIP** returns the
+  original archive unchanged, while **HTML** exports an isolated standalone
+  player that can open offline.
+- **Create with AI → Slidev** supplies a teaching brief and the correct build
+  instructions. Give the downloadable starter to Codex; ask for the rebuilt
+  presentation and source together after every revision.
+
+The supported package contains `qft-presentation.json` (format
+`qft-presentation`, version 1, engine `slidev`), a self-contained compiled HTML
+entry, and optional source files. See [the reusable starter and packager](tools/slidev/README.md)
+and [the manifest schema](public/presentation.schema.json). The checked-in
+[interactive example](public/slidev/interactive-physics.zip) includes its source,
+lockfile, MIT license, and dependency notices.
+
+A source-only Slidev project or an ordinary multi-file `dist` ZIP is identified
+with a packaging message. The browser does not install npm dependencies or
+compile Vue. Source changes require a rebuild; browser playback is independent
+of the source editor. A package is not converted into Reveal.js.
+
+Package limits: 60 MiB ZIP, 120 MiB actual expanded data, 1,000 entries, 24 MiB
+HTML entry, and 40 MiB per other file. All entries are checked for path
+ambiguity, expansion limits, CRC integrity, and unsupported archive features.
+Source previews are limited to 2 MiB per file / 8 MiB combined; complete source
+is retained in the original archive. Packages and metadata are saved atomically
+in a separate deployment-scoped IndexedDB database. Storage failures leave the
+current imported package usable and explain keeping the original ZIP.
+
+The player grants scripts an opaque origin, with no access to editor drafts,
+network services, workers, nested frames, persistent storage, or dynamic code
+evaluation. Package all libraries, images, data, and fonts before import. A
+runtime error stops the failed player and reports the problem. Source and
+package parsing never execute imported code. This boundary does not make
+unbounded computations well behaved.
+
+Reopening the md.qft.org application itself offline remains a separate feature;
+keep the standalone HTML player for classroom use without the website. A
+Slidev PDF should be exported from its source project before packaging.
 
 ## From an AI brief to a classroom lesson
 
@@ -145,7 +194,7 @@ In the insertion dialog, expand **Use your own HTML & JavaScript**, then paste t
 ```
 ````
 
-Use inline `<style>` and `<script>` elements and attach handlers with `addEventListener`. External scripts, module imports, network calls, inline event attributes such as `onclick`, `eval`, nested frames, forms, and popup windows are outside this supported format. Include code and styles directly; use embedded raster data images for assets. A complete React, Vue, or Slidev application needs to be converted into self-contained HTML before insertion. A document supports **20 demo blocks**, each custom block up to **100,000 source characters**, within the editor's overall 400,000-character source limit.
+Use inline `<style>` and `<script>` elements and attach handlers with `addEventListener`. External scripts, module imports, network calls, inline event attributes such as `onclick`, `eval`, nested frames, forms, and popup windows are outside this supported format. Include code and styles directly; use embedded raster data images for assets. A complete Slidev application belongs in the separate presentation player; this small-demo format does not compile React or Vue source. A document supports **20 demo blocks**, each custom block up to **100,000 source characters**, within the editor's overall 400,000-character source limit.
 
 Demos run only after an explicit **Run demo** action. The workspace uses a same-site runner inside an iframe with `sandbox="allow-scripts"` and an opaque origin; it does not grant `allow-same-origin`. Portable exports use a nonce-bearing sandboxed `srcdoc` document. The demo's DOM and storage origin remain separate from the editor's drafts. A restrictive child Content Security Policy blocks external dependencies and connections. This isolation does not make arbitrary code well behaved: a custom demo should avoid unbounded loops and excessive computation.
 

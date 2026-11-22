@@ -33,7 +33,15 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Can I make and present Markdown slides with mathematical equations?',
-    answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The same Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. Marp directives and Slidev components are not supported.',
+    answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. This Reveal.js format does not interpret Marp directives or Slidev components; prepared Slidev ZIPs use a separate player.',
+  },
+  {
+    question: 'Can I open an interactive Slidev presentation ZIP?',
+    answer: 'Yes. Use Open file for a Slidev ZIP prepared with the supplied portable packager, or choose Slidev presentations in the sidebar to try the quantum interference example. The ZIP contains a compiled presentation with embedded libraries, images, and fonts, plus optional editable source. Start runs it locally in an isolated player; Present opens fullscreen. Packages can be saved in this browser, downloaded unchanged, or exported to a standalone HTML player. No server upload or runtime CDN is required. A source-only Slidev project or an ordinary dist ZIP must be built and packaged first.',
+  },
+  {
+    question: 'How do I revise a Slidev presentation made by AI?',
+    answer: 'Choose Create with AI and select Slidev. Copy the instructions and attach the matching starter ZIP to a coding tool such as Codex. Ask it to revise the source, build the presentation, and return a new portable ZIP. Source files can be viewed and copied here; they are not compiled in the browser. Updating slides.md or a Vue component requires rebuilding before the playable presentation changes. Keep the ZIP as your editable backup. Network services, workers, nested frames, and arbitrary dynamic code evaluation are outside the portable playback profile.',
   },
   {
     question: 'Can a slide contain a working JavaScript demonstration?',

@@ -1,6 +1,7 @@
 ---
 import Icon from './Icon.astro';
 import TeacherWorkflow from './TeacherWorkflow.astro';
+import PresentationLibrary from './PresentationLibrary.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 import { DEMO_PRESETS } from '../lib/demo-presets';
@@ -14,12 +15,13 @@ import '../styles/teacher-workflow.css';
     <div class="sidebar-heading"><span>Your workspace</span><button class="icon-button mobile-sidebar-close" data-close-sidebar aria-label="Close document sidebar"><Icon name="close" /></button></div>
     <button class="new-document" data-new><Icon name="plus" size={17} /> New document <kbd>N</kbd></button>
     <button class="create-ai-button" data-create-ai><Icon name="spark" size={16} /> Create with AI</button>
-    <button class="open-file" data-open><Icon name="upload" size={16} /> Open file <span class="sr-only">Markdown or lesson ZIP</span></button>
+    <button class="open-file" data-open><Icon name="upload" size={16} /> Open file <span class="sr-only">Markdown, lesson ZIP, or Slidev presentation ZIP</span></button>
     <div class="sidebar-section-title">MY DOCUMENTS <span data-doc-count>0</span></div>
     <label class="document-search"><Icon name="search" size={15} /><span class="sr-only">Search documents</span><input type="search" data-document-search placeholder="Find a document…" autocomplete="off" /></label>
     <div class="document-list" data-documents role="list" aria-label="Saved documents"><p class="loading-documents">Opening your workspace…</p></div>
     <div class="sidebar-divider"></div>
     <button class="sidebar-link" data-show-examples><span class="sidebar-link-icon"><Icon name="spark" size={17} /></span><span>Start with an example<small>A little inspiration</small></span><Icon name="chevron" size={14} /></button>
+    <button class="sidebar-link" data-open-presentations><span class="sidebar-link-icon"><Icon name="play" size={17} /></span><span>Slidev presentations<small>Open, explore, present</small></span><Icon name="chevron" size={14} /></button>
     <a class="sidebar-link" href={withBase('guide/')}><span class="sidebar-link-icon"><Icon name="book" size={17} /></span><span>Markdown & math guide<small>Make yourself at home</small></span><Icon name="chevron" size={14} /></a>
     <div class="sidebar-current-document">
       <span class="current-document-label">CURRENT DOCUMENT</span>
@@ -81,6 +83,7 @@ import '../styles/teacher-workflow.css';
     <footer class="workspace-footer"><div class="document-stats"><span data-word-count>0 words</span><span class="stat-divider">·</span><span data-char-count>0 characters</span><span class="stat-divider">·</span><span data-math-count>0 equations</span></div><label class="sync-control"><input type="checkbox" data-sync checked /><span class="switch-track"></span><Icon name="link" size={13} /> Sync scrolling</label><span class="footer-note">A little space to think.</span></footer>
   </main>
   <TeacherWorkflow />
+  <PresentationLibrary />
   <input type="file" data-file-input accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip" hidden />
   <input type="file" data-image-input accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" multiple hidden />
   <input type="file" data-demo-file-input accept=".html,.htm,text/html" hidden />
