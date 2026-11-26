@@ -8,12 +8,17 @@ browser.
 
 ## Packager or an ordinary build?
 
-md.qft.org also opens an ordinary `npx slidev build` output: a ZIP of the
-`dist` folder. It converts the build in the browser each time it is opened,
-leaves out remote resources such as Google Fonts, and plays it with a player
-profile that reports script errors as notes instead of stopping. Builds that
-use Monaco or Web Workers are refused, and conversion depends on the build
-output of recent Slidev releases (checked with 52 and 53).
+You do not need this packager to play Slidev on md.qft.org. The site's
+**Create with AI → Slidev** instructions ask an AI assistant that can run
+commands for an ordinary Slidev project and one ZIP of the project folder with
+the built `dist/` inside and without `node_modules`; a ZIP of the `dist`
+folder alone opens too. The site converts the build in the browser each time
+it is opened, leaves out remote resources such as Google Fonts, and plays it
+with a player profile that reports script errors as notes instead of
+stopping. Builds that use live code editors (Monaco code blocks) or Web
+Workers are refused, a picture or file that the build lacks is named in the
+notes, and conversion depends on the build output of recent Slidev releases
+(checked with 52 and 53).
 
 Use this starter and packager when you want more than that: a package that
 carries its editable source, plays exactly the compiled HTML you checked
@@ -111,7 +116,9 @@ md.qft.org website itself offline is a separate application-caching feature.
 
 ## Instructions to give an AI coding tool
 
-Use this starter as the project template. Create the requested lesson in
+For an ordinary build, use the instructions from **Create with AI → Slidev**
+on the site. For a portable package made with this starter, give these
+instructions instead: use this starter as the project template. Create the requested lesson in
 `slides.md` and use Vue components for interactive demonstrations. Keep the
 portable playback profile. Include all required libraries and assets locally;
 do not use CDN links or runtime network calls. Preserve the package manifest
