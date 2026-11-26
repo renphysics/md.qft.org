@@ -36,7 +36,7 @@ function library(dependencies: Dependencies = {}) {
   const calls = {
     open: 0, build: 0, save: 0, started: 0, focus: 0, fullscreen: 0, closed: 0, destroyed: 0, prepared: 0,
     players: [] as any[], shown: [] as any[], notices: [] as unknown[], exports: [] as any[], copied: [] as string[], downloads: [] as any[],
-    updates: [] as any[], savedEdits: [] as any[], names: [] as string[], opened: [] as unknown[][], reports: [] as any[], timers: [] as (() => void)[],
+    updates: [] as any[], savedEdits: [] as any[], noticeInputs: [] as any[], names: [] as string[], opened: [] as unknown[][], reports: [] as any[], timers: [] as (() => void)[],
   };
   const clock = { now: 1_000_000 };
   const controls = new Map<string, any>();
@@ -111,6 +111,14 @@ function library(dependencies: Dependencies = {}) {
           updateDeckEdits(id: string, edits: Map<string, string>, options?: { basedOn?: number }) {
             calls.savedEdits.push({ id, edits: new Map(edits), ...(options?.basedOn !== undefined ? { basedOn: options.basedOn } : {}) });
             return dependencies.updateEdits?.(id, edits, options) ?? Promise.resolve({ id, title: 'Damped oscillator', engine: 'reveal', edited: edits.size > 0 });
+          },
+        };
+      }
+      if (name === '../lib/presentation-notice-texts') {
+        return {
+          noticesForExport(html: string, kind: string) {
+            calls.noticeInputs.push({ html, kind });
+            return [{ title: 'QFT Markdown presentation player · MIT License', text: 'MIT License' }];
           },
         };
       }
@@ -453,14 +461,17 @@ test('Copy report falls back to a selected text field when the clipboard is refu
   assert.match(String(f.calls.notices.at(-1)), /Report selected/);
 });
 
-test('the standalone HTML uses the deck’s profile and the ZIP is the original file', () => {
+test('the standalone HTML uses the deck’s profile, carries the licence notices, and the ZIP is the original file', async () => {
   const f = library();
   const project = revealProject();
-  f.show(project, revealPlayable());
-  f.instance.downloadHtml();
+  const playable = revealPlayable();
+  f.show(project, playable);
+  await f.instance.downloadHtml();
   assert.equal(f.calls.exports.length, 1);
   assert.equal(f.calls.exports[0].options.profile, 'tolerant');
   assert.equal(f.calls.exports[0].title, 'Damped oscillator');
+  assert.deepEqual(f.calls.noticeInputs, [{ html: playable.html, kind: project.kind }], 'the notices are chosen from the finished document and the kind');
+  assert.equal(f.calls.exports[0].options.notices[0].title, 'QFT Markdown presentation player · MIT License');
   f.instance.downloadArchive();
   assert.equal(f.calls.downloads.at(-1), project.original);
 });

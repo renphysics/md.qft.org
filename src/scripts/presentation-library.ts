@@ -1102,11 +1102,15 @@ export class PresentationLibrary extends HTMLElement {
     download(original.blob, original.name);
   }
 
-  private downloadHtml(): void {
+  private async downloadHtml(): Promise<void> {
     const active = this.active;
     if (!active) return;
     if (!canPlay(active.playable)) { this.notice('This presentation cannot be played here yet, so there is no standalone copy to download.'); return; }
-    const html = exportPresentationHtml(active.playable.html, active.project.title, { profile: active.playable.profile });
+    // The licence texts load only when a copy is downloaded.
+    const { noticesForExport } = await import('../lib/presentation-notice-texts');
+    if (this.active !== active) return;
+    const notices = noticesForExport(active.playable.html, active.project.kind);
+    const html = exportPresentationHtml(active.playable.html, active.project.title, { profile: active.playable.profile, notices });
     download(new Blob([html], { type: 'text/html;charset=utf-8' }), `${fileName(active.project.title)}.html`);
     this.notice('Standalone player downloaded. Open it offline and choose Start to run the slides.');
   }

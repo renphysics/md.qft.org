@@ -160,6 +160,12 @@ export default async function run(t) {
     const text = readFileSync(file, 'utf8');
     assert.match(text, /Start presentation/);
     assert.match(text, /"profile":"tolerant"|profile:"tolerant"/);
+    // The licence notices of what the copy contains, in the outer page.
+    const notices = text.match(/<details id="notices">[\s\S]*?<\/details>/)?.[0] ?? '';
+    assert.match(notices, /<summary>Third-party notices<\/summary>/);
+    for (const needle of ['Jie Ren', 'Hakim El Hattab', 'Khan Academy', 'Ivan Sagalaev', 'Redistributions in binary form must reproduce', 'SIL Open Font License', 'Source Sans Pro']) {
+      assert.ok(notices.includes(needle), `the export carries ${needle}`);
+    }
     const zipping = page.waitForEvent('download');
     await page.locator('[data-pres-zip]').click();
     assert.equal((await zipping).suggestedFilename(), 'damped-oscillator.zip');

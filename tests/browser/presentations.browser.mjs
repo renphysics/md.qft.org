@@ -207,6 +207,12 @@ export default async function run(t) {
     const offlinePage = t.observe(await offlineContext.newPage());
     await offlinePage.goto(pathToFileURL(offlineFile).href, { waitUntil: 'load' });
     assert.equal(offlinePage.frames().length, 1, 'The downloaded presentation is inert until Start');
+    const notices = offlinePage.locator('#notices');
+    assert.equal(await notices.evaluate((element) => element.open), false, 'The notices start collapsed');
+    assert.ok(await offlinePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'No sideways scrolling');
+    await notices.locator('summary').click();
+    assert.match(await notices.textContent(), /Copyright \(c\) 2026 Jie Ren/, 'The application notice is in the copy');
+    await notices.locator('summary').click();
     await offlinePage.getByRole('button', { name: 'Start presentation', exact: true }).click();
     const offlineFrame = await presentationFrame(offlinePage);
     await goToDemo(offlinePage, offlineFrame);
