@@ -63,4 +63,14 @@ describe('deck check report', () => {
     const pkg = formatDeckReport({ kind: 'qft-presentation', engine: 'slidev', issues: [], runtime: [{ origin: 'presentation', text: 'TypeError: x is undefined' }] });
     assert.match(pkg, /rebuild with the QFT Slidev packaging tool/);
   });
+
+  it('asks for a new dist folder only when a converted Slidev build has notes', () => {
+    const refused = formatDeckReport({ kind: 'slidev-build', engine: 'slidev', engineVersion: '53.1.0', issues: [{ code: 'slidev-monaco-unsupported', severity: 'error', message: 'Monaco cannot run.' }] });
+    assert.match(refused, /engine: slidev 53\.1\.0/);
+    assert.match(refused, /result: cannot play here/);
+    assert.match(refused, /Reply: fix the notes above in the Slidev project, run "npx slidev build" again, and send back a ZIP of the new dist folder\.$/);
+    const plays = formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: [] });
+    assert.match(plays, /result: plays\n/);
+    assert.match(plays, /Reply: no changes are needed for playback\.$/);
+  });
 });

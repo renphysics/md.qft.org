@@ -43,8 +43,13 @@ function fenceFor(lines: readonly string[]): string {
 }
 
 function reply(kind: DeckKind, needsChanges: boolean): string {
-  if (kind === 'slidev-source' || kind === 'slidev-build') {
+  if (kind === 'slidev-source') {
     return 'Reply: build the presentation with "npx slidev build" and send back a ZIP of the dist folder, fixing the notes above.';
+  }
+  if (kind === 'slidev-build') {
+    return needsChanges
+      ? 'Reply: fix the notes above in the Slidev project, run "npx slidev build" again, and send back a ZIP of the new dist folder.'
+      : 'Reply: no changes are needed for playback.';
   }
   if (kind === 'qft-presentation') {
     return needsChanges

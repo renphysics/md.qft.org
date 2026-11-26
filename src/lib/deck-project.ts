@@ -72,16 +72,33 @@ export interface PlayableDeck {
   profile: PresentationProfile;
 }
 
+/**
+ * Converts an ordinary Slidev build into one playable document. In the
+ * browser this is convertSlidevBuild from slidev-convert-browser.ts, loaded
+ * only when a Slidev build is opened; Node tests use convertSlidevFiles with
+ * the native esbuild. Resolves with html '' and an error issue when the build
+ * cannot be played; rejects when the converter cannot run or is cancelled.
+ */
+export type SlidevConverter = (
+  files: DeckFiles,
+  detection: DeckDetection,
+  options: { signal?: AbortSignal; onProgress?: (message: string) => void },
+) => Promise<{ html: string; issues: DeckIssue[] }>;
+
 export interface BuildDeps {
   /** The bundled Reveal.js and KaTeX files; loaded only when a deck is linked. */
   vendor: () => VendorProvider | Promise<VendorProvider>;
+  /** The Slidev build conversion; without it, a Slidev build is explained, not played. */
+  convertSlidev?: SlidevConverter;
   /**
    * The player's own preparation, run without playing: it throws when the
    * player would refuse the document. Browser only; omitted in Node tests.
    */
   prepare?: (html: string, profile: PresentationProfile) => void;
-  /** Progress text for slow steps, written by this module (never deck text). */
+  /** Progress text for slow steps, written by this site (never deck text). */
   onProgress?: (message: string) => void;
+  /** Stops a slow build, such as a Slidev conversion, when the person moves on. */
+  signal?: AbortSignal;
 }
 
 /** A saved or unsaved library record, as needed to open it again. */
@@ -461,17 +478,34 @@ function mergeIssues(before: readonly DeckIssue[], after: readonly DeckIssue[]):
 const failed = (issues: DeckIssue[], profile: PresentationProfile): PlayableDeck => ({ html: '', issues, profile });
 
 /**
- * WP7 replaces this function with the in-browser Slidev build conversion.
- * Until then a Slidev build is explained, not played.
+ * Detection notes about references that the Slidev conversion examines again
+ * and reports itself, and Monaco, which the conversion refuses as an error.
  */
-async function convertSlidevBuildForPlayback(project: DeckProject, _deps: BuildDeps): Promise<{ html: string; issues: DeckIssue[] }> {
-  return {
-    html: '',
-    issues: [...project.issues, {
-      code: 'slidev-build-not-yet', severity: 'error',
-      message: 'This is a built Slidev presentation. Playing a Slidev build directly is not available yet. Package it with the QFT Slidev packaging tool (tools/slidev/README.md), then open the portable ZIP it makes.',
-    }],
-  };
+const SUPERSEDED_BY_CONVERTER = new Set([
+  'external-file', 'external-font', 'external-frame', 'external-image', 'external-library', 'external-media',
+  'external-stylesheet', 'missing-local-file', 'slidev-monaco',
+]);
+
+/** Convert a Slidev build; any failure becomes an error issue, cancellation a short note. */
+async function convertSlidevBuildForPlayback(project: DeckProject, deps: BuildDeps): Promise<{ html: string; issues: DeckIssue[] }> {
+  if (!deps.convertSlidev) {
+    return { html: '', issues: [{ code: 'slidev-convert-unavailable', severity: 'error', message: 'Slidev builds cannot be converted here, so this one cannot play.' }] };
+  }
+  try {
+    return await deps.convertSlidev(project.files, project.detection, {
+      ...(deps.signal ? { signal: deps.signal } : {}),
+      ...(deps.onProgress ? { onProgress: deps.onProgress } : {}),
+    });
+  } catch (error) {
+    if (deps.signal?.aborted) {
+      return { html: '', issues: [{ code: 'cancelled', severity: 'error', message: 'Stopped before the presentation was ready.' }] };
+    }
+    const reason = cleanReportedText(error instanceof Error ? error.message : String(error), 300);
+    return {
+      html: '',
+      issues: [{ code: 'slidev-convert-failed', severity: 'error', message: `The Slidev build could not be converted${reason ? `: ${reason}` : '.'}` }],
+    };
+  }
 }
 
 /** Run the player's own checks without playing, so a deck it would refuse is reported now. */
@@ -490,9 +524,10 @@ function dryRun(result: PlayableDeck, deps: BuildDeps): PlayableDeck {
 /**
  * Turn a deck into what the player plays. Portable packages play their own
  * compiled HTML under the strict profile; Reveal.js decks and other pages are
- * linked into one self-contained document and play under the tolerant
- * profile. Kinds that cannot play return html '' and an error that says how
- * to fix it. Never executes deck code.
+ * linked into one self-contained document, and Slidev builds are converted
+ * into one (deps.convertSlidev); both play under the tolerant profile. Kinds
+ * that cannot play return html '' and an error that says how to fix it.
+ * Never executes deck code.
  */
 export async function buildPlayable(project: DeckProject, deps: BuildDeps): Promise<PlayableDeck> {
   switch (project.kind) {
@@ -512,10 +547,14 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
       return dryRun(result, deps);
     }
     case 'slidev-build': {
-      deps.onProgress?.('Preparing the Slidev presentation…');
+      // A build plays as built: it is converted from its files, never from edits.
+      deps.onProgress?.('Preparing the Slidev presentation to play offline…');
       const converted = await convertSlidevBuildForPlayback(project, deps);
-      const issues = mergeIssues([], converted.issues);
-      return dryRun({ html: issues.some((issue) => issue.severity === 'error') ? '' : converted.html, issues, profile: 'tolerant' }, deps);
+      const kept = project.issues.filter((issue) => !SUPERSEDED_BY_CONVERTER.has(issue.code));
+      const issues = mergeIssues(kept, converted.issues);
+      const result: PlayableDeck = { html: issues.some((issue) => issue.severity === 'error') ? '' : converted.html, issues, profile: 'tolerant' };
+      if (isPlayable(result)) deps.onProgress?.('Checking the presentation…');
+      return dryRun(result, deps);
     }
     case 'slidev-source': {
       const issues = project.issues.some((issue) => issue.code === 'slidev-source') ? [...project.issues] : [...project.issues, {

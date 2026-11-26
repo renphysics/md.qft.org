@@ -2,7 +2,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
-import { createEsbuildBundler } from '../../src/lib/slidev-convert.ts';
+import { convertSlidevFiles, createEsbuildBundler } from '../../src/lib/slidev-convert.ts';
+import { SLIDEV_PROGRESS_TEXT } from '../../src/lib/slidev-convert-browser.ts';
+import type { SlidevConverter } from '../../src/lib/deck-project.ts';
 import type { DeckFiles } from '../../src/lib/deck-types.ts';
 
 /** An ordinary `slidev build` (53.1.0, base "/", history router), zipped with its dist/ folder. See its NOTICE. */
@@ -14,6 +16,17 @@ export function slidevFixtureFile(name = 'slidev-default-build.zip'): File {
 
 /** The conversion's bundler on the native esbuild, as the Worker runs it on esbuild-wasm. */
 export const nodeSlidevBundler = createEsbuildBundler(esbuild);
+
+/** A BuildDeps.convertSlidev for Node: the same core as the Worker, in this thread. */
+export function nodeSlidevConverter(): SlidevConverter {
+  return async (files, detection, options) => {
+    const { html, issues } = await convertSlidevFiles(files, detection, nodeSlidevBundler, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      onProgress: (step) => options.onProgress?.(SLIDEV_PROGRESS_TEXT[step]),
+    });
+    return { html, issues };
+  };
+}
 
 /** Every file below a folder, by POSIX path relative to it. */
 export function filesFromFolder(folder: string, prefix = ''): DeckFiles {

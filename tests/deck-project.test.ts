@@ -12,6 +12,7 @@ import { PresentationPackageError } from '../src/lib/presentation-package.ts';
 import { DECK_EDIT_LIMITS } from '../src/lib/presentation-store.ts';
 import { htmlFixture, loadFixtureDeck, zipFixture } from './helpers/deck-fixtures.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
+import { nodeSlidevConverter, slidevFixtureFile } from './helpers/slidev-node.ts';
 
 const deps = (extra: Partial<BuildDeps> = {}): BuildDeps => ({ vendor: () => nodeVendorProvider(), ...extra });
 
@@ -163,16 +164,67 @@ describe('building playable decks', () => {
     assert.equal(prepared, `tolerant:${accepted.html.length}`);
   });
 
-  it('explains a Slidev build through the one placeholder WP7 replaces', async () => {
+  it('plays an ordinary Slidev build by converting it, under the tolerant profile', async () => {
+    const project = await opened(slidevFixtureFile('quantum-interference-dist.zip'));
+    assert.equal(project.kind, 'slidev-build');
+    assert.equal(project.engine, 'slidev');
+    assert.equal(project.entry, 'index.html');
+    assert.equal(project.folder, 'dist');
+    assert.equal(project.detection.engineVersion, '53.1.0');
+    assert.equal(isEditableDeck(project), false);
+    assert.match(deckSourceNote(project), /read-only here[\s\S]*npx slidev build/);
+    const progress: string[] = [];
+    let prepared = '';
+    const result = await buildPlayable(project, deps({
+      convertSlidev: nodeSlidevConverter(),
+      onProgress: (message) => progress.push(message),
+      prepare: (html, profile) => { prepared = `${profile}:${html.length}`; },
+    }));
+    assert.equal(isPlayable(result), true);
+    assert.equal(result.profile, 'tolerant');
+    assert.equal(prepared, `tolerant:${result.html.length}`);
+    assert.deepEqual(progress, ['Preparing the Slidev presentation to play offline…', 'Bundling the presentation…', 'Checking the presentation…']);
+    // The converter's notes replace detection's note about the same Google Fonts link.
+    assert.deepEqual(result.issues.map((issue) => `${issue.severity} ${issue.code}`), ['info external-font', 'info external-icon']);
+    assert.deepEqual(deckSaveInput(project)?.kind, 'slidev-build');
+  });
+
+  it('explains a Slidev build that cannot be converted here, failed, or was stopped', async () => {
+    const project = await opened(slidevFixtureFile());
+    const unavailable = await buildPlayable(project, deps());
+    assert.equal(unavailable.html, '');
+    assert.deepEqual(unavailable.issues.filter((issue) => issue.severity === 'error').map((issue) => issue.code), ['slidev-convert-unavailable']);
+
+    const failing = await buildPlayable(project, deps({ convertSlidev: async () => { throw new Error('The Slidev converter could not start.'); } }));
+    assert.equal(failing.html, '');
+    assert.equal(failing.issues[0].code, 'slidev-convert-failed');
+    assert.match(failing.issues[0].message, /could not be converted: The Slidev converter could not start\./);
+
+    const controller = new AbortController();
+    const stopped = await buildPlayable(project, deps({
+      signal: controller.signal,
+      convertSlidev: async (_files, _detection, options) => {
+        controller.abort();
+        options.signal?.throwIfAborted();
+        return { html: '<p>never</p>', issues: [] };
+      },
+    }));
+    assert.equal(stopped.html, '');
+    assert.deepEqual(stopped.issues.map((issue) => issue.code), ['cancelled']);
+  });
+
+  it('refuses a Slidev build with Monaco once, as an error from the converter', async () => {
     const build = zipFile({
-      'dist/index.html': '<!doctype html><html><head><meta property="slidev:version" content="53.1.0"></head><body><div id="app"></div><script type="module" src="./assets/index.js"></script></body></html>',
-      'dist/assets/index.js': 'console.log(1)',
+      'index.html': '<!doctype html><html><head><meta property="slidev:version" content="53.1.0"><script type="module" src="/assets/index-a.js"></script></head><body><div id="app"></div></body></html>',
+      'assets/index-a.js': 'import("./monaco/editor-a.js")',
+      'assets/monaco/editor-a.js': 'export default 1',
     });
     const project = await opened(build);
-    assert.equal(project.kind, 'slidev-build');
-    const result = await buildPlayable(project, deps());
+    assert.ok(project.issues.some((issue) => issue.code === 'slidev-monaco' && issue.severity === 'warning'), 'detection notes Monaco first');
+    const result = await buildPlayable(project, deps({ convertSlidev: nodeSlidevConverter() }));
     assert.equal(result.html, '');
-    assert.ok(result.issues.some((issue) => issue.code === 'slidev-build-not-yet' && issue.severity === 'error'));
+    assert.deepEqual(result.issues.map((issue) => issue.code), ['slidev-monaco-unsupported']);
+    assert.match(result.issues[0].message, /Monaco code editor/);
   });
 
   it('applies text edits over the original files when linking', async () => {

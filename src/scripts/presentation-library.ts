@@ -74,6 +74,8 @@ export class PresentationLibrary extends HTMLElement {
   /** Decks that could not be saved: compressed bytes only, bounded below. */
   private temporary = new Map<string, LibraryRecord>();
   private operation = 0;
+  /** Aborted when the operation it belongs to is superseded, so a slow conversion stops at once. */
+  private operationAbort = new AbortController();
   private busy = false;
   /** True while the dialog is closed and its playback has been cleaned up. */
   private closed = true;
@@ -92,6 +94,13 @@ export class PresentationLibrary extends HTMLElement {
    * loading. It replays when the view is shown again.
    */
   private replayPending = false;
+
+  /** Start a new operation: earlier ones see a changed number and their slow work is cancelled. */
+  private nextOperation(): number {
+    this.operationAbort.abort();
+    this.operationAbort = new AbortController();
+    return ++this.operation;
+  }
 
   private q<T extends HTMLElement = HTMLElement>(selector: string): T {
     const element = this.querySelector<T>(selector);
@@ -168,7 +177,7 @@ export class PresentationLibrary extends HTMLElement {
   }
 
   disconnectedCallback(): void {
-    this.operation += 1;
+    this.nextOperation();
     this.abort.abort();
     this.player?.destroy();
   }
@@ -192,7 +201,7 @@ export class PresentationLibrary extends HTMLElement {
   private afterClose(): void {
     if (this.closed) return;
     this.closed = true;
-    this.operation += 1;
+    this.nextOperation();
     this.busy = false;
     this.exitFullscreen();
     this.player?.destroy();
@@ -319,7 +328,7 @@ export class PresentationLibrary extends HTMLElement {
   }
 
   async openLibrary(): Promise<void> {
-    this.operation += 1;
+    this.nextOperation();
     this.busy = false;
     this.exitFullscreen();
     this.player?.destroy();
@@ -411,12 +420,16 @@ export class PresentationLibrary extends HTMLElement {
   }
 
   /**
-   * Build-time services for deck-project: the bundled libraries, the
-   * player's own checks, and progress in the notice unless quiet.
+   * Build-time services for deck-project: the bundled libraries, the Slidev
+   * converter, the player's own checks, progress in the notice unless quiet,
+   * and cancellation when the operation is superseded.
    */
   private buildDeps(operation: number, quiet = false): BuildDeps {
     return {
       vendor: async () => (await import('../lib/deck-vendor-browser')).browserVendorProvider(),
+      // The converter, its Worker and esbuild.wasm load only when a Slidev build is opened.
+      convertSlidev: async (files, detection, options) => (await import('../lib/slidev-convert-browser')).convertSlidevBuild(files, detection, options),
+      signal: operation === this.operation ? this.operationAbort.signal : AbortSignal.abort(),
       // The real preparation, discarded: a document the player would refuse is reported before saving.
       prepare: (html, profile) => { preparePresentationDocument(html, randomHex(18), randomHex(18), { profile }); },
       ...(quiet ? {} : { onProgress: (message: string) => { if (operation === this.operation) this.notice(message); } }),
@@ -426,7 +439,7 @@ export class PresentationLibrary extends HTMLElement {
   private async openSaved(id: string): Promise<void> {
     if (this.busy) { this.notice('A presentation is opening. Please wait a moment.'); return; }
     this.busy = true;
-    const operation = ++this.operation;
+    const operation = this.nextOperation();
     try {
       let record: LibraryRecord | undefined = this.temporary.get(id);
       const saved = !record;
@@ -463,7 +476,7 @@ export class PresentationLibrary extends HTMLElement {
   async tryOpenFile(file: File): Promise<boolean> {
     if (this.busy) throw new Error('A presentation is already opening. Please wait a moment.');
     this.busy = true;
-    const operation = ++this.operation;
+    const operation = this.nextOperation();
     try {
       const deckProject = await import('../lib/deck-project');
       const project = await deckProject.openDeck(file);
@@ -886,7 +899,7 @@ export class PresentationLibrary extends HTMLElement {
     if (this.busy) return;
     this.openDialog();
     this.notice('Opening the interactive Slidev example…');
-    const operation = ++this.operation;
+    const operation = this.nextOperation();
     const response = await fetch(this.dataset.exampleUrl!, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error('The example could not be downloaded. Try again when the website is available.');
     const archive = await response.blob();
