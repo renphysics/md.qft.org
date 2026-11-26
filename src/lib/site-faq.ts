@@ -37,7 +37,7 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Can I open an interactive Slidev presentation ZIP?',
-    answer: 'Yes. Use Open file for a Slidev ZIP prepared with the supplied portable packager, or choose Slidev presentations in the sidebar to try the quantum interference example. The ZIP contains a compiled presentation with embedded libraries, images, and fonts, plus optional editable source. Start runs it locally in an isolated player; Present opens fullscreen. Packages can be saved in this browser, downloaded unchanged, or exported to a standalone HTML player. No server upload or runtime CDN is required. A source-only Slidev project or an ordinary dist ZIP must be built and packaged first.',
+    answer: 'Yes. Use Open file for a Slidev ZIP prepared with the supplied portable packager, or choose Slidev presentations in the sidebar to try the quantum interference example. The ZIP contains a compiled presentation with embedded libraries, images, and fonts, plus optional editable source. Start runs it locally in an isolated player that cannot read your documents and blocks ordinary network requests; Present opens fullscreen. Packages can be saved in this browser, downloaded unchanged, or exported to a standalone HTML player. No server upload or runtime CDN is required. A source-only Slidev project or an ordinary dist ZIP must be built and packaged first.',
   },
   {
     question: 'How do I revise a Slidev presentation made by AI?',

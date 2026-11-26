@@ -4,7 +4,7 @@ import { generateSlidevPrompt } from '../src/lib/slidev-prompt.ts';
 
 test('Slidev instructions preserve the lesson brief and require a playable build plus source', () => {
   const prompt = generateSlidevPrompt({ topic: 'Quantum interference', audience: 'First-year physics students', language: '中文', duration: 90, mathLevel: 'Complex amplitudes', demos: 'A phase slider' });
-  for (const expected of ['Quantum interference', 'First-year physics students', '中文', '90 minutes', 'Complex amplitudes', 'A phase slider', 'npm ci', 'pack.mjs', 'qft-presentation.json', 'presentation.html', 'source/', 'network access disabled', 'not been compiled']) assert.ok(prompt.includes(expected), expected);
+  for (const expected of ['Quantum interference', 'First-year physics students', '中文', '90 minutes', 'Complex amplitudes', 'A phase slider', 'npm ci', 'pack.mjs', 'qft-presentation.json', 'presentation.html', 'source/', 'network access disabled', 'not been compiled', 'Node.js 22.22 or newer']) assert.ok(prompt.includes(expected), expected);
 });
 
 test('Slidev instructions bound untrusted form values and never promise a browser build', () => {

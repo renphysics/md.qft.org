@@ -132,9 +132,15 @@ is retained in the original archive. Packages and metadata are saved atomically
 in a separate deployment-scoped IndexedDB database. Storage failures leave the
 current imported package usable and explain keeping the original ZIP.
 
-The player grants scripts an opaque origin, with no access to editor drafts,
-network services, workers, nested frames, persistent storage, or dynamic code
-evaluation. Package all libraries, images, data, and fonts before import. A
+The player gives scripts an opaque origin, with no access to editor drafts or
+other saved packages, and blocks ordinary network requests, workers, nested
+frames, persistent storage, and dynamic code evaluation. Package all
+libraries, images, data, and fonts before import. Blocking network requests is
+a privacy default rather than a guarantee: a package written to get around it
+can still make limited outbound connections (in current browsers, for example,
+a prerender or preconnect link, or WebRTC STUN traffic), which can reveal your
+IP address and what the package itself contains. It still cannot read your
+documents. Open packages from sources you trust. A
 runtime error stops the failed player and reports the problem. Source and
 package parsing never execute imported code. This boundary does not make
 unbounded computations well behaved.
@@ -196,7 +202,7 @@ In the insertion dialog, expand **Use your own HTML & JavaScript**, then paste t
 
 Use inline `<style>` and `<script>` elements and attach handlers with `addEventListener`. External scripts, module imports, network calls, inline event attributes such as `onclick`, `eval`, nested frames, forms, and popup windows are outside this supported format. Include code and styles directly; use embedded raster data images for assets. A complete Slidev application belongs in the separate presentation player; this small-demo format does not compile React or Vue source. A document supports **20 demo blocks**, each custom block up to **100,000 source characters**, within the editor's overall 400,000-character source limit.
 
-Demos run only after an explicit **Run demo** action. The workspace uses a same-site runner inside an iframe with `sandbox="allow-scripts"` and an opaque origin; it does not grant `allow-same-origin`. Portable exports use a nonce-bearing sandboxed `srcdoc` document. The demo's DOM and storage origin remain separate from the editor's drafts. A restrictive child Content Security Policy blocks external dependencies and connections. This isolation does not make arbitrary code well behaved: a custom demo should avoid unbounded loops and excessive computation.
+Demos run only after an explicit **Run demo** action. The workspace uses a same-site runner inside an iframe with `sandbox="allow-scripts"` and an opaque origin; it does not grant `allow-same-origin`. Portable exports use a nonce-bearing sandboxed `srcdoc` document. The demo's DOM and storage origin remain separate from the editor's drafts. A restrictive child Content Security Policy blocks external dependencies and ordinary network requests; as for presentations, it is not a complete network firewall against code written to get around it. This isolation does not make arbitrary code well behaved: a custom demo should avoid unbounded loops and excessive computation.
 
 ### Interactive HTML and static PDF
 
@@ -223,6 +229,8 @@ npm test
 npm run build
 npm run preview
 ```
+
+After a build, `npm run test:browser` runs every end-to-end suite in `tests/browser/*.browser.mjs` against the production preview in full Chromium (`npx playwright install chromium`; set `QFT_BROWSER_EXECUTABLE` to use another Chromium build). Pass a suite name to run one, for example `npm run test:browser -- slides`. Screenshots and results go to `artifacts/`.
 
 Astro writes the finished static website to `dist/`. Commit the source and lockfile; `dist/` and `node_modules/` are intentionally ignored. The [Check workflow](.github/workflows/check.yml) runs the checks without publishing.
 
@@ -261,7 +269,7 @@ Use backticks or fenced code blocks when demonstrating syntax literally. A backs
 
 Local saving is convenient, but it is not a backup. Clearing site data, private-browsing policies, or changing browser/profile can remove or hide local drafts. A custom domain, a different Pages hostname, and localhost have separate browser storage; project paths on the same host use separate application storage names. **Download Markdown + images for drafts whose editable source and pictures you want to keep independently.** Markdown alone is sufficient when there are no local image attachments to preserve.
 
-The application does not send document text to a server. The host still receives ordinary website requests, including the static sandbox runner when a demo starts in the workspace. Demo source is passed to that frame locally in the browser. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
+The application does not send document text to a server. The host still receives ordinary website requests, including the static sandbox runner when a demo starts in the workspace. Demo source is passed to that frame locally in the browser. Running demos and presentations cannot read your documents, and their ordinary network requests are blocked; deliberately hostile code can still make limited outbound connections, so run code from sources you trust. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
 
 ## License
 

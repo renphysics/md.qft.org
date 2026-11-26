@@ -28,7 +28,7 @@ PORTABLE PLAYBACK REQUIREMENTS
 - Vue, SVG, Canvas, and compatible WebGL demonstrations are appropriate. Review a library's runtime requirements before including it. Merely adding a CDN link does not package the library.
 
 BUILD AND DELIVER
-From the starter source directory, run npm ci, then npm run build. Run:
+Use Node.js 22.22 or newer, which the pinned Slidev 53.1.0 requires. From the starter source directory, run npm ci, then npm run build. Run:
 node pack.mjs --dist .build --source . --out lesson.zip --title "Your lesson title"
 
 Deliver lesson.zip, containing qft-presentation.json, the self-contained compiled presentation.html, and the editable source/ project including its lockfile and build instructions. Do not send only slides.md or an ordinary dist ZIP. Do not include node_modules, private files, credentials, or repository metadata. If you cannot run the build, say clearly that the source has not been compiled and provide exact build steps.

@@ -8,7 +8,7 @@ browser.
 
 ## Make a presentation
 
-Use Node.js 22.12 or newer. In this directory:
+Use Node.js 22.22 or newer (Slidev 53.1.0 requires it). In this directory:
 
 ```sh
 npm ci
@@ -51,7 +51,9 @@ original source remains available for your next revision.
 
 This player intentionally runs the presentation in an isolated iframe. It
 does not give imported JavaScript access to the editor's drafts, filesystem,
-or browser storage.
+or browser storage, and it blocks ordinary network requests, so a package must
+work offline. That block is a privacy default rather than a guarantee: code
+written to get around it can still make limited outbound connections.
 
 - Keep `routerMode: memory`. Normal history routing expects a hosted origin.
 - Keep `fonts.provider: none`. Use system fonts or locally bundled fonts.
