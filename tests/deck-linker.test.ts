@@ -147,7 +147,7 @@ describe('linking the test decks', () => {
     const result = await link(loadFixtureDeck('cdn-reveal5-single'));
     assert.deepEqual(result.issues, [{
       code: 'bundled-library', severity: 'info', where: 'cdn.jsdelivr.net',
-      message: 'Reveal.js 5.2.1 from cdn.jsdelivr.net is replaced by the Reveal.js 6.0.2 built into this site.',
+      message: 'Reveal.js 5.2.1 from cdn.jsdelivr.net is replaced by the copy of Reveal.js 6.0.2 that comes with this site.',
     }]);
     const list = scripts(result.html);
     const order = list.map((script) => script.marker ?? (script.from?.startsWith('katex/') ? script.from : script.from?.replace(/^.*\/(?:dist|plugin)\//, '')) ?? 'inline');

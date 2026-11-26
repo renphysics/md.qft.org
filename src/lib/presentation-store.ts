@@ -174,7 +174,7 @@ function openDatabase(): Promise<IDBDatabase> {
   return pending;
 }
 
-const damaged = () => new PresentationStorageError('A saved presentation record is damaged. Its data has been preserved.');
+const damaged = () => new PresentationStorageError('A saved presentation record is damaged. Its data has been preserved. Open your original file again to keep working with it.');
 
 function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
@@ -216,13 +216,13 @@ const utf8 = new TextEncoder();
 function validateEdits(value: unknown): DeckEdits {
   const entries = value instanceof Map ? [...value.entries()]
     : value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : undefined;
-  if (!entries) throw new PresentationStorageError('The edited files could not be saved.');
-  if (entries.length > DECK_EDIT_LIMITS.files) throw new PresentationStorageError('Too many edited files to save.');
+  if (!entries) throw new PresentationStorageError('The edited files could not be saved. Download the ZIP to keep your edits.');
+  if (entries.length > DECK_EDIT_LIMITS.files) throw new PresentationStorageError('Too many edited files to save. Download the ZIP to keep your edits.');
   const result: DeckEdits = Object.create(null);
   let total = 0;
   for (const [path, text] of entries) {
     if (typeof path !== 'string' || !safePresentationPath(path) || typeof text !== 'string') {
-      throw new PresentationStorageError('The edited files could not be saved.');
+      throw new PresentationStorageError('The edited files could not be saved. Download the ZIP to keep your edits.');
     }
     const size = utf8.encode(text).length;
     if (size > DECK_EDIT_LIMITS.fileBytes) {
@@ -347,13 +347,13 @@ async function recordHash(id: string, hash: string): Promise<void> {
  */
 export async function saveDeck(input: SaveDeckInput): Promise<SaveDeckResult> {
   if (!(input.archive instanceof Blob) || !input.archive.size || input.archive.size > PRESENTATION_LIMITS.archiveBytes) {
-    throw new PresentationStorageError('The original presentation ZIP is missing or too large to save.');
+    throw new PresentationStorageError('The original presentation ZIP is missing or too large to save. Keep the original file as your backup.');
   }
-  if (!isStoredDeckKind(input.kind)) throw new PresentationStorageError('This kind of presentation cannot be saved.');
+  if (!isStoredDeckKind(input.kind)) throw new PresentationStorageError('This kind of presentation cannot be saved. Keep the original file as your backup.');
   const edits = input.edits === undefined ? undefined : validateEdits(input.edits);
   const hasEdits = !!edits && Object.keys(edits).length > 0;
   if (hasEdits && !isEditableDeckKind(input.kind)) {
-    throw new PresentationStorageError('This kind of presentation cannot be edited in the browser.');
+    throw new PresentationStorageError('This kind of presentation cannot be edited in the browser. Change its source files and build it again.');
   }
   const hash = await hashArchive(input.archive);
   const now = Date.now();
@@ -368,7 +368,7 @@ export async function saveDeck(input: SaveDeckInput): Promise<SaveDeckResult> {
       ...(input.aspectRatio !== undefined ? { aspectRatio: input.aspectRatio } : {}),
     });
   } catch {
-    throw new PresentationStorageError('This presentation has invalid details and could not be saved.');
+    throw new PresentationStorageError('This presentation has invalid details and could not be saved. Keep the original file as your backup.');
   }
   // A version 1 copy has no stored hash yet; compare those of the same size first.
   let older: StoredPresentationInfo | undefined;
@@ -395,7 +395,7 @@ export async function saveDeck(input: SaveDeckInput): Promise<SaveDeckResult> {
 /** A successful save means both original bytes and metadata have committed. */
 export async function savePresentation(pkg: PresentationPackage): Promise<StoredPresentationInfo> {
   if (!(pkg.archive instanceof Blob) || !pkg.archive.size || pkg.archive.size > PRESENTATION_LIMITS.archiveBytes) {
-    throw new PresentationStorageError('The original presentation ZIP is missing or too large to save.');
+    throw new PresentationStorageError('The original presentation ZIP is missing or too large to save. Keep the original file as your backup.');
   }
   const { info } = await saveDeck({
     title: pkg.manifest.title, engine: 'slidev', kind: 'qft-presentation',
@@ -462,7 +462,7 @@ export async function updateDeckEdits(id: string, edits: DeckEdits | Map<string,
         }
         readArchiveRecord(bytesRequest.result, info);
         if (hasEdits && !isEditableDeckKind(info.kind)) {
-          throw new PresentationStorageError('This kind of presentation cannot be edited in the browser.');
+          throw new PresentationStorageError('This kind of presentation cannot be edited in the browser. Change its source files and build it again.');
         }
         const record: Record<string, unknown> = { ...bytesRequest.result };
         delete record.edits;

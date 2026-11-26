@@ -578,11 +578,11 @@ class DeckLinker {
     } else if (kind === 'style') {
       this.report('external-style', 'warning', `The stylesheet ${target.where} would have to come from the internet, so it is left out, and the slides may look different. ${NEXT_STEP}`, address);
     } else if (kind === 'image') {
-      this.report('external-image', 'warning', `The picture ${target.where} is on the internet rather than in the deck, so it is left out.`, target.where);
+      this.report('external-image', 'warning', `The picture ${target.where} is on the internet rather than in the presentation, so it is left out.`, target.where);
     } else if (kind === 'media') {
-      this.report('external-media', 'warning', `The video or sound ${target.where} is on the internet rather than in the deck, so it is left out.`, target.where);
+      this.report('external-media', 'warning', `The video or sound ${target.where} is on the internet rather than in the presentation, so it is left out.`, target.where);
     } else if (kind === 'markdown') {
-      this.report('external-markdown', 'warning', `The slides in ${target.where} are on the internet rather than in the deck, so they are left out.`, target.where);
+      this.report('external-markdown', 'warning', `The slides in ${target.where} are on the internet rather than in the presentation, so they are left out.`, target.where);
     } else {
       this.report('embedded-page', 'warning', `The embedded page from ${target.host} cannot be shown here, so a placeholder takes its place.`, target.host);
     }
@@ -596,7 +596,7 @@ class DeckLinker {
         `The presentation refers to ${path}, which was left out of it because ${reason}. Rename the file and change the reference to the new name, then make the ZIP again.`, path);
       return;
     }
-    this.report('missing-file', 'warning', `The deck refers to ${path}, but that file is not in it.`, path);
+    this.report('missing-file', 'warning', `The presentation refers to ${path}, but that file is not in it. Add the file to the ZIP.`, path);
   }
 
   private reportOther(value: string): void {
@@ -618,8 +618,8 @@ class DeckLinker {
     if (this.versionNotes.has(key)) return;
     this.versionNotes.add(key);
     const message = reference.host
-      ? `${name}${reference.requested && !/^latest$/i.test(reference.requested) ? ` ${reference.requested}` : ''} from ${reference.host} is replaced by the ${name} ${bundled} built into this site.`
-      : `The deck uses ${name} files it does not include, such as ${from ?? reference.files[0]}; the ${name} ${bundled} built into this site is used instead.`;
+      ? `${name}${reference.requested && !/^latest$/i.test(reference.requested) ? ` ${reference.requested}` : ''} from ${reference.host} is replaced by the copy of ${name} ${bundled} that comes with this site.`
+      : `The presentation uses ${name} files it does not include, such as ${from ?? reference.files[0]}; the copy of ${name} ${bundled} that comes with this site is used instead.`;
     this.report('bundled-library', 'info', message, reference.host ?? from);
   }
 
@@ -1195,7 +1195,7 @@ class DeckLinker {
       this.removedReferences += 1;
       const shown = unsupported.slice(0, 3).join(', ');
       this.failedModuleTexts.push(code);
-      this.report('es-modules-unsupported', 'warning', `A module script imports ${shown}, and module imports cannot be played here yet, so that script is left out.`, shown);
+      this.report('es-modules-unsupported', 'warning', `Part of the presentation's code (it imports ${shown}) cannot run here, so it is left out. Ask your AI assistant to put that code directly in index.html.`, shown);
       defaultTreeAdapter.detachNode(element);
       return;
     }
@@ -1350,7 +1350,7 @@ class DeckLinker {
         if (target.kind === 'remote') this.reportRemote(target, 'markdown');
         else if (target.kind === 'missing') this.reportMissing(target.path);
         else this.reportOther(source);
-        text = `## Slides not included\n\nThe slides in ${source.replace(/[\\`*_[\]<>#]/g, '')} are not part of this deck.`;
+        text = `## Slides not included\n\nThe slides in ${source.replace(/[\\`*_[\]<>#]/g, '')} are not part of this presentation.`;
       }
       // Reveal removes the indentation of an inline template's first line from
       // every line; external files never had that, so keep the first line flush.
@@ -1608,7 +1608,7 @@ class DeckLinker {
         if (href !== undefined) {
           const target = this.resolve(href.endsWith('/') ? `${href}x` : href, this.baseDir);
           if (target.kind === 'local' || target.kind === 'missing') this.baseDir = dirname(target.path);
-          else this.report('document-base', 'info', 'The page sets a base address on the internet; its files are looked up in the deck instead.');
+          else this.report('document-base', 'info', 'The page points to a web address for its files; the files in your ZIP are used instead.');
         }
       }
       if (name === 'script') {
@@ -1658,7 +1658,7 @@ class DeckLinker {
     }
     this.document = parse(text);
     if (treeDepth(this.document) > MAX_DEPTH) {
-      this.report('deck-unreadable', 'error', 'This page is nested too deeply to prepare for playback.');
+      this.report('deck-unreadable', 'error', 'This page has too many elements inside one another to prepare for playback. Ask your AI assistant for a simpler index.html.');
       return undefined;
     }
     // Scripts always run in the player, so <noscript> content never applies. The
@@ -1866,7 +1866,7 @@ class DeckLinker {
     const mathjax = flavour ? flavour !== 'katex'
       : /\bRevealMath\s*\.\s*MathJax[234]\b|\bRevealMath\s*[,\])]|\bmath\s*:\s*\{|\bmathjax[234]?\s*:/.test(code) || !/\bRevealMath\s*\.\s*KaTeX\b/.test(code);
     if (mathjax) {
-      this.report('math-rendered-with-katex', 'info', 'Formulas are typeset with the KaTeX built into this site instead of MathJax. A few MathJax-only commands may show as errors.');
+      this.report('math-rendered-with-katex', 'info', 'Formulas are typeset with the copy of KaTeX that comes with this site instead of MathJax. A few MathJax-only commands may show as errors.');
     }
   }
 
@@ -1878,7 +1878,7 @@ class DeckLinker {
     for (const issue of this.issues) {
       if (issue.code !== 'es-modules-unsupported') continue;
       issue.severity = 'error';
-      issue.message = cleanReportedText(`This deck starts from a module script that imports ${issue.where}, and module imports cannot be played here yet.`, 350);
+      issue.message = cleanReportedText(`The presentation's start-up code (it imports ${issue.where}) cannot run here, so the slides cannot start. Ask your AI assistant to put that code directly in index.html.`, 350);
     }
   }
 
@@ -2197,7 +2197,7 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
       entry: '', inlinedFiles: 0, embeddedAssets: 0, bundledFiles: [], removedReferences: 0,
       convertedHandlers: 0, htmlLength: 0, largestAssets: [],
     };
-    return { html: '', issues: [{ code: 'entry-missing', severity: 'error', message: 'This deck has no HTML page to start from.' }], stats: empty };
+    return { html: '', issues: [{ code: 'entry-missing', severity: 'error', message: 'This presentation has no HTML page to start from. Put index.html at the top of the ZIP.' }], stats: empty };
   }
   const linker = new DeckLinker(files, vendor, entry, detection, maxLength, options.skippedFiles);
   const html = await linker.link(decodeText(files.get(entry)!, entry)) ?? '';
@@ -2205,7 +2205,7 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
   if (html.length > maxLength) {
     const largest = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${path} (${formatBytes(bytes)})`).join(', ');
     linker.report('deck-too-large', 'error',
-      `The deck is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.${largest ? ` The largest files are ${largest}.` : ''}`);
+      `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.${largest ? ` The largest files are ${largest}.` : ''}`);
   }
   return { html, issues: linker.issues, stats };
 }

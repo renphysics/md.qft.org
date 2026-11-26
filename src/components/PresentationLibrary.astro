@@ -17,17 +17,17 @@ import '../styles/presentations.css';
         <div>
           <span class="eyebrow">A LITTLE MORE INTERACTION</span>
           <h3>Let your audience<br />explore the idea.</h3>
-          <p>Open a Reveal.js deck or web page from your AI assistant, as an HTML file or a ZIP, or a ZIP of a Slidev build. It plays here with its slides, sliders, and demonstrations, and your files stay in this browser.</p>
+          <p>Open a Reveal.js presentation or web page from your AI assistant, as an HTML file or a ZIP, or a ZIP of a Slidev build. It plays here with its slides, sliders, and demonstrations, and your files stay in this browser.</p>
           <div class="presentation-welcome-actions"><button class="button-primary" data-pres-open><Icon name="upload" size={16} /> Open presentation <span class="sr-only">(HTML or ZIP file)</span></button><a href={withBase('guide/#presentations')}>How it works <Icon name="arrow" size={15} /></a></div>
         </div>
         <button class="presentation-example" data-pres-example aria-label="Try the interactive Slidev physics example">
           <svg viewBox="0 0 360 120" aria-hidden="true"><defs><linearGradient id="presentation-wave-color"><stop stop-color="#d8a5ae" /><stop offset="1" stop-color="#b9d2c1" /></linearGradient></defs><path d="M0 60H360M180 0V120" fill="none" stroke="#ffffff20" /><path d="M0 60C20 60 20 25 40 25S60 95 80 95S100 10 120 10S140 110 160 110S180 10 200 10S220 95 240 95S260 25 280 25S300 60 320 60S340 70 360 70" fill="none" stroke="url(#presentation-wave-color)" stroke-width="2.5" /><path d="M0 60C60 60 100 5 180 5S280 60 360 60M0 60C60 60 100 115 180 115S280 60 360 60" fill="none" stroke="#ffffff25" stroke-dasharray="3 5" /></svg>
-          <span class="presentation-example-caption"><span><strong>Quantum interference</strong><small>A real Slidev deck with a live demo</small></span><span class="presentation-example-play"><Icon name="play" size={18} /></span></span>
+          <span class="presentation-example-caption"><span><strong>Quantum interference</strong><small>A real Slidev presentation with a live demo</small></span><span class="presentation-example-play"><Icon name="play" size={18} /></span></span>
         </button>
       </div>
       <div class="presentation-library-heading"><h3>Saved in this browser <span data-pres-count>0</span></h3><a href={withBase('slidev/interactive-physics.zip')} download>Slidev starter ZIP <Icon name="download" size={14} /></a></div>
       <div class="presentation-saved-list" data-pres-list role="list"><p class="presentation-empty">Your imported presentations will appear here.</p></div>
-      <p class="presentation-library-note">For Markdown slides you edit here, use <strong>Slides</strong> in the workspace. This library plays Reveal.js decks, other web pages, and Slidev builds, and lets you edit the source of Reveal.js decks and web pages.</p>
+      <p class="presentation-library-note">For Markdown slides you edit here, use <strong>Slides</strong> in the workspace. This library plays Reveal.js presentations, other web pages, and Slidev builds, and lets you edit the source of Reveal.js decks and web pages.</p>
     </section>
     <section class="presentation-deck" data-pres-deck hidden aria-label="Imported presentation">
       <div class="presentation-toolbar">
@@ -43,7 +43,7 @@ import '../styles/presentations.css';
           <div class="presentation-frame-host" data-pres-host></div>
           <div class="presentation-problem presentation-stalled" data-pres-stalled role="alert" hidden></div>
           <div class="presentation-start" data-pres-start>
-            <span class="presentation-engine" data-pres-engine>Slidev</span><h3 data-pres-start-title>Your presentation is ready.</h3>
+            <span class="presentation-engine" data-pres-engine></span><h3 data-pres-start-title>Your presentation is ready.</h3>
             <p data-pres-start-message>Slides and demonstrations run locally when you press Start.</p>
             <div class="presentation-problem" data-pres-problem role="alert" hidden></div>
             <button class="button-primary" data-pres-start-button><Icon name="play" size={17} /> Start presentation</button>

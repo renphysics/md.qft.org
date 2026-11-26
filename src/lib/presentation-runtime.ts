@@ -746,7 +746,7 @@ function presentationRuntimeFactory() {
     // valid input cannot silently exceed the receiving limit and time out.
     if (prepared.length > 26 * 1024 * 1024) {
       throw unsupported('The presentation is too large after preparing it for playback. Reduce its embedded assets or split the deck, then rebuild the portable ZIP.',
-        'The presentation is too large after preparing it for playback. Reduce its embedded pictures and media, or split the deck.');
+        'The presentation is too large after preparing it for playback. Reduce its embedded pictures and media, or split it into two presentations.');
     }
     return prepared;
   }

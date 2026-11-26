@@ -174,7 +174,7 @@ export default async function run(t) {
     await page.keyboard.insertText(html);
     await page.locator('[data-pres-apply]').click();
     await until(async () => /^Nothing was applied/.test(await editStatus(page)), 'the build problem to be reported');
-    assert.match(await page.locator('[data-pres-edit-problem]').textContent(), /module/);
+    assert.match(await page.locator('[data-pres-edit-problem]').textContent(), /start-up code \(it imports \.\/js\/missing\.mjs\) cannot run here/);
     assert.equal(await badge(page, 'index.html').textContent(), 'Not applied', 'the change stays in the editor');
     await page.locator('[data-pres-view="preview"]').click();
     assert.equal(await deckShowing(page, EDITED_HEADING), before, 'the same deck keeps playing');

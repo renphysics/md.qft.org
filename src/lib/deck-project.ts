@@ -569,9 +569,11 @@ async function convertSlidevBuildForPlayback(project: DeckProject, deps: BuildDe
       };
     }
     const reason = cleanReportedText(error instanceof Error ? error.message : String(error), 300);
+    // Every failure ends with what to do; the converter's own texts mostly say it already.
+    const next = /build again|open the zip again|reload the page/i.test(reason) ? '' : ' Open a ZIP of the whole dist folder, or build again with "npx slidev build".';
     return {
       html: '',
-      issues: [{ code: 'slidev-convert-failed', severity: 'error', message: `The Slidev build could not be converted${reason ? `: ${reason}` : '.'}` }],
+      issues: [{ code: 'slidev-convert-failed', severity: 'error', message: `The Slidev build could not be converted${reason ? `: ${reason}` : '.'}${next}` }],
     };
   }
 }
@@ -640,7 +642,7 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
       if (issues.some((issue) => issue.severity === 'error')) return failed(mergeIssues([], issues), 'tolerant');
       return failed(mergeIssues([{
         code: 'not-a-presentation', severity: 'error',
-        message: 'No presentation was found in this file. Open a Reveal.js deck or another web page (an HTML file, or a ZIP with index.html at the top), a ZIP of a Slidev build, or a portable presentation package.',
+        message: 'No presentation was found in this file. Open a Reveal.js presentation or another web page (an HTML file, or a ZIP with index.html at the top), a ZIP of a Slidev build, or a portable presentation package.',
       }], issues), 'tolerant');
     }
   }

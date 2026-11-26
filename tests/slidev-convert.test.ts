@@ -339,7 +339,7 @@ describe('each conversion step', () => {
     }), recorder().bundler);
     assert.equal(result.html, '');
     assert.deepEqual(codes(result.issues), ['slidev-workers-unsupported']);
-    assert.match(result.issues[0].message, /Web Workers \(assets\/ts\.worker-AbCd1234\.js, assets\/slide-1\.js\)/);
+    assert.match(result.issues[0].message, /background workers \(assets\/ts\.worker-AbCd1234\.js, assets\/slide-1\.js\)/);
   });
 
   it('refuses builds whose scripts cannot fit, and results beyond the player’s limit', async () => {

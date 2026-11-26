@@ -80,7 +80,7 @@ function reply(kind: DeckKind, needsChanges: boolean): string {
     return 'Reply: send back one self-contained index.html made with Reveal.js, or a ZIP with index.html at the top and every file it uses.';
   }
   return needsChanges
-    ? 'Reply: send back the complete corrected deck, as one index.html or as a ZIP with index.html at the top, fixing the notes above and changing nothing else.'
+    ? 'Reply: send back the complete corrected presentation, as one index.html or as a ZIP with index.html at the top, fixing the notes above and changing nothing else.'
     : 'Reply: no changes are needed for playback.';
 }
 

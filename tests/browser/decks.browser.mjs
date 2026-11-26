@@ -137,7 +137,7 @@ export default async function run(t) {
     const notes = page.locator('[data-pres-notes]');
     assert.equal(await notes.isVisible(), true);
     await notes.locator('summary').click();
-    assert.match(await page.locator('[data-pres-notes-list]').textContent(), /Reveal\.js 6\.0\.2 built into this site/);
+    assert.match(await page.locator('[data-pres-notes-list]').textContent(), /copy of Reveal\.js 6\.0\.2 that comes with this site/);
     await page.locator('[data-pres-report]').click();
     await until(async () => /Report copied/.test(await page.locator('[data-pres-notice]').textContent()), 'the report to be copied');
     const report = await page.evaluate(() => navigator.clipboard.readText());

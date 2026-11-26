@@ -116,7 +116,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   if (skipped > NAMED_SKIPS) {
     issues.push({
       code: 'archive-path-skipped', severity: 'warning',
-      message: `Skipped ${skipped - NAMED_SKIPS} more files whose names cannot be used in a presentation.`,
+      message: `Skipped ${skipped - NAMED_SKIPS} more files whose names cannot be used in a presentation. Rename them and make the ZIP again.`,
     });
   }
   if (!kept.length) unreadable('It contains no usable files.');

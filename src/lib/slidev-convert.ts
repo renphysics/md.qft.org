@@ -321,7 +321,7 @@ function readLink(conversion: Conversion, link: Element, folder: string, parts: 
   if (isRemote(href)) {
     const host = hostOf(href) || 'another site';
     if (rel.includes('stylesheet') && FONT_HOSTS.test(host)) {
-      conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the deck plays, so system fonts are used instead.`, href);
+      conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, href);
     } else if (rel.includes('stylesheet')) {
       conversion.report('external-stylesheet', 'warning', `A stylesheet from ${host} was left out, because the player works without the internet. The slides may look different.`, href);
     } else if (rel.includes('icon') || rel.includes('apple-touch-icon')) {
@@ -362,7 +362,7 @@ function readScript(conversion: Conversion, script: Element, folder: string, par
   const code = textOf(script);
   if (!code.trim()) return;
   if (module) {
-    conversion.report('script-left-out', 'warning', 'An inline module script in index.html was left out: a Slidev build starts from one module script.', conversion.entry);
+    conversion.report('script-left-out', 'warning', 'A script written inside index.html was left out, because a Slidev build starts from its own script file. If something is missing, build again with "npx slidev build".', conversion.entry);
     return;
   }
   parts.inlineScripts.push(code);
@@ -426,7 +426,7 @@ class StyleSheets {
     text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;@]*);/gi, (_rule, _quote: string, url: string) => {
       if (isRemote(url)) {
         const host = hostOf(url) || 'another site';
-        if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the deck plays, so system fonts are used instead.`, url);
+        if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, url);
         else this.conversion.report('external-stylesheet', 'warning', `A stylesheet from ${host} was left out, because the player works without the internet. The slides may look different.`, url);
         return '';
       }
@@ -601,7 +601,7 @@ function refuse(conversion: Conversion, detection: DeckDetection, modules: reado
   if (detection.flags.slidevHasWorkers || workerFiles.length || workerCode.length) {
     const named = [...workerFiles, ...workerCode].slice(0, NAMED).map((path) => shown(path, 120));
     conversion.report('slidev-workers-unsupported', 'error',
-      `This Slidev build starts Web Workers${named.length ? ` (${named.join(', ')})` : ''}, background scripts that the player does not allow. Remove the feature that needs them, often Monaco code blocks, build again, and open the new ZIP.`,
+      `This Slidev build uses background workers${named.length ? ` (${named.join(', ')})` : ''}, which cannot run here; live code editors (Monaco code blocks) are the usual cause. Remove the feature that needs them, build again, and open the new ZIP.`,
       named[0]);
     refused = true;
   }
@@ -777,7 +777,7 @@ export function createEsbuildBundler(esbuild: EsbuildApi): SlidevBundler {
           if (args.kind === 'entry-point') return { path: entry, namespace: NAMESPACE };
           const path = resolve(args.path, args.importer);
           return path === undefined
-            ? { errors: [{ text: `${shown(args.importer, 120)} imports ${shown(args.path, 120)}, which is not in the build.` }] }
+            ? { errors: [{ text: `${shown(args.importer, 120)} imports ${shown(args.path, 120)}, which is not in the build. Open a ZIP of the whole dist folder, or build again.` }] }
             : { path, namespace: NAMESPACE };
         });
         build.onLoad({ filter: /.*/, namespace: NAMESPACE }, (args) => ({ contents: modules.get(args.path) ?? '', loader: 'js' }));
@@ -791,7 +791,7 @@ export function createEsbuildBundler(esbuild: EsbuildApi): SlidevBundler {
       plugins: [files],
     });
     const output = result.outputFiles ?? [];
-    if (output.length !== 1) throw new Error('The bundler did not produce exactly one script.');
+    if (output.length !== 1) throw new Error('its scripts could not be combined into one. Open a ZIP of the whole dist folder, or build again with "npx slidev build".');
     return output[0].text;
   };
 }

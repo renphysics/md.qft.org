@@ -18,7 +18,7 @@ describe('deck check report', () => {
     assert.ok(lines.includes('entry: index.html'));
     assert.ok(lines.includes('- info external-font (fonts.googleapis.com): Web fonts are left out.'));
     assert.ok(lines.includes('- warning missing-file: The deck refers to a.png, but that file is not in it.'));
-    assert.match(lines.at(-1)!, /^Reply: send back the complete corrected deck/);
+    assert.match(lines.at(-1)!, /^Reply: send back the complete corrected presentation/);
     assert.equal(lines.filter((line) => line.startsWith('Reply:')).length, 1, 'one sentence says what to send back');
   });
 
@@ -118,7 +118,7 @@ describe('deck check report', () => {
       assert.match(rules, /every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
       assert.match(rules, /nothing may load from the internet while the presentation plays/);
       assert.ok(lines.indexOf(rules) < lines.length - 1, 'the reply stays last');
-      assert.match(lines.at(-1)!, /^Reply: send back the complete corrected deck/);
+      assert.match(lines.at(-1)!, /^Reply: send back the complete corrected presentation/);
     }
     assert.doesNotMatch(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [] }), /Rules for this player/, 'nothing to change, no rules');
     assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /supplies only Reveal\.js/, 'Slidev gets its own rules');
@@ -134,10 +134,10 @@ describe('deck check report', () => {
     const blank = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], stalled: 'blank' });
     assert.match(blank, /^result: does not start \(/m);
     assert.match(blank, /Rules for this player/, 'a deck that does not start needs changes');
-    assert.match(blank.split('\n').at(-1)!, /^Reply: send back the complete corrected deck/);
+    assert.match(blank.split('\n').at(-1)!, /^Reply: send back the complete corrected presentation/);
     const rescued = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], stalled: 'rescued' });
     assert.match(rescued, /^result: starts with basic settings \(/m);
-    assert.match(rescued.split('\n').at(-1)!, /^Reply: send back the complete corrected deck/);
+    assert.match(rescued.split('\n').at(-1)!, /^Reply: send back the complete corrected presentation/);
     const failed = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [{ code: 'x', severity: 'error', message: 'm' }], stalled: 'blank' });
     assert.match(failed, /^result: cannot play here$/m, 'an error from the check still wins');
   });

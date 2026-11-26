@@ -386,31 +386,31 @@ function remoteReference(reference: Reference, cdn: CdnReference, issues: IssueL
   switch (reference.kind) {
     case 'script':
       issues.add('external-library', 'warning',
-        `The deck loads ${item} from ${host}. Files from the internet are not available while the deck plays. Include the library in the ZIP or leave it out.`,
+        `The presentation loads ${item} from ${host}. Files from the internet are not available while the presentation plays. Ask your AI assistant to include the library in the ZIP, or to do without it.`,
         reference.url);
       break;
     case 'style':
     case 'font':
       if (/(?:^|\.)fonts\.(?:googleapis|gstatic)\.com$|(?:^|\.)use\.typekit\.net$|(?:^|\.)fonts\.bunny\.net$/.test(cdn.host)) {
         issues.add('external-font', 'info',
-          `Web fonts from ${host} are not available while the deck plays, so system fonts are used instead.`, reference.url);
+          `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, reference.url);
       } else if (reference.kind === 'font') {
         issues.add('external-font', 'info',
-          `A font comes from ${host} and is not available while the deck plays, so a system font is used instead.`, reference.url);
+          `A font comes from ${host} and is not available while the presentation plays, so a system font is used instead.`, reference.url);
       } else {
         issues.add('external-stylesheet', 'warning',
-          `The deck loads the stylesheet ${item} from ${host}, which is not available while the deck plays. Put the styles in the ZIP or inline them.`,
+          `The presentation loads the stylesheet ${item} from ${host}, which is not available while the presentation plays. Ask your AI assistant to put the styles in the ZIP or inside index.html.`,
           reference.url);
       }
       break;
     case 'image':
       issues.add('external-image', 'warning',
-        `An image comes from ${host} and will not show while the deck plays. Put the picture in the ZIP or embed it as a data: URI.`,
+        `An image comes from ${host} and will not show while the presentation plays. Put the picture file in the ZIP next to index.html.`,
         reference.url);
       break;
     case 'frame':
       issues.add('external-frame', 'warning',
-        `An embedded page comes from ${host} and will not load while the deck plays. Replace it with a picture or a local demo.`,
+        `An embedded page comes from ${host} and will not load while the presentation plays. Replace it with a picture, or ask your AI assistant to build the demo into the presentation.`,
         reference.url);
       break;
     case 'media':
@@ -419,7 +419,7 @@ function remoteReference(reference: Reference, cdn: CdnReference, issues: IssueL
       break;
     case 'markdown':
       issues.add('external-file', 'warning',
-        `Slide text is loaded from ${host}, which is not available while the deck plays. Put the Markdown file in the ZIP.`,
+        `Slide text is loaded from ${host}, which is not available while the presentation plays. Put the Markdown file in the ZIP.`,
         reference.url);
       break;
   }
@@ -548,7 +548,7 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
     if (/^(?:\.{0,2}\/|https?:\/\/|\/\/)/i.test(specifier)) extra.push({ kind: 'script', url: specifier, from: page.path });
     else if (!/^(?:reveal\.js|katex)(?:\/|$)/i.test(specifier) && !/^[a-z][a-z0-9+.-]*:/i.test(specifier)) {
       issues.add('external-library', 'warning',
-        `The deck imports the package ${shown(specifier, 80)}, which a browser cannot find without a build step. Include the file in the ZIP and import it by its path.`,
+        `The presentation needs the add-on ${shown(specifier, 80)}, which is not in its files. Ask your AI assistant to include it in the ZIP, or to do without it.`,
         specifier);
     }
   }
@@ -591,11 +591,11 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
   const ranged = loadedFromCdn.find(({ cdn }) => cdn.spec && cdn.spec !== 'latest' && !EXACT_VERSION.test(cdn.spec));
   if (unpinned) {
     issues.add('reveal-unpinned-cdn', 'warning',
-      `Reveal.js is loaded from ${shown(unpinned.cdn.host, 80)} without a version, so its files can change or disappear. Name an exact version, such as reveal.js@6.0.2.`,
+      `Reveal.js is loaded from ${shown(unpinned.cdn.host, 80)} without a version, so its files can change or disappear. Ask your AI assistant to name an exact version, such as reveal.js@6.0.2.`,
       unpinned.url);
   } else if (ranged) {
     issues.add('reveal-unpinned-cdn', 'info',
-      `Reveal.js is loaded from ${shown(ranged.cdn.host, 80)} with the version range ${shown(ranged.cdn.spec ?? '', 40)}. Name an exact version, such as reveal.js@6.0.2.`,
+      `Reveal.js is loaded from ${shown(ranged.cdn.host, 80)} with the version range ${shown(ranged.cdn.spec ?? '', 40)}. Ask your AI assistant to name an exact version, such as reveal.js@6.0.2.`,
       ranged.url);
   }
   if (version) major = Number(version.split('.')[0]);
@@ -614,7 +614,7 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
       && !/(?:^|\/)dist\/plugin\//.test(url));
     if (old) {
       issues.add('reveal-4x-plugin-paths-on-6x-files', 'warning',
-        'The deck uses Reveal.js 6 but loads its plugins from the Reveal.js 4 and 5 paths, such as plugin/notes/notes.js. Reveal.js 6 keeps them at dist/plugin/notes.js.',
+        'The presentation uses Reveal.js 6 but loads its plugins from the Reveal.js 4 and 5 paths, such as plugin/notes/notes.js. Reveal.js 6 keeps them at dist/plugin/notes.js; ask your AI assistant to load them from there.',
         old);
     }
   }
@@ -627,7 +627,7 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
   const math = mathPlugin(candidate.initScript, candidate.inline);
   if (math && math !== 'katex') {
     issues.add('reveal-mathjax', 'warning',
-      'The deck typesets mathematics with MathJax, which Reveal.js downloads from the internet while the deck plays. Use the RevealMath.KaTeX plugin instead.',
+      'The presentation typesets mathematics with MathJax, which Reveal.js downloads from the internet while the presentation plays. Ask your AI assistant to use the RevealMath.KaTeX plugin instead.',
       page.path);
   }
   inlineHandlerIssue(page, issues);
@@ -852,7 +852,7 @@ export function detectDeck(files: DeckFiles): DeckDetection {
     return classify(files, issues);
   } catch {
     // Parsing is designed not to throw; this guard keeps a surprise from blocking import.
-    issues.add('detection-failed', 'warning', 'The files could not be examined completely.');
+    issues.add('detection-failed', 'warning', 'The files could not be examined completely. Open the file again; if this keeps happening, copy the report for your AI assistant.');
     return { kind: 'unknown', issues: issues.list(), flags: {} };
   }
 }

@@ -304,7 +304,7 @@ export class DeckSourceView {
     const file = this.list.find((entry) => entry.path === path);
     if (!project || !file?.text) return;
     const text = editor.text(path) ?? deckFileText(project, path);
-    if (text === undefined) { this.message('This file could not be read.'); return; }
+    if (text === undefined) { this.message('This file could not be read. Download the ZIP to open it in another application.'); return; }
     editor.open({ path, text, editable: file.editable });
     this.q('[data-pres-code]').hidden = false;
     this.q('[data-pres-file-message]').hidden = true;
@@ -364,7 +364,7 @@ export class DeckSourceView {
       const outcome = await this.host.applyEdits(next.edits);
       if (project !== this.project) return false;
       if (!outcome.applied) {
-        this.problems(outcome.problems?.length ? outcome.problems : ['The presentation could not be prepared with these changes.']);
+        this.problems(outcome.problems?.length ? outcome.problems : ['The presentation could not be prepared with these changes. Undo the last change, then choose Apply changes again.']);
         this.status('Nothing was applied. The presentation still shows the last version that worked.');
         return false;
       }
@@ -425,7 +425,7 @@ export class DeckSourceView {
         // The original is what was imported, so it is restored even if it cannot play here.
         const outcome = await this.host.applyEdits(new Map(), { force: true });
         if (project !== this.project) return;
-        if (!outcome.applied) { this.problems(outcome.problems ?? []); this.status('The original could not be restored.'); return; }
+        if (!outcome.applied) { this.problems(outcome.problems ?? []); this.status('The original could not be restored. Close the presentation and open your original file again.'); return; }
         this.status(['The original presentation is restored.', outcome.storage ?? ''].filter(Boolean).join(' '));
         this.problems(outcome.storageProblem ? [outcome.storageProblem] : []);
       } finally {
