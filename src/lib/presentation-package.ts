@@ -47,7 +47,8 @@ export class PresentationPackageError extends Error {
   }
 }
 
-interface ArchiveEntry {
+/** One central-directory record, already checked against its local header. */
+export interface ArchiveEntry {
   name: string;
   size: number;
   compressedSize: number;
@@ -71,7 +72,8 @@ export function safePresentationPath(path: string): boolean {
       && !/[. ]$/.test(part));
 }
 
-function isIgnoredPath(path: string): boolean {
+/** Operating-system clutter that archivers add; never part of a deck. */
+export function isIgnoredPath(path: string): boolean {
   return path.startsWith('__MACOSX/')
     || /(?:^|\/)(?:\.DS_Store|Thumbs\.db|desktop\.ini)$/.test(path);
 }
@@ -93,8 +95,10 @@ function filename(bytes: Uint8Array, utf8: boolean, strict: boolean): string {
  * Inspect the central directory before allocating decompressed buffers.
  * Local records are checked against it, including byte ranges and CRCs below.
  * ZIP64, encrypted files, links, and multi-volume archives are deliberately excluded.
+ * With strictPaths false, names, duplicates and file/folder clashes are left
+ * to the caller, which must check them before using any path.
  */
-function inspectDirectory(bytes: Uint8Array, strictPaths = true): ArchiveEntry[] {
+export function inspectDirectory(bytes: Uint8Array, strictPaths = true): ArchiveEntry[] {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < 22) return invalidZip('Choose a valid ZIP archive.');
   let eocd = -1;
@@ -207,7 +211,11 @@ for (let index = 0; index < 256; index += 1) {
   crcTable[index] = crc >>> 0;
 }
 
-function readEntry(bytes: Uint8Array, entry: ArchiveEntry, retain: boolean): Uint8Array | undefined {
+/**
+ * Inflate one entry with bounded steps and verify its size and CRC. With
+ * retain false the data is only validated, never kept.
+ */
+export function readEntry(bytes: Uint8Array, entry: ArchiveEntry, retain: boolean): Uint8Array | undefined {
   let result: Uint8Array | undefined;
   let written = 0;
   let crc = 0xffffffff;
@@ -283,7 +291,8 @@ function parseManifest(bytes: Uint8Array): PresentationManifest {
   };
 }
 
-function isTextPath(path: string): boolean {
+/** Files the source viewer and editor treat as text. */
+export function isTextPath(path: string): boolean {
   return /\.(?:md|markdown|vue|[cm]?[jt]sx?|json|css|scss|sass|less|txt|ya?ml|html?|svg|toml|xml|csv)$/i.test(path)
     || /(?:^|\/)(?:LICENSE(?:\.[^/]+)?|README|\.gitignore|\.npmrc)$/i.test(path);
 }

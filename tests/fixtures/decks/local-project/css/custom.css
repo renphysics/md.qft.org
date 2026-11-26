@@ -1,0 +1,10 @@
+@import url("theme-extra.css");
+
+.reveal h2.on-picture {
+  background: url("../assets/pic.png") no-repeat right center / 1em 1em;
+  padding-right: 1.2em;
+}
+
+#ray-count {
+  font-weight: bold;
+}

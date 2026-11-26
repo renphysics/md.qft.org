@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Units and dimensions</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reset.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/theme/league.min.css">
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section data-markdown>
+        <textarea data-template>
+## Units and dimensions
+
+Why every equation must balance
+
+---
+
+## Base quantities
+
+- Length (m)
+- Mass (kg)
+- Time (s)
+
+Note: Mention that the kilogram was redefined in 2019.
+
+---
+
+## A quick check
+
+Is `v = d / t` dimensionally consistent?
+
+--
+
+### Answer
+
+Yes: both sides are length over time.
+
+---
+
+## Thank you
+        </textarea>
+      </section>
+      <section>
+        <h2>Your turn</h2>
+        <p id="answer">Press the button to reveal the answer.</p>
+        <button onclick="document.getElementById('answer').textContent = 'Force is mass times acceleration: kg m / s²'">Show answer</button>
+      </section>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/plugin/markdown/markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/plugin/notes/notes.min.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      plugins: [RevealMarkdown, RevealNotes],
+    });
+  </script>
+</body>
+</html>

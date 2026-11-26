@@ -1,6 +1,6 @@
 {
   "extends": "astro/tsconfigs/strict",
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist", "node_modules", "tools/slidev"],
+  "exclude": ["dist", "node_modules", "tools/slidev", "tests/fixtures"],
   "compilerOptions": { "noUncheckedIndexedAccess": false }
 }

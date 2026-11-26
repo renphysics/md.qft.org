@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Modules deck</title>
+  <link rel="stylesheet" href="./dist/reveal.css">
+  <link rel="stylesheet" href="./dist/theme/simple.css">
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section><h1>Modules deck</h1></section>
+      <section>
+        <h2>Counter</h2>
+        <p>Clicks: <span id="clicks">0</span></p>
+        <button id="add" type="button">Add one</button>
+      </section>
+      <section><h2>The end</h2></section>
+    </div>
+  </div>
+  <script type="module">
+    import Reveal from './dist/reveal.mjs';
+    import { startCounter } from './js/demo.mjs';
+
+    const deck = new Reveal({ hash: true });
+    deck.initialize().then(() => startCounter(document));
+  </script>
+</body>
+</html>
