@@ -43,6 +43,16 @@ describe('portable lesson project sources', () => {
     }
   });
 
+  it('treats the old prompt placeholder projectId as no id, so unrelated lessons do not collide', async () => {
+    const lesson = (title: string) => zip({ 'qft.json': manifest({ projectId: 'REPLACE-WITH-A-NEW-UUID', title, document: 'slides.md' }), 'slides.md': strToU8(`# ${title}`) });
+    const first = await importWorkspaceBundle(lesson('Thermodynamics'));
+    const second = await importWorkspaceBundle(lesson('Electromagnetism'));
+    assert.ok(first.project && second.project);
+    assert.notEqual(first.project.id, 'REPLACE-WITH-A-NEW-UUID');
+    assert.notEqual(first.project.id, second.project.id);
+    assert.notEqual(createLessonProject('slides.md', 'replace-with-a-new-uuid').id, 'replace-with-a-new-uuid');
+  });
+
   it('keeps edited demo source and chooses a fresh, noncolliding path for inserted images', async () => {
     const imported = await importWorkspaceBundle(zip({
       'qft.json': manifest({ document: 'slides.md' }), 'slides.md': strToU8('# Lesson'),

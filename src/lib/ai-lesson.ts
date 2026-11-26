@@ -1,4 +1,4 @@
-import { createLessonProject, type LessonProject } from './lesson-project';
+import { createLessonProject, newProjectId, type LessonProject } from './lesson-project';
 
 export interface LessonAIInput {
   topic: string;
@@ -33,8 +33,12 @@ function lessonInput(input: LessonAIInput): LessonAIInput {
   };
 }
 
-/** A complete, copyable contract. No AI request or document upload is made here. */
-export function generateLessonPrompt(value: LessonAIInput): string {
+/**
+ * A complete, copyable contract. No AI request or document upload is made here.
+ * Each prompt carries its own new projectId, so a lesson made from it never
+ * collides with an unrelated one.
+ */
+export function generateLessonPrompt(value: LessonAIInput, projectId: string = newProjectId()): string {
   const input = lessonInput(value);
   return `Create an editable teaching presentation for md.qft.org using QFT Markdown lesson format version 2.
 
@@ -57,11 +61,11 @@ TEACHING GOALS
 DELIVERABLE
 Return a ZIP with qft.json at its root, slides.md, and any images/ and demos/ files. Use UTF-8. If this interface cannot attach a ZIP, create the files in the working directory and give me their download links; do not paste a React, Slidev, or Marp project.
 
-qft.json must have this shape (generate a fresh UUID for projectId for a new lesson):
+qft.json must have this shape. The projectId below was generated for this new lesson; use it exactly as written:
 {
   "format": "qft-markdown",
   "version": 2,
-  "projectId": "REPLACE-WITH-A-NEW-UUID",
+  "projectId": ${JSON.stringify(projectId)},
   "document": "slides.md",
   "title": ${JSON.stringify(shortText(input.topic, 'My lesson', 200))},
   "mode": "slides",
