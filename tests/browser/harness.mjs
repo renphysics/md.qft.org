@@ -2,10 +2,16 @@
  * Shared helpers for the end-to-end browser suites. A suite is a module named
  * `*.browser.mjs` in this folder that exports `title` and a default
  * `async function (t)`; `run.mjs` discovers and runs every suite against one
- * production preview server and one browser.
+ * server for the production build (./dist, or BASE_URL) and one browser.
  */
-import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+
+const DIST = fileURLToPath(new URL('../../dist', import.meta.url));
 
 export const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -31,31 +37,77 @@ export function launchBrowser() {
   return chromium.launch(executablePath ? { executablePath } : { channel: 'chromium' });
 }
 
-/** Start `npm run preview` unless BASE_URL names a server that is already running. */
-export async function startPreview() {
-  const port = Number(process.env.QFT_PREVIEW_PORT) || 4322;
-  const baseUrl = process.env.BASE_URL || `http://127.0.0.1:${port}/`;
-  let server;
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.md': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.zip': 'application/zip', '.woff': 'font/woff',
+  '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.webmanifest': 'application/manifest+json',
+};
+
+/**
+ * Serve the production build in this checkout's dist folder (or `root`) on 127.0.0.1 with a small
+ * static server: GET and HEAD only, a folder answers with its index.html
+ * (a folder without its trailing slash is redirected, as on the static host),
+ * anything else is 404 with the site's 404.html. Port 0 picks a free port, so
+ * a server that already runs on the usual preview port is never mistaken for
+ * this tree's build.
+ */
+export async function serveStatic(root = DIST, port = 0) {
+  const base = resolve(root);
+  if (!existsSync(join(base, 'index.html'))) throw new Error(`No build in ${base}: run "npm run build" first, or set BASE_URL.`);
   let output = '';
-  if (!process.env.BASE_URL) {
-    server = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'preview', '--', '--port', String(port)], {
-      stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32',
+  const log = line => { output = (output + line + '\n').slice(-12_000); };
+  const send = async (request, response, status, file, headers = {}) => {
+    const body = file ? await readFile(file) : Buffer.alloc(0);
+    response.writeHead(status, {
+      'content-type': file ? TYPES[extname(file).toLowerCase()] || 'application/octet-stream' : 'text/plain',
+      'content-length': body.length, 'cache-control': 'no-store', ...headers,
     });
-    const capture = chunk => { output = (output + String(chunk)).slice(-12_000); };
-    server.stdout.on('data', capture);
-    server.stderr.on('data', capture);
-    server.on('error', error => { output += `\n${error.message}`; });
-  }
-  await until(async () => (await fetch(baseUrl, { signal: AbortSignal.timeout(1000) })).ok, 'the production preview server');
-  return {
-    baseUrl,
-    output: () => output,
-    stop() {
-      if (!server?.pid) return;
-      try { process.kill(process.platform === 'win32' ? server.pid : -server.pid, 'SIGTERM'); }
-      catch { server.kill('SIGTERM'); }
-    },
+    response.end(request.method === 'HEAD' ? undefined : body);
   };
+  const server = createServer(async (request, response) => {
+    try {
+      if (request.method !== 'GET' && request.method !== 'HEAD') return void await send(request, response, 405, undefined, { allow: 'GET, HEAD' });
+      const url = new URL(request.url || '/', 'http://localhost');
+      let path;
+      try { path = decodeURIComponent(url.pathname); } catch { return void await send(request, response, 400); }
+      const file = resolve(base, `.${path}`);
+      if (file !== base && !file.startsWith(base + sep)) return void await send(request, response, 404, join(base, '404.html'));
+      const info = await stat(file).catch(() => undefined);
+      if (info?.isDirectory()) {
+        if (!path.endsWith('/')) return void await send(request, response, 301, undefined, { location: `${url.pathname}/${url.search}` });
+        if (existsSync(join(file, 'index.html'))) return void await send(request, response, 200, join(file, 'index.html'));
+      } else if (info?.isFile()) return void await send(request, response, 200, file);
+      log(`404 ${url.pathname}`);
+      await send(request, response, 404, existsSync(join(base, '404.html')) ? join(base, '404.html') : undefined);
+    } catch (error) {
+      log(`500 ${request.url}: ${error?.message || error}`);
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    }
+  });
+  await new Promise((done, fail) => { server.once('error', fail); server.listen(port, '127.0.0.1', () => { server.off('error', fail); done(); }); });
+  const address = /** @type {import('node:net').AddressInfo} */ (server.address());
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/`,
+    output: () => output,
+    stop() { server.closeAllConnections(); server.close(); },
+  };
+}
+
+/**
+ * The site under test: BASE_URL when it names a server that is already
+ * running (the gate runner and other checkouts use this), else this
+ * checkout's ./dist served by serveStatic on a free port (or on
+ * QFT_PREVIEW_PORT when that is set).
+ */
+export async function startPreview() {
+  const server = process.env.BASE_URL
+    ? { baseUrl: process.env.BASE_URL, output: () => '', stop() {} }
+    : await serveStatic(DIST, Number(process.env.QFT_PREVIEW_PORT) || 0);
+  await until(async () => (await fetch(server.baseUrl, { signal: AbortSignal.timeout(1000) })).ok, `the site at ${server.baseUrl}`);
+  return server;
 }
 
 /**

@@ -1,7 +1,8 @@
 /**
  * Run every browser suite (tests/browser/*.browser.mjs) against the production
- * build. Run `npm run build` first. Pass suite names to run a subset, e.g.
- * `npm run test:browser -- slides`.
+ * build. Run `npm run build` first: the harness serves this checkout's dist
+ * folder itself on a free port, unless BASE_URL names a server that is already
+ * running. Pass suite names to run a subset, e.g. `npm run test:browser -- slides`.
  */
 import assert from 'node:assert/strict';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';

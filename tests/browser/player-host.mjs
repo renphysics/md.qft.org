@@ -69,7 +69,7 @@ window.begin = (options) => { const done = pending(); if (options === 'restart')
 </script></body></html>`;
 }
 
-/** Serve the host page at a private address under the preview server and open it. */
+/** Serve the host page at a private address under the site being tested and open it. */
 export async function openHost(t, context, page, path = '__player-host__/') {
   const url = new URL(path, t.baseUrl).href;
   const html = hostPage(await runtimeBundle());
