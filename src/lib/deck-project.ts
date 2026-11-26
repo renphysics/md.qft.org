@@ -115,10 +115,6 @@ export interface StoredDeckSource {
   edits?: DeckEdits;
 }
 
-export const DECK_ENGINE_LABELS: Readonly<Record<DeckEngine, string>> = Object.freeze({
-  slidev: 'Slidev', reveal: 'Reveal.js', html: 'HTML',
-});
-
 const ENGINE_OF: Readonly<Record<DeckKind, DeckEngine>> = Object.freeze({
   'qft-presentation': 'slidev', 'slidev-build': 'slidev', 'slidev-source': 'slidev',
   reveal: 'reveal', html: 'html', 'markdown-bundle': 'html', unknown: 'html',
@@ -559,7 +555,7 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
     case 'slidev-source': {
       const issues = project.issues.some((issue) => issue.code === 'slidev-source') ? [...project.issues] : [...project.issues, {
         code: 'slidev-source', severity: 'error' as const,
-        message: 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project and import a ZIP of the dist folder.',
+        message: 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, then open a ZIP of the dist folder.',
       }];
       return failed(mergeIssues([], issues), 'tolerant');
     }
@@ -567,7 +563,7 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
       const issues = project.issues.length ? [...project.issues] : [];
       return failed(mergeIssues([{
         code: 'not-a-presentation', severity: 'error',
-        message: 'No presentation was found in this file. Open an HTML page made with Reveal.js, a ZIP with index.html at the top, or a portable presentation package.',
+        message: 'No presentation was found in this file. Open a Reveal.js deck or another web page (an HTML file, or a ZIP with index.html at the top), a ZIP of a Slidev build, or a portable presentation package.',
       }], issues), 'tolerant');
     }
   }

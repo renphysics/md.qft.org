@@ -297,21 +297,10 @@ export function isTextPath(path: string): boolean {
     || /(?:^|\/)(?:LICENSE(?:\.[^/]+)?|README|\.gitignore|\.npmrc)$/i.test(path);
 }
 
-function sourceOnly(entries: ArchiveEntry[], bytes: Uint8Array): boolean {
-  for (const entry of entries) {
-    if (!/(?:^|\/)package\.json$/.test(entry.name) || entry.size > 256 * 1024) continue;
-    try {
-      const data = JSON.parse(decodeText(extract(bytes, entry), entry.name));
-      if (data?.dependencies?.['@slidev/cli'] || data?.devDependencies?.['@slidev/cli']) return true;
-    } catch { /* A non-presentation ZIP remains the existing importer's concern. */ }
-  }
-  return entries.some((entry) => /(?:^|\/)slides\.md$/i.test(entry.name))
-    && entries.some((entry) => /\.vue$/i.test(entry.name));
-}
-
 /**
- * Return null for existing Markdown ZIPs. Explicit presentation/source-only
- * packages get actionable errors rather than silently falling back to Markdown.
+ * Check a portable presentation package (a ZIP with qft-presentation.json).
+ * Returns null for a ZIP without that manifest: Markdown bundles, lessons and
+ * other decks are read elsewhere (deck-project.ts sends only packages here).
  * The File bytes stay in the browser and the original ZIP is retained unchanged.
  */
 export async function inspectPresentationArchive(file: File): Promise<PresentationPackage | null> {
@@ -325,19 +314,7 @@ export async function inspectPresentationArchive(file: File): Promise<Presentati
   const entries = directory.filter((entry) => !entry.directory && !isIgnoredPath(entry.name));
   const manifests = entries.filter((entry) => entry.name === PRESENTATION_MANIFEST
     || entry.name.endsWith('/' + PRESENTATION_MANIFEST));
-  if (!manifests.length) {
-    // Preserve the established QFT lesson path, even if its inert files mention Slidev.
-    if (entries.some((entry) => /(?:^|\/)qft\.json$/.test(entry.name))) return null;
-    if (sourceOnly(entries, bytes)) {
-      throw new PresentationPackageError('This ZIP contains Slidev source, not a playable presentation. Ask the AI to build it with the QFT Slidev packaging tool, following tools/slidev/README.md, and include the compiled presentation.');
-    }
-    if (entries.some((entry) => /(?:^|\/)index\.html?$/i.test(entry.name))
-      && entries.some((entry) => /\.m?js$/i.test(entry.name))
-      && !entries.some((entry) => /\.(?:md|markdown)$/i.test(entry.name))) {
-      throw new PresentationPackageError('This is a website build ZIP. Follow tools/slidev/README.md and use the QFT Slidev packaging tool to bundle its scripts, fonts, and assets for local playback.');
-    }
-    return null;
-  }
+  if (!manifests.length) return null;
   inspectDirectory(bytes);
   if (manifests.length !== 1) throw new PresentationPackageError('Choose a ZIP containing one presentation package.');
   const manifestEntry = manifests[0];

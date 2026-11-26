@@ -622,7 +622,7 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
   const math = mathPlugin(candidate.initScript, candidate.inline);
   if (math && math !== 'katex') {
     issues.add('reveal-mathjax', 'warning',
-      'The deck typesets maths with MathJax, which Reveal.js downloads from the internet while the deck plays. Use the RevealMath.KaTeX plugin instead.',
+      'The deck typesets mathematics with MathJax, which Reveal.js downloads from the internet while the deck plays. Use the RevealMath.KaTeX plugin instead.',
       page.path);
   }
   inlineHandlerIssue(page, issues);
@@ -783,7 +783,7 @@ function detectSlidevSource(files: DeckFiles, paths: string[], issues: IssueList
   if (!manifest && !(best && best.score >= 4)) return undefined;
   const entry = best && best.score > 0 ? best.path : undefined;
   issues.add('slidev-source', 'error',
-    `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project and import a ZIP of the dist folder, or ask the AI tool for the built presentation.`,
+    `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project and open a ZIP of the dist folder here, or ask the AI tool for the built presentation.`,
     entry ?? manifest);
   const title = cleanReportedText(best?.title ?? '', 200);
   return {

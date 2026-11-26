@@ -84,13 +84,13 @@ describe('portable presentation ZIP import', () => {
     })), null);
   });
 
-  it('explains source-only projects and ordinary website builds', async () => {
-    await assert.rejects(inspectPresentationArchive(rawZip({
+  it('leaves Slidev source and ordinary website builds to the deck reader', async () => {
+    assert.equal(await inspectPresentationArchive(rawZip({
       'slides.md': '# A lecture', 'package.json': '{"devDependencies":{"@slidev/cli":"53"}}',
-    })), /contains Slidev source.*packaging tool/);
-    await assert.rejects(inspectPresentationArchive(rawZip({
+    })), null);
+    assert.equal(await inspectPresentationArchive(rawZip({
       'dist/index.html': html, 'dist/assets/app.js': 'app()',
-    })), /website build ZIP.*packaging tool/);
+    })), null);
   });
 
   it('rejects traversal, absolute, URL-like and platform-dependent paths', async () => {

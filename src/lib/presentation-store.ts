@@ -214,7 +214,7 @@ function validateEdits(value: unknown): DeckEdits {
     }
     total += size;
     if (total > DECK_EDIT_LIMITS.totalBytes) {
-      throw new PresentationStorageError('The edited files together are larger than 8 MB. Revert some edits, or edit the files outside the browser.');
+      throw new PresentationStorageError('The edited files together are larger than 8 MB. Discard the changes to some files, or edit them outside the browser.');
     }
     result[path] = text;
   }

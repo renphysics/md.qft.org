@@ -658,7 +658,7 @@ export async function convertSlidevFiles(
       patches.unpatchedPreload[0]);
   } else if (!patches.preload && [...patched.values()].some((code) => /\bimport\s*\(/.test(code))) {
     conversion.report('slidev-preload-unpatched', 'warning',
-      'This Slidev build loads its slides in a way the converter does not recognise, probably because an older Slidev made it, so some slides may stay blank. Building again with a current Slidev should help.');
+      'This Slidev build loads its slides in a way the converter does not recognize, probably because an older Slidev made it, so some slides may stay blank. Building again with a current Slidev should help.');
   }
   if (!patches.router) {
     conversion.report('slidev-router-unpatched', 'warning',

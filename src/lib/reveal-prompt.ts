@@ -27,7 +27,7 @@ ${cdn}/theme/white.css
 ${cdn}/reveal.js
 ${cdn}/plugin/notes.js
 ${cdn}/plugin/math.js
-- Call Reveal.initialize({ width: 1280, height: 720, plugins: [RevealMath.KaTeX, RevealNotes] }). Write maths as \\( ... \\) and \\[ ... \\].
+- Call Reveal.initialize({ width: 1280, height: 720, plugins: [RevealMath.KaTeX, RevealNotes] }). Write math as \\( ... \\) and \\[ ... \\].
 - Ground the slides in any chapter I attach; never invent sources.
 - One idea per slide. Use class="fragment" for step-by-step reveals and <aside class="notes"> for what I should say.
 - Build each demo in an inline script with canvas or inline SVG, labeled controls and a Reset button. Attach handlers with addEventListener, never onclick attributes.
