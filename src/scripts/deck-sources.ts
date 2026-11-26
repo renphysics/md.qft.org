@@ -333,7 +333,7 @@ export class DeckSourceView {
   }
 
   /**
-   * Rebuild with the changed files and replay on the same slide. A build
+   * Rebuild with the changed files and replay (a Reveal.js deck on the same slide). A build
    * error changes nothing: the problem is shown, the changes stay in the
    * editor, and the presentation keeps the last version that worked.
    */
@@ -361,8 +361,11 @@ export class DeckSourceView {
         return false;
       }
       for (const path of paths) if (editor.text(path) === deckFileText(project, path)) this.touched.delete(path);
-      const replay = outcome.replay === 'now' ? 'The presentation shows them on the same slide.'
-        : outcome.replay === 'on-return' ? 'Choose Presentation to see them on the same slide.'
+      // Only Reveal.js decks report their slide, so only they come back to it;
+      // any other page starts again from the beginning.
+      const reveal = project.engine === 'reveal';
+      const replay = outcome.replay === 'now' ? (reveal ? 'The presentation shows them on the same slide.' : 'The presentation starts again from the beginning to show them.')
+        : outcome.replay === 'on-return' ? (reveal ? 'Choose Presentation to see them on the same slide.' : 'Choose Presentation to see them. The presentation starts again from the beginning.')
           : outcome.replay === 'on-start' ? 'Start the presentation to see them.' : '';
       this.status([done, replay, outcome.storage ?? ''].filter(Boolean).join(' '));
       return true;
