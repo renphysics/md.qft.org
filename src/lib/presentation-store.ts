@@ -85,8 +85,10 @@ export function isEditableDeckKind(value: unknown): boolean {
 /**
  * Version 2 adds decks of every engine, a content hash and a text-edit
  * overlay. Version 1 records are kept as they are and read as portable Slidev
- * packages; opening version 2 also closes version 1 tabs, whose stricter
- * listing could not read the new records.
+ * packages. Opening version 2 does not close tabs that still run the version 1
+ * code: their connection is closed by the upgrade and their next request
+ * fails. From version 2 on, such a tab says that the page was updated in
+ * another tab and asks for a reload (VersionError, versionchange).
  */
 const DATABASE_VERSION = 2;
 const DATABASE_NAME = scopedStorageKey('qft-presentations');
@@ -95,6 +97,14 @@ const ARCHIVE_STORE = 'archives';
 const HASH_INDEX = 'hash';
 let connection: Promise<IDBDatabase> | undefined;
 let connectionFactory: IDBFactory | undefined;
+/** Set when a newer version of the site opened the database in another tab; this tab must reload. */
+let outdated = false;
+
+/** What a tab running older code is told once a newer version of the site has upgraded the database. */
+export const STORAGE_OUTDATED_TEXT = 'This page was updated in another tab. Reload the page to continue.';
+
+/** Why saving edits was refused: the stored copy is newer than the one this tab's edits were based on. */
+export const EDITS_CHANGED_ELSEWHERE_TEXT = 'This presentation was changed in another tab or window, so your edits were not saved. The text in this tab is kept. Reopen the presentation to continue from the saved version.';
 
 export class PresentationStorageError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -106,6 +116,7 @@ export class PresentationStorageError extends Error {
 function storageError(error: unknown): PresentationStorageError {
   if (error instanceof PresentationStorageError) return error;
   const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
+  if (name === 'VersionError') return new PresentationStorageError(STORAGE_OUTDATED_TEXT, { cause: error });
   return new PresentationStorageError(name === 'QuotaExceededError'
     ? 'Browser storage is full. Keep the original ZIP, then remove presentations you no longer need.'
     : 'This presentation could not be saved or reopened in this browser. Keep the original ZIP so you can open it again.',
@@ -120,7 +131,9 @@ function openDatabase(): Promise<IDBDatabase> {
     connection?.then((db) => db.close(), () => {});
     connection = undefined;
     connectionFactory = factory;
+    outdated = false;
   }
+  if (outdated) return Promise.reject(new PresentationStorageError(STORAGE_OUTDATED_TEXT));
   if (connection) return connection;
   let pending: Promise<IDBDatabase>;
   pending = new Promise((resolve, reject) => {
@@ -146,8 +159,11 @@ function openDatabase(): Promise<IDBDatabase> {
       const db = request.result;
       if (finished) { db.close(); return; }
       finished = true;
+      // A newer version of the site is opening the database in another tab:
+      // let it upgrade, and from now on tell this tab to reload.
       db.onversionchange = () => {
         db.close();
+        outdated = true;
         if (connection === pending) connection = undefined;
       };
       resolve(db);
@@ -391,10 +407,40 @@ export async function savePresentation(pkg: PresentationPackage): Promise<Stored
 }
 
 /**
- * Replace a deck's text-edit overlay. An empty overlay reverts to the
- * original archive, which is never modified.
+ * The saved record whose original archive has the same bytes, if there is
+ * one: by its SHA-256, then among version 1 records, which have no stored hash.
  */
-export async function updateDeckEdits(id: string, edits: DeckEdits | Map<string, string>): Promise<StoredPresentationInfo> {
+export async function findSavedDeck(archive: Blob): Promise<StoredPresentationInfo | undefined> {
+  if (!(archive instanceof Blob) || !archive.size || archive.size > PRESENTATION_LIMITS.archiveBytes) return undefined;
+  const hash = await hashArchive(archive);
+  const found = await transaction<StoredPresentationInfo | undefined>('readonly', (tx, result) => {
+    const lookup = tx.objectStore(METADATA_STORE).index(HASH_INDEX).getAll(hash);
+    lookup.onsuccess = () => {
+      result(undefined);
+      for (const record of lookup.result) {
+        try { result(validateInfo(record)); return; } catch { /* A damaged twin is not a saved copy. */ }
+      }
+    };
+  });
+  if (found) return found;
+  try { return await findUnhashedCopy(archive, hash); } catch { return undefined; }
+}
+
+export interface UpdateDeckEditsOptions {
+  /**
+   * The `updatedAt` of the stored record that the caller's overlay is based
+   * on. When the stored record is newer (another tab or window saved edits
+   * since), nothing is written and the update is refused.
+   */
+  basedOn?: number;
+}
+
+/**
+ * Replace a deck's text-edit overlay. An empty overlay reverts to the
+ * original archive, which is never modified. Every write moves `updatedAt`
+ * forward, so `basedOn` detects any change made elsewhere in between.
+ */
+export async function updateDeckEdits(id: string, edits: DeckEdits | Map<string, string>, options: UpdateDeckEditsOptions = {}): Promise<StoredPresentationInfo> {
   const overlay = validateEdits(edits);
   const hasEdits = Object.keys(overlay).length > 0;
   return transaction('readwrite', (tx, result, fail) => {
@@ -410,6 +456,10 @@ export async function updateDeckEdits(id: string, edits: DeckEdits | Map<string,
           throw new PresentationStorageError('This presentation was removed in another tab. Open its ZIP to restore it.');
         }
         const info = validateInfo(infoRequest.result);
+        // Checked inside the write transaction, so two tabs cannot both pass it.
+        if (options.basedOn !== undefined && info.updatedAt > options.basedOn) {
+          throw new PresentationStorageError(EDITS_CHANGED_ELSEWHERE_TEXT);
+        }
         readArchiveRecord(bytesRequest.result, info);
         if (hasEdits && !isEditableDeckKind(info.kind)) {
           throw new PresentationStorageError('This kind of presentation cannot be edited in the browser.');
@@ -417,7 +467,7 @@ export async function updateDeckEdits(id: string, edits: DeckEdits | Map<string,
         const record: Record<string, unknown> = { ...bytesRequest.result };
         delete record.edits;
         archives.put(hasEdits ? { ...record, edits: overlay } : record);
-        const updated: Record<string, unknown> = { ...infoRequest.result, updatedAt: Math.max(Date.now(), info.updatedAt) };
+        const updated: Record<string, unknown> = { ...infoRequest.result, updatedAt: Math.max(Date.now(), info.updatedAt + 1) };
         delete updated.edited;
         if (hasEdits) updated.edited = true;
         metadata.put(updated);

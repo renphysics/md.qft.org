@@ -7,6 +7,7 @@ import { inspectPresentationArchive } from '../src/lib/presentation-package.ts';
 import {
   listPresentations, listPresentationsDetailed, getPresentation, savePresentation, deletePresentation,
   saveDeck, updateDeckEdits, hashArchive, isEditableDeckKind, PresentationStorageError, DECK_EDIT_LIMITS,
+  findSavedDeck, STORAGE_OUTDATED_TEXT, EDITS_CHANGED_ELSEWHERE_TEXT,
 } from '../src/lib/presentation-store.ts';
 import { deckFromHtmlFile } from '../src/lib/deck-archive.ts';
 import { htmlFixture, zipFixture } from './helpers/deck-fixtures.ts';
@@ -268,6 +269,53 @@ describe('presentation storage version 2', { concurrency: false }, () => {
     const archive = zipFixture('plain-html');
     await assert.rejects(saveDeck({ title: 'Build', engine: 'slidev', kind: 'slidev-build', fileName: 'b.zip', archive, edits: { 'index.html': 'x' } }), /cannot be edited/);
     await assert.rejects(updateDeckEdits('absent', { 'index.html': 'x' }), /removed in another tab/);
+  });
+
+  it('refuses edits based on an older copy, so two tabs cannot silently replace each other’s edits', async (context) => {
+    // One clock value for every call: the stored time still moves forward on each write.
+    context.mock.method(Date, 'now', () => Date.parse('2026-03-01T00:00:00Z'));
+    const { info } = await saveDeck(await revealDeck());
+    const tabOne = await updateDeckEdits(info.id, { 'index.html': '<!-- TAB-ONE -->' }, { basedOn: info.updatedAt });
+    assert.ok(tabOne.updatedAt > info.updatedAt);
+    await assert.rejects(updateDeckEdits(info.id, { 'index.html': '<!-- TAB-TWO -->' }, { basedOn: info.updatedAt }), (error: unknown) => {
+      assert.ok(error instanceof PresentationStorageError);
+      assert.equal(error.message, EDITS_CHANGED_ELSEWHERE_TEXT);
+      assert.match(error.message, /changed in another tab or window.*text in this tab is kept.*Reopen the presentation/);
+      return true;
+    });
+    assert.deepEqual((await getPresentation(info.id))?.edits, { 'index.html': '<!-- TAB-ONE -->' }, 'the first tab’s edits stay');
+    // Clearing the overlay is checked the same way.
+    await assert.rejects(updateDeckEdits(info.id, {}, { basedOn: info.updatedAt }), /changed in another tab/);
+    const again = await updateDeckEdits(info.id, { 'index.html': '<!-- TAB-ONE, later -->' }, { basedOn: tabOne.updatedAt });
+    assert.ok(again.updatedAt > tabOne.updatedAt);
+  });
+
+  it('finds the saved copy of an archive by its bytes', async () => {
+    const input = await revealDeck();
+    assert.equal(await findSavedDeck(input.archive), undefined);
+    const { info } = await saveDeck(input);
+    await updateDeckEdits(info.id, { 'index.html': 'fixed' });
+    const found = await findSavedDeck(new Blob([await input.archive.arrayBuffer()]));
+    assert.equal(found?.id, info.id);
+    assert.equal(found?.edited, true);
+    assert.equal(await findSavedDeck(zipFixture('plain-html')), undefined);
+  });
+
+  it('tells a tab to reload when a newer version of the site has upgraded the database', async () => {
+    await saveDeck(await revealDeck());
+    // A newer version opens the database in another tab: this tab's connection closes.
+    const newer = indexedDB.open(DATABASE, 99);
+    const db = await request(newer);
+    db.close();
+    await assert.rejects(listPresentations(), (error: unknown) => {
+      assert.ok(error instanceof PresentationStorageError);
+      assert.equal(error.message, STORAGE_OUTDATED_TEXT);
+      return true;
+    });
+    // A tab that opens the store only after the upgrade gets the same advice (VersionError).
+    globalThis.indexedDB = new IDBFactory();
+    await request(indexedDB.open(DATABASE, 99)).then((value) => value.close());
+    await assert.rejects(listPresentations(), new RegExp(STORAGE_OUTDATED_TEXT.replace(/\./g, '\\.')));
   });
 
   it('opens the original when a stored overlay is unreadable', async () => {
