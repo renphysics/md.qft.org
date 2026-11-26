@@ -1093,3 +1093,33 @@ test('a <noscript> fallback is removed before the checks, in both profiles, sinc
     assert.equal(removed, 1);
   }
 });
+
+test('the sandbox, permissions and Content Security Policies keep their exact values', () => {
+  // Changing any of these is a decision about the security model: update
+  // docs/ARCHITECTURE.md with it, then this test.
+  const sandbox = 'allow-scripts';
+  const allow = "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; serial 'none'; fullscreen 'none'";
+  const runnerPolicy = (script: string) => `default-src 'none'; script-src ${script}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+  const deckPolicy = (nonce: string) => `default-src 'none'; script-src 'nonce-${nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+  const exportPolicy = (nonce: string) => `default-src 'none'; script-src 'nonce-${nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src 'self' blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+  const inlineOnly = "script-src 'unsafe-inline'; script-src-attr 'none'";
+  const policies = (html: string) => [...html.matchAll(/http-equiv="Content-Security-Policy" content="([^"]*)"/g)].map((match) => match[1]);
+
+  const frame = runner('null');
+  frame.send(frame.parent, { type: 'qft-presentation-load', token: 'a'.repeat(36), html: '<p>Deck</p>' });
+  assert.equal(frame.frames[0].attrs.sandbox, sandbox);
+  assert.equal(frame.frames[0].attrs.allow, allow);
+  const f = playerFixture();
+  f.player.start();
+  assert.equal(f.frames[0].attrs.sandbox, sandbox);
+  assert.equal(f.frames[0].attrs.allow, allow);
+
+  assert.deepEqual(policies(runnerHtml), [runnerPolicy("'unsafe-inline'"), inlineOnly]);
+  assert.deepEqual(policies(presentationRunnerDocument('c'.repeat(36))), [runnerPolicy(`'nonce-${'c'.repeat(36)}'`), inlineOnly]);
+  for (const profile of ['strict', 'tolerant']) assert.deepEqual(policies(prepareWith(profile).html()), [deckPolicy('b'.repeat(36)), inlineOnly], profile);
+  const exported = exportPresentationHtml('<p>Deck</p>', 'Deck');
+  const nonce = exported.match(/<script nonce="([a-f0-9]{36})">/)?.[1];
+  assert.ok(nonce);
+  // The export's own two policies come first; the runtime source it carries follows.
+  assert.deepEqual(policies(exported).slice(0, 2), [exportPolicy(nonce), inlineOnly]);
+});
