@@ -104,6 +104,23 @@ describe('deck check report', () => {
     assert.match(report, /^engine: reveal$/m);
   });
 
+  it('states what the player supplies when a Reveal.js or HTML presentation needs changes', () => {
+    const notes = [{ code: 'external-library', severity: 'warning' as const, message: 'The script cdn.example/mermaid.min.js is left out.' }];
+    for (const kind of ['reveal', 'html'] as const) {
+      const report = formatDeckReport({ kind, engine: kind, issues: notes });
+      const lines = report.split('\n');
+      const rules = lines.find((line) => line.startsWith('Rules for this player:'));
+      assert.ok(rules, kind);
+      assert.match(rules, /supplies only Reveal\.js 6\.0\.2 and KaTeX/);
+      assert.match(rules, /every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
+      assert.match(rules, /nothing may load from the internet while the presentation plays/);
+      assert.ok(lines.indexOf(rules) < lines.length - 1, 'the reply stays last');
+      assert.match(lines.at(-1)!, /^Reply: send back the complete corrected deck/);
+    }
+    assert.doesNotMatch(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [] }), /Rules for this player/, 'nothing to change, no rules');
+    assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /Rules for this player/);
+  });
+
   it('says whether the presentation was edited when the caller knows', () => {
     assert.match(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], edited: true }), /^edited: yes \(files were changed in this site/m);
     assert.match(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], edited: false }), /^edited: no$/m);
