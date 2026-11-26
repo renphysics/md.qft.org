@@ -40,7 +40,7 @@ async function exported(kind: 'slides' | 'document', source: string, options: Re
   let html = '';
   const dependencies = { ...defaults, download: (content: string) => { html = content; } };
   const module = kind === 'slides'
-    ? functionsFrom('export-slides.ts', ['staticSlideCss', 'exportSlidesHtml'], dependencies)
+    ? functionsFrom('export-slides.ts', ['staticSlideCss', 'overflowingSlides', 'exportSlidesHtml'], dependencies)
     : functionsFrom('export-document.ts', ['exportPortableHtml'], dependencies);
   await (kind === 'slides' ? module.exportSlidesHtml : module.exportPortableHtml)(source, 'A <safe> title', options);
   return html;
@@ -64,6 +64,7 @@ async function executeParent(script: string): Promise<Record<string, unknown>> {
   let frames = 0;
   const context = {
     AbortController, Map, Element: class {}, setTimeout, clearTimeout,
+    getComputedStyle: (element: { overflow?: string }) => ({ overflowX: element.overflow ?? 'visible', overflowY: element.overflow ?? 'visible' }),
     document: {
       querySelector: () => root, getElementById: getControl, addEventListener: noop,
       body: { dataset: {} }, activeElement: null,
@@ -143,9 +144,12 @@ describe('portable interactive HTML exports', () => {
     const context = await executeParent(mainScript(html));
     let backgroundsRemoved = false;
     let printCopyRemoved = false;
+    // A display equation that paints a few pixels of glyph overhang
+    // (overflow: visible) is not clipped; a clipping code block is.
+    const overhang = { overflow: 'visible', clientHeight: 97, scrollHeight: 102, clientWidth: 900, scrollWidth: 900 };
     const content = (overflows: boolean) => ({
       clientHeight: 720, scrollHeight: overflows ? 850 : 720,
-      clientWidth: 1280, scrollWidth: 1280, querySelectorAll: () => [],
+      clientWidth: 1280, scrollWidth: 1280, querySelectorAll: () => [overhang],
     });
     const sections = [false, true].map((overflows) => ({ querySelector: () => content(overflows) }));
     // Reveal copies qft-slide onto its generated background elements. They
@@ -168,6 +172,28 @@ describe('portable interactive HTML exports', () => {
     await assert.rejects((context.checkPrintLayout as () => Promise<void>)(), /Slide 2 contains too much content/);
     assert.equal(backgroundsRemoved, true, 'generated backgrounds are absent from the static copy');
     assert.equal(printCopyRemoved, true, 'overflow cleans up the detached print copy');
+  });
+});
+
+describe('print overflow measurement', () => {
+  const { overflowingSlides: measure } = functionsFrom('export-slides.ts', ['overflowingSlides'], {
+    getComputedStyle: (element: { overflowX?: string; overflowY?: string }) => ({ overflowX: element.overflowX ?? 'visible', overflowY: element.overflowY ?? 'visible' }),
+  });
+  // The function runs in another realm; copy its array for deepEqual.
+  const overflowingSlides = (root: unknown): number[] => [...measure(root)];
+  const box = (patch: Record<string, unknown> = {}) => ({ clientHeight: 100, scrollHeight: 100, clientWidth: 500, scrollWidth: 500, ...patch });
+  const deck = (...slides: Record<string, unknown>[][]) => ({
+    querySelectorAll: () => slides.map((inner) => ({ querySelector: () => ({ ...box({ clientHeight: 600, scrollHeight: 600 }), querySelectorAll: () => inner }) })),
+  });
+
+  it('ignores painted overhang of an unclipped display equation', () => {
+    assert.deepEqual(overflowingSlides(deck([box({ scrollHeight: 105 })])), []);
+  });
+
+  it('reports content that a nested element really clips, on the axis it clips', () => {
+    assert.deepEqual(overflowingSlides(deck([box({ overflowX: 'auto', overflowY: 'hidden', scrollWidth: 700 })])), [1]);
+    assert.deepEqual(overflowingSlides(deck([box({ overflowX: 'auto', overflowY: 'visible', scrollHeight: 140 })])), []);
+    assert.deepEqual(overflowingSlides(deck([], [box({ overflowY: 'auto', scrollHeight: 300 })])), [2]);
   });
 });
 

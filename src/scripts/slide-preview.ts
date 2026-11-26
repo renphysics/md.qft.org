@@ -78,9 +78,29 @@ export async function createSlidePreview(
     scrollActivationWidth: 0,
     focusBodyOnPageVisibilityChange: false,
   });
-  try { await deck.initialize(); }
+  try { await withoutPageQuery(() => deck.initialize()); }
   catch (error) { deck.destroy(); wrapper.remove(); throw error; }
   return new SlidePreview(host, wrapper, canvas, slides, deck, onChange);
+}
+
+/**
+ * reveal.js merges every `?name=value` pair of the page URL into its
+ * configuration, and treats `?print-pdf` as print view, when initialize()
+ * starts. The page's query belongs to the application (for example
+ * `?example=`), never to the embedded preview, so hide it for exactly the
+ * synchronous part of initialize() in which reveal.js reads it.
+ */
+function withoutPageQuery<T>(start: () => Promise<T>): Promise<T> {
+  if (!location.search) return start();
+  const original = location.href;
+  const state: unknown = history.state;
+  let hidden = false;
+  try {
+    history.replaceState(state, '', `${location.pathname}${location.hash}`);
+    hidden = true;
+  } catch { /* The deck still starts; only a hand-edited query could affect it. */ }
+  try { return start(); }
+  finally { if (hidden) history.replaceState(state, '', original); }
 }
 
 export class SlidePreview {
