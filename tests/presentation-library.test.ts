@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { PresentationProblemLog, cleanReportedText } from '../src/lib/presentation-messages';
+import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts } from '../src/lib/presentation-messages';
 import { formatDeckReport } from '../src/lib/deck-report';
 
 function deferred<T>() {
@@ -31,8 +31,9 @@ function library(dependencies: Dependencies = {}) {
   const calls = {
     open: 0, build: 0, save: 0, started: 0, focus: 0, fullscreen: 0, closed: 0, destroyed: 0, prepared: 0,
     players: [] as any[], shown: [] as any[], notices: [] as unknown[], exports: [] as any[], copied: [] as string[], downloads: [] as any[],
-    updates: [] as any[], savedEdits: [] as any[], names: [] as string[],
+    updates: [] as any[], savedEdits: [] as any[], names: [] as string[], opened: [] as unknown[][], reports: [] as any[], timers: [] as (() => void)[],
   };
+  const clock = { now: 1_000_000 };
   const controls = new Map<string, any>();
   const control = (selector: string) => {
     if (!controls.has(selector)) controls.set(selector, {
@@ -48,7 +49,10 @@ function library(dependencies: Dependencies = {}) {
   };
   const isPlayable = (result: any) => !!result.html && !result.issues.some((issue: any) => issue.severity === 'error');
   vm.runInNewContext(javascript, {
-    exports, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, formatDeckReport,
+    exports, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts,
+    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT,
+    formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
+    Date: class extends Date { static now() { return clock.now; } },
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },
     document: {
       addEventListener() {},
@@ -56,7 +60,10 @@ function library(dependencies: Dependencies = {}) {
       createElement(tag: string) { return { tag, textContent: '', dataset: {} as Record<string, string>, children: [] as any[], append(...children: any[]) { this.children.push(...children); }, click() {}, remove() {} }; },
     },
     navigator: { clipboard: { writeText: (text: string) => { calls.copied.push(text); return dependencies.clipboard?.(text) ?? Promise.resolve(); } } },
-    window: { setTimeout() {}, addEventListener() {} },
+    window: {
+      setTimeout(callback: () => void) { calls.timers.push(callback); return calls.timers.length; }, clearTimeout() {}, addEventListener() {},
+      open(...args: unknown[]) { calls.opened.push(args); return null; },
+    },
     location: { href: 'https://md.qft.org/' },
     URL: class extends URL {
       static createObjectURL(blob: Blob) { calls.downloads.push(blob); return 'blob:x'; }
@@ -107,7 +114,7 @@ function library(dependencies: Dependencies = {}) {
   instance.setView = () => {};
   /** Show a deck with the real method, as the library does after building it. */
   const show = (project = fixtureProject(), playable = fixturePlayable(), state = 'saved') => realShowDeck.call(instance, project, playable, state);
-  return { instance, calls, controls, control, show };
+  return { instance, calls, controls, control, show, clock };
 }
 
 function fixtureProject(overrides: Record<string, unknown> = {}): any {
@@ -596,4 +603,113 @@ test('a new build applied from the hidden Source files view replays when the pre
   const later = await f.instance.applyEdits(new Map([['index.html', '<p>Again</p>']]));
   assert.equal(later.replay, 'on-start');
   assert.equal((f.calls.updates.at(-1) as any).options, undefined);
+});
+
+/** The text of a control built from text nodes and elements, as a screen shows it. */
+const textOf = (node: any): string => (typeof node === 'string' ? node : node.children?.length ? node.children.map(textOf).join('') : node.textContent ?? '');
+
+test('run-time problems show in the status line, and the notes open for the first one right after a start', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+  f.clock.now += 1200;
+  options.onWarning('Uncaught SyntaxError: Unexpected end of input');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 1 problem reported');
+  assert.equal(f.control('[data-pres-notes]').open, true, 'the notes open for a start-up problem');
+  f.control('[data-pres-notes]').open = false;
+  options.onWarning('Another problem');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 2 problems reported');
+  assert.equal(f.control('[data-pres-notes]').open, false, 'later problems only update the count');
+
+  // A replay starts the count again; a first problem long after the start does not open the notes.
+  f.instance.clearRuntime();
+  options.onState('loading');
+  options.onState('ready');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+  f.clock.now += 6000;
+  options.onWarning('A picture in the presentation could not be shown.');
+  assert.equal(f.control('[data-pres-notes]').open, false);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 1 problem reported');
+});
+
+test('a deck that did not start shows a problem on the stage, which goes when it starts late or stops', async () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  options.onWarning('Uncaught ReferenceError: mermaid is not defined');
+  options.onStalled('blank', 'Uncaught ReferenceError: mermaid is not defined\u202e');
+  const area = f.control('[data-pres-stalled]');
+  assert.equal(area.hidden, false);
+  const [intro, reported, next] = area.children;
+  assert.equal(intro.textContent, STALL_BLANK_TEXT);
+  assert.equal(reported.children[0].textContent, 'The presentation reported: ');
+  assert.equal(reported.children[1].textContent, 'Uncaught ReferenceError: mermaid is not defined', 'the deck\'s words, cleaned, as text');
+  assert.equal(next.textContent, STALL_BLANK_NEXT);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'The slides did not start');
+  assert.equal(f.control('[data-pres-notes]').open, true);
+  assert.equal(f.calls.destroyed, 0, 'the frame stays');
+  await f.instance.copyReport();
+  assert.equal(f.calls.reports.at(-1).stalled, 'blank', 'the report input says so');
+  options.onPosition('0/0');
+  assert.equal(area.hidden, true, 'the deck started late');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 1 problem reported');
+  options.onStalled('blank', undefined);
+  assert.equal(area.children.length, 2, 'no reported line without a text');
+  options.onState('stopped');
+  assert.equal(area.hidden, true);
+});
+
+test('a rescued deck shows a strip above the slides, cleared by the next start', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  options.onStalled('rescued', undefined);
+  assert.equal(f.control('[data-pres-rescued]').hidden, false);
+  assert.equal(f.control('[data-pres-rescued-text]').textContent, STALL_RESCUED_TEXT);
+  assert.equal(f.control('[data-pres-stalled]').hidden, true);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+  options.onState('loading');
+  assert.equal(f.control('[data-pres-rescued]').hidden, true);
+});
+
+test('a link to a website shows a strip; only its button opens the address, in a new tab without an opener', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  f.control('[data-pres-link-open]');
+  f.instance.connectedCallback();
+  options.onState('ready');
+  options.onLink(new URL('https://xn--bcher-kva.example/wiki/Interference_(wave_propagation)?lang=en#history-and-more-text-that-is-long'));
+  const strip = f.control('[data-pres-link]');
+  assert.equal(strip.hidden, false);
+  const text = f.control('[data-pres-link-text]');
+  assert.equal(text.children[1].textContent, 'xn--bcher-kva.example', 'the host name in its ASCII form, in bold');
+  assert.equal(text.children[1].tag, 'strong');
+  assert.equal(textOf(text), 'The presentation links to xn--bcher-kva.example/wiki/Interference_(wave_propagation)?lang=en#history-and-m….');
+  assert.deepEqual(f.calls.opened, [], 'nothing opens by itself');
+  f.control('[data-pres-link-open]').listeners.get('click')();
+  assert.deepEqual(f.calls.opened, [['https://xn--bcher-kva.example/wiki/Interference_(wave_propagation)?lang=en#history-and-more-text-that-is-long', '_blank', 'noopener,noreferrer']]);
+  assert.equal(strip.hidden, true);
+  // A new link replaces the strip; a slide change, a start or the timer removes it.
+  options.onLink(new URL('https://phet.colorado.edu/'));
+  options.onLink(new URL('https://en.wikipedia.org/wiki/Wave'));
+  assert.equal(textOf(text), 'The presentation links to en.wikipedia.org/wiki/Wave.');
+  options.onPosition('1/0');
+  assert.equal(strip.hidden, true);
+  options.onLink(new URL('https://phet.colorado.edu/'));
+  assert.equal(textOf(text), 'The presentation links to phet.colorado.edu.');
+  f.calls.timers.at(-1)!();
+  assert.equal(strip.hidden, true, '20 seconds');
+  options.onLink(new URL('https://phet.colorado.edu/'));
+  options.onState('stopped');
+  assert.equal(strip.hidden, true);
+  f.control('[data-pres-link-open]').listeners.get('click')();
+  assert.equal(f.calls.opened.length, 1, 'a dismissed link cannot be opened');
 });

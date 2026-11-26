@@ -2,11 +2,13 @@ import type { BuildDeps, DeckProject, PlayableDeck, StoredDeckSource } from '../
 import type { StoredPresentation, StoredPresentationInfo } from '../lib/presentation-store';
 import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
-import { formatDeckReport, type DeckReportRuntimeMessage } from '../lib/deck-report';
-import { PresentationProblemLog, cleanReportedText } from '../lib/presentation-messages';
+import { formatDeckReport, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
+import {
+  PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts,
+} from '../lib/presentation-messages';
 import {
   createPresentationPlayer, exportPresentationHtml, preparePresentationDocument,
-  type PresentationMessageOrigin, type PresentationPlayer, type PresentationPlayerState,
+  type PresentationMessageOrigin, type PresentationPlayer, type PresentationPlayerState, type PresentationStall,
 } from '../lib/presentation-runtime';
 
 function bytesLabel(bytes: number): string {
@@ -94,6 +96,13 @@ export class PresentationLibrary extends HTMLElement {
    * loading. It replays when the view is shown again.
    */
   private replayPending = false;
+  /** Set when a Reveal.js deck stopped during start-up, for this playback. */
+  private stall?: PresentationStall;
+  /** When the current playback started (Start, Restart or a replay), for opening the notes. */
+  private playbackStarted = 0;
+  /** The website the deck's last link points to, while its strip shows. */
+  private linkUrl?: URL;
+  private linkTimer?: number;
 
   /** Start a new operation: earlier ones see a changed number and their slow work is cancelled. */
   private nextOperation(): number {
@@ -129,6 +138,15 @@ export class PresentationLibrary extends HTMLElement {
     click('[data-pres-html]', () => this.downloadHtml());
     click('[data-pres-report]', () => this.copyReport());
     click('[data-pres-exit-fullscreen]', () => this.exitFullscreen());
+    click('[data-pres-rescued-dismiss]', () => { this.q('[data-pres-rescued]').hidden = true; this.player?.focus(); });
+    click('[data-pres-link-dismiss]', () => { this.hideLink(); this.player?.focus(); });
+    // Opening the address needs this click on the page itself: the deck can
+    // only ask, and the new tab gets neither an opener nor a referrer.
+    this.q('[data-pres-link-open]').addEventListener('click', () => {
+      const url = this.linkUrl;
+      this.hideLink();
+      if (url) window.open(url.href, '_blank', 'noopener,noreferrer');
+    }, { signal });
     for (const button of this.querySelectorAll<HTMLButtonElement>('[data-pres-view]')) {
       button.addEventListener('click', () => this.setView(button.dataset.presView === 'source' ? 'source' : 'preview'), { signal });
     }
@@ -627,14 +645,28 @@ export class PresentationLibrary extends HTMLElement {
       profile: playable.profile,
       onState: (state) => {
         this.playerState = state;
+        // Each start (Start, Restart, a replay after edits) begins without
+        // the last playback's start-up problem or link.
+        if (state === 'loading' || state === 'stopped') this.clearPlaybackNotices();
+        if (state === 'loading') this.playbackStarted = Date.now();
         this.q('[data-pres-start]').hidden = state === 'loading' || state === 'ready';
-        this.q('[data-pres-player-status]').textContent = ({ stopped: 'Ready to start', loading: 'Opening presentation…', ready: 'Playing locally', error: 'Playback needs attention' })[state];
         this.q('[data-pres-stop]').hidden = state !== 'loading' && state !== 'ready';
         this.q('[data-pres-restart]').hidden = state === 'stopped';
+        this.renderStatus();
       },
       onError: (message, origin) => { this.reportProblem(origin, message); this.addRuntime(origin, message); },
-      onWarning: (message) => this.addRuntime('presentation', message),
-      onSlides: (slides) => { this.slides = slides; this.renderSlides(); },
+      onWarning: (message) => {
+        const first = !this.runtime.length;
+        this.addRuntime('presentation', message);
+        // Problems right after a start are most often why the slides look
+        // wrong (an edit with a syntax error, a missing library): show them.
+        if (first && this.runtime.length && Date.now() - this.playbackStarted < 5000) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
+        this.renderStatus();
+      },
+      onStalled: (detail, firstError) => this.showStall(detail, firstError),
+      onLink: (url) => this.showLink(url),
+      onPosition: () => { this.hideLink(); this.startedLate(); },
+      onSlides: (slides) => { this.slides = slides; this.renderSlides(); this.startedLate(); },
       // The deck's own fullscreen key (F in Reveal.js) works as Present does.
       onFullscreenRequest: (request) => { if (request === 'enter') this.enterFullscreen(); else this.exitFullscreen(); },
       // Escape belongs to the deck's overview/menu while embedded. Only the
@@ -645,6 +677,95 @@ export class PresentationLibrary extends HTMLElement {
     this.q('[data-pres-stop]').hidden = true;
     this.q('[data-pres-restart]').hidden = true;
     this.q('[data-pres-player-status]').textContent = 'Ready to start';
+  }
+
+  /** The line under the stage: the player's state, and whether the deck reported problems. */
+  private renderStatus(): void {
+    const state = this.playerState;
+    let text = ({ stopped: 'Ready to start', loading: 'Opening presentation…', ready: 'Playing locally', error: 'Playback needs attention' })[state];
+    if (state === 'ready' && this.stall === 'blank') text = 'The slides did not start';
+    else if (state === 'ready' && this.runtime.length) {
+      text += ` · ${this.runtime.length === 1 ? '1 problem' : `${this.runtime.length} problems`} reported`;
+    }
+    this.q('[data-pres-player-status]').textContent = text;
+  }
+
+  /**
+   * A Reveal.js deck stopped during start-up. 'blank': a problem on the
+   * stage, over the empty slides, with the deck's first error as its own
+   * words; the frame stays, in case the deck starts late. 'rescued': a strip
+   * above the slides, which the player started with basic settings.
+   */
+  private showStall(detail: PresentationStall, firstError: string | undefined): void {
+    this.stall = detail;
+    if (detail === 'rescued') {
+      this.q('[data-pres-rescued-text]').textContent = STALL_RESCUED_TEXT;
+      this.q('[data-pres-rescued]').hidden = false;
+    } else {
+      const lines: HTMLElement[] = [];
+      const intro = document.createElement('p');
+      intro.textContent = STALL_BLANK_TEXT;
+      lines.push(intro);
+      const text = cleanReportedText(firstError);
+      if (text) {
+        const line = document.createElement('p');
+        const label = document.createElement('strong');
+        label.textContent = 'The presentation reported: ';
+        const quote = document.createElement('q');
+        quote.textContent = text;
+        line.append(label, quote);
+        lines.push(line);
+      }
+      const next = document.createElement('p');
+      next.textContent = STALL_BLANK_NEXT;
+      lines.push(next);
+      const area = this.q('[data-pres-stalled]');
+      area.replaceChildren(...lines);
+      area.hidden = false;
+    }
+    if (this.runtime.length) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
+    this.renderStatus();
+  }
+
+  /** A deck reported as not started has sent a slide position or count after all. */
+  private startedLate(): void {
+    if (this.stall !== 'blank') return;
+    this.stall = undefined;
+    this.q('[data-pres-stalled]').hidden = true;
+    this.renderStatus();
+  }
+
+  /**
+   * The deck's link to a website, offered on the page: the host name in bold
+   * as the URL parser gives it, the rest shortened, as text only. A new link
+   * replaces it; a slide change, Stop, Restart or 20 seconds remove it.
+   */
+  private showLink(url: URL): void {
+    if (!this.player?.isRunning()) return;
+    const { host, rest } = linkParts(url);
+    const text = this.q('[data-pres-link-text]');
+    const strong = document.createElement('strong');
+    strong.textContent = host;
+    text.replaceChildren('The presentation links to ', strong, ...(rest ? [rest] : []), '.');
+    this.linkUrl = url;
+    this.q('[data-pres-link]').hidden = false;
+    if (this.linkTimer !== undefined) window.clearTimeout(this.linkTimer);
+    this.linkTimer = window.setTimeout(() => this.hideLink(), 20_000);
+  }
+
+  private hideLink(): void {
+    if (this.linkTimer !== undefined) window.clearTimeout(this.linkTimer);
+    this.linkTimer = undefined;
+    this.linkUrl = undefined;
+    this.q('[data-pres-link]').hidden = true;
+  }
+
+  /** What belongs to one playback on the stage: the start-up problem, the rescue strip and the link strip. */
+  private clearPlaybackNotices(): void {
+    this.stall = undefined;
+    this.q('[data-pres-stalled]').hidden = true;
+    this.q('[data-pres-rescued]').hidden = true;
+    this.hideLink();
   }
 
   private setView(view: 'preview' | 'source'): void {
@@ -805,13 +926,17 @@ export class PresentationLibrary extends HTMLElement {
     const active = this.active;
     if (!active) return;
     const { project, playable } = active;
-    const report = formatDeckReport({
+    // `stalled` is for the report's result line; the formatter reads it once
+    // the merge wires it ('does not start' or 'starts with basic settings').
+    const input: DeckReportInput & { stalled?: PresentationStall } = {
       kind: project.kind, engine: project.engine,
       ...(project.detection.engineVersion ? { engineVersion: project.detection.engineVersion } : {}),
       ...(project.entry ? { entry: project.entry } : {}),
       ...(this.slides !== undefined ? { slides: this.slides } : {}),
+      ...(this.stall ? { stalled: this.stall } : {}),
       issues: playable.issues, runtime: this.runtime,
-    });
+    };
+    const report = formatDeckReport(input);
     const field = this.q<HTMLTextAreaElement>('[data-pres-report-text]');
     field.value = report;
     try {

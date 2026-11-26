@@ -36,7 +36,12 @@ import '../styles/presentations.css';
       </div>
       <div class="presentation-preview" data-pres-preview>
         <div class="presentation-stage" data-pres-stage>
+          <div class="presentation-strips">
+            <div class="presentation-strip" data-pres-rescued role="status" hidden><p data-pres-rescued-text></p><div class="presentation-strip-actions"><button type="button" data-pres-rescued-dismiss>Dismiss</button></div></div>
+            <div class="presentation-strip" data-pres-link role="status" hidden><p data-pres-link-text></p><div class="presentation-strip-actions"><button type="button" class="button-primary" data-pres-link-open>Open link in a new tab</button><button type="button" data-pres-link-dismiss>Dismiss</button></div></div>
+          </div>
           <div class="presentation-frame-host" data-pres-host></div>
+          <div class="presentation-problem presentation-stalled" data-pres-stalled role="alert" hidden></div>
           <div class="presentation-start" data-pres-start>
             <span class="presentation-engine" data-pres-engine>Slidev</span><h3 data-pres-start-title>Your presentation is ready.</h3>
             <p data-pres-start-message>Slides and demonstrations run locally when you press Start.</p>
