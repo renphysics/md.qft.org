@@ -109,15 +109,18 @@ export default async function run(t) {
     assert.equal(t.externalRequests.length, 0, 'Playback must not request external resources');
   });
 
-  await t.step('Source remains accessible; Present keeps the live slide state and the keyboard', async () => {
+  await t.step('Source remains accessible and read-only; Present keeps the live slide state and the keyboard', async () => {
     await page.locator('[data-pres-view="source"]').click();
-    const source = page.locator('[data-pres-source-text]');
-    assert.match(await source.inputValue(), /Quantum interference/);
-    assert.equal(await source.getAttribute('readonly'), '');
-    await page.locator('[data-pres-file]').selectOption('source/components/QuantumInterference.vue');
-    assert.match(await source.inputValue(), /onSlideLeave\(pause\)/);
+    const source = page.locator('[data-pres-code] .cm-content');
+    await until(async () => /Quantum interference/.test(await source.textContent()), 'the main source in the viewer');
+    assert.equal(await source.getAttribute('aria-readonly'), 'true');
+    assert.equal(await source.getAttribute('contenteditable'), 'false');
+    assert.match(await page.locator('[data-pres-source-note]').textContent(), /read-only here/);
+    await page.locator('.presentation-file[data-pres-file-path="source/components/QuantumInterference.vue"]').click();
+    await until(async () => (await page.locator('[data-pres-file-name]').textContent()) === 'source/components/QuantumInterference.vue', 'the component to be selected');
     await page.locator('[data-pres-copy]').click();
-    await until(async () => /Source copied|Source selected/.test(await page.locator('[data-pres-notice]').textContent()), 'copy action feedback');
+    await until(async () => /^Copied /.test(await page.locator('[data-pres-edit-status]').textContent()), 'copy action feedback');
+    assert.match(await page.evaluate(() => navigator.clipboard.readText()), /onSlideLeave\(pause\)/);
     await page.locator('[data-pres-present]').click();
     await page.locator('[data-pres-exit-fullscreen]').waitFor({ state: 'visible' });
     const fullscreenFrame = await presentationFrame(page);

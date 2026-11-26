@@ -17,6 +17,7 @@ interface Dependencies {
   open?: (file: File) => Promise<unknown>;
   build?: (project: any, deps: any) => Promise<unknown>;
   save?: (input: any) => Promise<unknown>;
+  updateEdits?: (id: string, edits: Map<string, string>) => Promise<unknown>;
   clipboard?: (text: string) => Promise<void>;
 }
 
@@ -30,6 +31,7 @@ function library(dependencies: Dependencies = {}) {
   const calls = {
     open: 0, build: 0, save: 0, started: 0, focus: 0, fullscreen: 0, closed: 0, destroyed: 0, prepared: 0,
     players: [] as any[], shown: [] as any[], notices: [] as unknown[], exports: [] as any[], copied: [] as string[], downloads: [] as any[],
+    updates: [] as any[], savedEdits: [] as any[], names: [] as string[],
   };
   const controls = new Map<string, any>();
   const control = (selector: string) => {
@@ -50,11 +52,11 @@ function library(dependencies: Dependencies = {}) {
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },
     document: {
       addEventListener() {},
-      body: { append() {} },
+      body: { append(anchor: any) { calls.names.push(anchor.download); } },
       createElement(tag: string) { return { tag, textContent: '', dataset: {} as Record<string, string>, children: [] as any[], append(...children: any[]) { this.children.push(...children); }, click() {}, remove() {} }; },
     },
     navigator: { clipboard: { writeText: (text: string) => { calls.copied.push(text); return dependencies.clipboard?.(text) ?? Promise.resolve(); } } },
-    window: { setTimeout() {} },
+    window: { setTimeout() {}, addEventListener() {} },
     location: { href: 'https://md.qft.org/' },
     URL: class extends URL {
       static createObjectURL(blob: Blob) { calls.downloads.push(blob); return 'blob:x'; }
@@ -63,7 +65,11 @@ function library(dependencies: Dependencies = {}) {
     Option: class { constructor(public text: string, public value: string) {} },
     createPresentationPlayer(_host: unknown, html: string, options: unknown) {
       calls.players.push({ html, options });
-      return { destroy() { calls.destroyed++; }, isRunning: () => false, start() { calls.started++; }, focus() { calls.focus++; } };
+      return {
+        destroy() { calls.destroyed++; }, isRunning: () => true, start() { calls.started++; }, focus() { calls.focus++; },
+        update(next: string, updateOptions: unknown) { calls.updates.push({ html: next, options: updateOptions }); },
+        currentPosition: () => '2/0',
+      };
     },
     exportPresentationHtml(html: string, title: string, options: unknown) { calls.exports.push({ html, title, options }); return '<html></html>'; },
     preparePresentationDocument() { calls.prepared++; return ''; },
@@ -75,12 +81,18 @@ function library(dependencies: Dependencies = {}) {
           buildPlayable(project: any, deps: any) { calls.build++; return dependencies.build?.(project, deps) ?? Promise.resolve(fixturePlayable()); },
           isPlayable,
           deckSaveInput: (project: any) => ({ title: project.title, engine: project.engine, kind: project.kind, fileName: project.fileName, archive: project.original }),
+          deckArchive: (project: any) => Object.assign(new Blob(['edited']), { edited: project }),
+          originalArchiveName: (project: any) => project.fileName.replace(/\.zip$/, '-original.zip'),
         };
       }
       if (name === '../lib/presentation-store') {
         return {
           saveDeck(input: any) { calls.save++; return dependencies.save?.(input) ?? Promise.resolve({ info: { id: 'saved', title: input.title, engine: input.engine }, existing: false }); },
           getPresentation: async () => undefined,
+          updateDeckEdits(id: string, edits: Map<string, string>) {
+            calls.savedEdits.push({ id, edits: new Map(edits) });
+            return dependencies.updateEdits?.(id, edits) ?? Promise.resolve({ id, title: 'Damped oscillator', engine: 'reveal', edited: edits.size > 0 });
+          },
         };
       }
       throw new Error(`Unexpected dependency: ${name}`);
@@ -450,4 +462,138 @@ test('closing stops playback at once, and a late close event cannot stop a deck 
   dialog.listeners.get('close')();
   assert.equal(f.calls.destroyed, 2);
   assert.equal(f.instance.active, undefined);
+});
+
+test('applied edits replay on the same slide, replace the notes and are saved beside the original', async () => {
+  const edited = fixturePlayable({ html: '<!doctype html><div class="reveal">Edited</div>', profile: 'tolerant', issues: [] });
+  const f = library({ build: async (project) => { assert.equal(project.edits.get('index.html'), '<p>Edited</p>'); return edited; } });
+  const project = revealProject();
+  project.id = 'deck-1';
+  f.show(project, revealPlayable(), 'saved');
+  f.calls.players[0].options.onState('ready');
+  const outcome = await f.instance.applyEdits(new Map([['index.html', '<p>Edited</p>']]));
+  assert.equal(outcome.applied, true);
+  assert.equal(outcome.replay, 'now');
+  assert.match(outcome.storage, /saved in this browser/);
+  assert.equal(JSON.stringify(f.calls.updates), JSON.stringify([{ html: edited.html, options: { position: '2/0' } }]), 'the same player restarts at the reported slide');
+  assert.equal(f.calls.players.length, 1, 'no second player');
+  assert.equal(project.edits.get('index.html'), '<p>Edited</p>');
+  assert.equal(f.instance.active.playable, edited, 'the new build is what plays and what exports use');
+  assert.deepEqual(f.calls.savedEdits, [{ id: 'deck-1', edits: new Map([['index.html', '<p>Edited</p>']]) }]);
+  assert.equal(f.control('[data-pres-notes]').hidden, true, 'the notes now describe the new build');
+  assert.match(f.control('[data-pres-subtitle]').textContent, / · Edited$/);
+  assert.equal(f.control('[data-pres-zip-original]').hidden, false, 'the original stays downloadable');
+  assert.match(f.control('[data-pres-storage]').textContent, /with your edits/);
+});
+
+test('a rebuild with an error changes nothing, so the last version that worked keeps playing', async () => {
+  const broken = fixturePlayable({ html: '', profile: 'tolerant', issues: [{ code: 'entry-missing', severity: 'error', message: 'The start page is missing.' }] });
+  const f = library({ build: async () => broken });
+  const project = revealProject();
+  project.id = 'deck-1';
+  const playable = revealPlayable();
+  f.show(project, playable, 'saved');
+  const outcome = await f.instance.applyEdits(new Map([['index.html', '']]));
+  assert.equal(outcome.applied, false);
+  assert.deepEqual(outcome.problems, ['The start page is missing.']);
+  assert.deepEqual(f.calls.updates, []);
+  assert.equal(f.calls.destroyed, 0);
+  assert.equal(project.edits.size, 0);
+  assert.equal(f.instance.active.playable, playable);
+  assert.deepEqual(f.calls.savedEdits, []);
+  // Restoring the original is forced: it is what was imported, even when it cannot play.
+  const restored = await f.instance.applyEdits(new Map(), { force: true });
+  assert.equal(restored.applied, true);
+  assert.equal(f.calls.destroyed, 1, 'an unplayable build stops the player');
+  assert.equal(f.control('[data-pres-start-button]').hidden, true);
+});
+
+test('a deck that could not play is saved once an edit makes it playable', async () => {
+  const fixed = fixturePlayable({ html: '<!doctype html><div class="reveal">Fixed</div>', profile: 'tolerant', issues: [] });
+  const saved: any[] = [];
+  const f = library({ build: async () => fixed, save: async (input) => { saved.push(input); return { info: { id: 'deck-9', title: input.title, engine: 'reveal', edited: true }, existing: false }; } });
+  const project = revealProject();
+  f.show(project, fixturePlayable({ html: '', profile: 'tolerant', issues: [{ code: 'es-modules-unsupported', severity: 'error', message: 'Modules cannot start this deck.' }] }), 'new');
+  assert.equal(f.calls.players.length, 0);
+  const outcome = await f.instance.applyEdits(new Map([['index.html', '<script>start()</script>']]));
+  assert.equal(outcome.applied, true);
+  assert.equal(f.calls.players.length, 1, 'a player appears for the playable build');
+  assert.equal(f.calls.players[0].html, fixed.html);
+  assert.equal(saved.length, 1);
+  assert.equal(project.id, 'deck-9');
+  assert.match(outcome.storage, /now saved in this browser/);
+});
+
+test('leaving with changes that are not applied asks first, from Close, Back and Escape', async () => {
+  const f = library();
+  f.instance.connectedCallback();
+  f.show(revealProject(), revealPlayable(), 'saved');
+  let pending = ['slides.md'];
+  f.instance.sources = { pendingPaths: () => pending, hasPendingChanges: () => pending.length > 0, clear() {} };
+  const asked: any[] = [];
+  let answer = false;
+  f.instance.confirmAction = async (request: any) => { asked.push(request); return answer; };
+  let closes = 0;
+  f.instance.closeDialog = () => { closes++; };
+
+  await f.instance.leave(() => f.instance.closeDialog());
+  assert.equal(asked.length, 1);
+  assert.match(asked[0].message, /changes to 1 file have not been applied/);
+  assert.equal(closes, 0, 'Keep editing keeps the deck open');
+  answer = true;
+  await f.instance.leave(() => f.instance.closeDialog());
+  assert.equal(closes, 1);
+
+  let prevented = 0;
+  f.control('[data-pres-dialog]').listeners.get('cancel')({ preventDefault() { prevented++; } });
+  assert.equal(prevented, 1, 'Escape does not close the dialog before asking');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(asked.length, 3);
+  assert.equal(closes, 2);
+
+  pending = [];
+  await f.instance.leave(() => f.instance.closeDialog());
+  assert.equal(asked.length, 3, 'nothing to lose, nothing to ask');
+  assert.equal(closes, 3);
+});
+
+test('the ZIP has the current files once edited, and the original stays available', async () => {
+  const f = library();
+  const project = revealProject();
+  f.show(project, revealPlayable());
+  await f.instance.downloadArchive();
+  assert.equal(f.calls.downloads.at(-1), project.original);
+  assert.equal(f.calls.names.at(-1), 'oscillator.zip');
+  project.edits = new Map([['index.html', '<p>Edited</p>']]);
+  await f.instance.downloadArchive();
+  assert.equal(f.calls.downloads.at(-1).edited, project, 'an edited deck downloads its current files');
+  assert.equal(f.calls.names.at(-1), 'oscillator.zip');
+  await f.instance.downloadOriginal();
+  assert.equal(f.calls.downloads.at(-1), project.original);
+  assert.equal(f.calls.names.at(-1), 'oscillator-original.zip');
+});
+
+test('a new build applied from the hidden Source files view replays when the presentation is shown again', async () => {
+  const edited = fixturePlayable({ html: '<!doctype html><div class="reveal">Edited</div>', profile: 'tolerant', issues: [] });
+  const f = library({ build: async () => edited });
+  const project = revealProject();
+  project.id = 'deck-1';
+  f.show(project, revealPlayable(), 'saved');
+  f.instance.setView = Object.getPrototypeOf(f.instance).setView;
+  f.instance.openSources = async () => {};
+  const { options } = f.calls.players[0];
+  options.onState('ready');
+  f.instance.setView('source');
+  const outcome = await f.instance.applyEdits(new Map([['index.html', '<p>Edited</p>']]));
+  assert.equal(outcome.replay, 'on-return');
+  assert.deepEqual(f.calls.updates, [], 'nothing reloads inside the hidden frame');
+  f.instance.setView('preview');
+  assert.equal(JSON.stringify(f.calls.updates), JSON.stringify([{ html: edited.html, options: { position: '2/0' } }]));
+  f.instance.setView('preview');
+  assert.equal(f.calls.updates.length, 1, 'one replay per build');
+  // A deck that was never started takes the new build for its next Start.
+  options.onState('stopped');
+  const later = await f.instance.applyEdits(new Map([['index.html', '<p>Again</p>']]));
+  assert.equal(later.replay, 'on-start');
+  assert.equal((f.calls.updates.at(-1) as any).options, undefined);
 });

@@ -32,7 +32,7 @@ import '../styles/presentations.css';
     <section class="presentation-deck" data-pres-deck hidden aria-label="Imported presentation">
       <div class="presentation-toolbar">
         <div class="presentation-view-switch" role="group" aria-label="Presentation view"><button data-pres-view="preview" aria-pressed="true"><Icon name="play" size={14} /> Presentation</button><button data-pres-view="source" aria-pressed="false"><Icon name="code" size={14} /> Source files</button></div>
-        <div class="presentation-deck-actions"><button class="button-secondary" data-pres-zip title="Download the original files as a ZIP"><Icon name="download" size={15} /><span>ZIP</span></button><button class="button-secondary" data-pres-html title="Download a standalone offline player"><Icon name="code" size={15} /><span>HTML</span></button><button class="button-primary" data-pres-present><Icon name="play" size={15} /> Present</button></div>
+        <div class="presentation-deck-actions"><button class="button-secondary" data-pres-zip-original title="Download the original file, as imported" hidden><Icon name="download" size={15} /><span>Original</span></button><button class="button-secondary" data-pres-zip title="Download the original files as a ZIP"><Icon name="download" size={15} /><span>ZIP</span></button><button class="button-secondary" data-pres-html title="Download a standalone offline player"><Icon name="code" size={15} /><span>HTML</span></button><button class="button-primary" data-pres-present><Icon name="play" size={15} /> Present</button></div>
       </div>
       <div class="presentation-preview" data-pres-preview>
         <div class="presentation-stage" data-pres-stage>
@@ -58,12 +58,29 @@ import '../styles/presentations.css';
         </details>
       </div>
       <div class="presentation-source" data-pres-source hidden>
-        <div class="presentation-source-heading"><label for="presentation-source-file">File<select id="presentation-source-file" data-pres-file></select></label><button class="button-secondary" data-pres-copy><Icon name="copy" size={15} /> Copy source</button></div>
-        <textarea data-pres-source-text readonly spellcheck="false" aria-label="Presentation source file"></textarea>
-        <p data-pres-file-info></p><p class="presentation-source-note" data-pres-source-note>Source is preserved exactly as imported.</p>
+        <nav class="presentation-files" data-pres-files aria-label="Presentation files"></nav>
+        <div class="presentation-source-main">
+          <div class="presentation-source-heading">
+            <div class="presentation-file-title"><h3 data-pres-file-name>Files</h3><p data-pres-file-info></p></div>
+            <div class="presentation-source-actions"><button class="button-secondary" data-pres-copy><Icon name="copy" size={14} /> Copy</button><button class="button-secondary" data-pres-discard hidden>Discard changes to this file</button><button class="button-primary" data-pres-apply aria-keyshortcuts="Control+S Meta+S" hidden><Icon name="check" size={14} /> Apply changes</button></div>
+          </div>
+          <div class="presentation-code" data-pres-code hidden></div>
+          <p class="presentation-file-message" data-pres-file-message>Opening the files…</p>
+          <div class="presentation-edit-problem" data-pres-edit-problem role="alert" hidden></div>
+          <div class="presentation-source-footer"><p class="presentation-edit-status" data-pres-edit-status role="status" aria-live="polite"></p><button class="button-secondary" data-pres-restore aria-label="Restore original presentation" hidden><Icon name="refresh" size={14} /> Restore original</button></div>
+          <p class="presentation-source-note" data-pres-source-note></p>
+        </div>
       </div>
     </section>
     <footer class="presentation-dialog-footer"><span><span class="presentation-local-dot" aria-hidden="true"></span><span data-pres-storage>Not uploaded. Presentations cannot read your documents, and ordinary network requests are blocked.</span></span><a href={withBase('guide/#slidev')}>Presentation guide <Icon name="external" size={12} /></a></footer>
+  </dialog>
+  <dialog class="app-dialog presentation-confirm" data-pres-confirm aria-labelledby="presentation-confirm-title" aria-describedby="presentation-confirm-message">
+    <form method="dialog">
+      <div class="dialog-heading"><span class="eyebrow">YOUR CHANGES</span></div>
+      <h2 id="presentation-confirm-title" data-pres-confirm-title>Discard your changes?</h2>
+      <p id="presentation-confirm-message" data-pres-confirm-message></p>
+      <div class="dialog-actions"><button class="button-secondary" value="cancel" data-pres-confirm-cancel autofocus>Keep editing</button><button class="button-primary" value="confirm" data-pres-confirm-accept>Discard changes</button></div>
+    </form>
   </dialog>
   <input type="file" data-pres-input accept=".zip,.html,.htm,application/zip,text/html" hidden />
 </qft-presentation-library>
