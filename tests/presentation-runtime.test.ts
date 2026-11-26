@@ -167,6 +167,8 @@ function playerFixture(settings: { profile?: string; activation?: { isActive: bo
   const positions: string[] = [];
   const slides: number[] = [];
   const fullscreen: string[] = [];
+  const stalls: [string, string | undefined][] = [];
+  const links: string[] = [];
   const prepared: { html: string; profile: unknown }[] = [];
   const timers = new Map<number, () => void>();
   let clock = 0;
@@ -193,7 +195,7 @@ function playerFixture(settings: { profile?: string; activation?: { isActive: bo
     },
   };
   const createPlayer = compiledFunction('createPresentationPlayer', {
-    crypto, AbortController,
+    crypto, AbortController, URL,
     preparePresentationDocument(html: string, token: string, nonce: string, options: { profile?: unknown }) {
       prepared.push({ html, profile: options?.profile });
       return `prepared|${token}|${nonce}|${html}`;
@@ -212,6 +214,8 @@ function playerFixture(settings: { profile?: string; activation?: { isActive: bo
     onState(value: string) { states.push(value); }, onError(value: string, origin: string) { errors.push(value); origins.push(origin); }, onEscape() { escapes++; },
     onWarning(value: string) { warnings.push(value); }, onPosition(value: string) { positions.push(value); },
     onSlides(value: number) { slides.push(value); }, onFullscreenRequest(value: string) { fullscreen.push(value); },
+    onStalled(detail: string, first: string | undefined) { stalls.push([detail, first]); },
+    onLink(url: URL) { links.push(url.href); },
   });
   /** Start, load the runner, and return the frame with a sender of deck messages. */
   const play = (options?: unknown) => {
@@ -222,7 +226,7 @@ function playerFixture(settings: { profile?: string; activation?: { isActive: bo
     return { frame, token, deck: (kind: string, detail?: unknown) => receive({ source: frame.contentWindow, data: { qftPresentation: 1, token, kind, detail } }) };
   };
   return {
-    player, frames, states, errors, origins, warnings, positions, slides, fullscreen, prepared, timers, host, document, play,
+    player, frames, states, errors, origins, warnings, positions, slides, fullscreen, stalls, links, prepared, timers, host, document, play,
     escapeCount: () => escapes, send: (source: unknown, data: unknown) => receive({ source, data }),
   };
 }
@@ -459,7 +463,7 @@ test('update replaces the document and restarts a running deck at its last posit
  * sandboxed blob: document: path History writes throw a SecurityError and
  * fullscreen is refused by the permissions policy.
  */
-function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: unknown } = {}) {
+function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: unknown; revealRoot?: boolean } = {}) {
   const sent: any[] = [];
   const listeners = { window: new Map<string, ((event: any) => void)[]>(), document: new Map<string, ((event: any) => void)[]>() };
   const on = (map: Map<string, ((event: any) => void)[]>) => (name: string, listener: (event: any) => void) => { map.set(name, [...(map.get(name) ?? []), listener]); };
@@ -521,6 +525,7 @@ function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: un
   const document: any = Object.assign(new Document(), {
     addEventListener: on(listeners.document), documentElement, body, activeElement: body,
     createElement: (name: string) => new FakeNode(name),
+    querySelector: (selector: string) => (selector === '.reveal .slides' && settings.revealRoot ? {} : null),
   });
   const timers: (() => void)[] = [];
   const window: any = {
@@ -1037,6 +1042,8 @@ async function exportedHandshake(profile?: string) {
     History: class { pushState() {} replaceState() {} }, Navigator: class {}, Element, Document,
     location: { hash: '' },
     requestAnimationFrame(callback: () => void) { callback(); },
+    // The tolerant start-up check, two seconds after load: nothing to check here.
+    setTimeout() { return 0; },
   });
   childListeners.get('load')!();
   assert.equal(shell.messages.length, 1);
@@ -1122,4 +1129,190 @@ test('the sandbox, permissions and Content Security Policies keep their exact va
   assert.ok(nonce);
   // The export's own two policies come first; the runtime source it carries follows.
   assert.deepEqual(policies(exported).slice(0, 2), [exportPolicy(nonce), inlineOnly]);
+});
+
+test('the runner relays stalled and link messages only in their checked forms', () => {
+  const frame = runner('null');
+  const token = 'a'.repeat(36);
+  frame.send(frame.parent, { type: 'qft-presentation-load', token, html: '<p>Deck</p>' });
+  const child = frame.frames[0].contentWindow;
+  const deck = (kind: string, detail?: unknown) => frame.send(child, { qftPresentation: 1, token, kind, detail });
+  for (const detail of ['rescued', 'blank', 'Blank', '', undefined, 1, 'rescued\n']) deck('stalled', detail);
+  const long = `https://example.org/${'a'.repeat(1990)}`;
+  for (const detail of ['https://en.wikipedia.org/wiki/Wave', 'HTTP://phet.colorado.edu/', 'javascript:alert(1)', 'https://a b.org/',
+    'https:// x', 'https://', 'ftp://example.org/', ' https://example.org/', 'https://example.org/\n', long, 42]) deck('link', detail);
+  assert.deepEqual(frame.messages.map((message) => [message.kind, message.detail]), [
+    ['stalled', 'rescued'], ['stalled', 'blank'], ['link', 'https://en.wikipedia.org/wiki/Wave'], ['link', 'HTTP://phet.colorado.edu/'],
+  ]);
+});
+
+test('a Reveal.js deck that stopped before Reveal.initialize is started with the plugins the page defines, and the host is told', () => {
+  const initialized: unknown[] = [];
+  const markdown = { id: 'markdown' };
+  const katex = { id: 'katex' };
+  let deck: ReturnType<typeof deckBootstrap>;
+  const reveal = {
+    isReady: () => false,
+    initialize(options: unknown) { initialized.push(options); deck.fire('document', 'ready', { target: { closest: () => ({ querySelectorAll: () => ({ length: 3 }) }) }, indexh: 0, indexv: 0 }); return Promise.resolve(); },
+  };
+  deck = deckBootstrap(true, { reveal, revealRoot: true });
+  deck.window.RevealMarkdown = markdown;
+  deck.window.RevealMath = { KaTeX: katex };
+  Object.defineProperty(deck.window, 'RevealZoom', { get() { throw new Error('temporal dead zone'); } });
+  deck.fire('window', 'error', new deck.ErrorEvent('Uncaught SecurityError: cookie') as any);
+  deck.fire('window', 'load');
+  deck.tick();
+  assert.equal(initialized.length, 1);
+  const { plugins } = initialized[0] as { plugins: unknown[] };
+  assert.deepEqual([...plugins], [markdown, katex]);
+  assert.ok(plugins[0] === markdown && plugins[1] === katex, 'the plugins the page defines; RevealMath as its KaTeX part');
+  assert.deepEqual(deck.messages().filter(([kind]) => kind !== 'position' && kind !== 'slides'),
+    [['warning', 'Uncaught SecurityError: cookie'], ['ready'], ['stalled', 'rescued']]);
+  deck.tick();
+  assert.equal(deck.messages().filter(([kind]) => kind === 'stalled').length, 1, 'once per playback');
+});
+
+test('a deck that cannot be rescued is reported blank, after its first error as the last warning', () => {
+  // An ES-module deck: no window.Reveal. The first error is the rejection, not the later warnings.
+  const module = deckBootstrap(true, { revealRoot: true });
+  module.fire('window', 'unhandledrejection', { reason: new Error('Failed to resolve module specifier') });
+  module.fire('window', 'error', new module.ErrorEvent('Second problem') as any);
+  module.fire('window', 'load');
+  module.tick();
+  assert.deepEqual(module.messages(), [
+    ['warning', 'Failed to resolve module specifier'], ['warning', 'Second problem'], ['ready'],
+    ['warning', 'Failed to resolve module specifier'], ['stalled', 'blank'],
+  ]);
+
+  // initialize throws (it already ran), or does not reach ready within three seconds.
+  const again = deckBootstrap(true, { revealRoot: true, reveal: { isReady: () => false, initialize() { throw 'Reveal.js has already been initialized.'; } } });
+  again.fire('window', 'error', new again.ErrorEvent('Boom') as any);
+  again.fire('window', 'load');
+  again.tick();
+  assert.deepEqual(again.messages().at(-1), ['stalled', 'blank']);
+  const silent = deckBootstrap(true, { revealRoot: true, reveal: { isReady: () => false, initialize() { return undefined; } } });
+  silent.fire('window', 'error', new silent.ErrorEvent('Boom') as any);
+  silent.fire('window', 'load');
+  silent.tick();
+  assert.equal(silent.messages().some(([kind]) => kind === 'stalled'), false, 'it waits for Reveal.js first');
+  silent.tick();
+  assert.deepEqual(silent.messages().at(-1), ['stalled', 'blank']);
+});
+
+test('no stall is reported without an error, without a .reveal .slides element, after Reveal.js was ready, or in the strict profile', () => {
+  const quiet = deckBootstrap(true, { revealRoot: true, reveal: { isReady: () => false, initialize() { throw new Error('unexpected'); } } });
+  quiet.fire('window', 'load');
+  quiet.tick();
+  const page = deckBootstrap(true);
+  page.fire('window', 'error', new page.ErrorEvent('Boom') as any);
+  page.fire('window', 'load');
+  page.tick();
+  const started = deckBootstrap(true, { revealRoot: true });
+  started.fire('document', 'ready', { target: revealDom(2).root, indexh: 0, indexv: 0 });
+  started.fire('window', 'error', new started.ErrorEvent('Later problem') as any);
+  started.fire('window', 'load');
+  started.tick();
+  // The TypeError after window.open() is not a start-up error either.
+  const opened = deckBootstrap(true, { revealRoot: true });
+  opened.window.open();
+  opened.fire('window', 'error', new opened.ErrorEvent('Uncaught TypeError', new TypeError('x')) as any);
+  opened.fire('window', 'load');
+  opened.tick();
+  for (const deck of [quiet, page, started, opened]) assert.equal(deck.messages().some(([kind]) => kind === 'stalled'), false);
+  const strict = deckBootstrap(false, { revealRoot: true });
+  strict.fire('window', 'load');
+  strict.tick();
+  assert.deepEqual(strict.messages(), [['ready']]);
+});
+
+test('link clicks never navigate the deck; a link to a website is passed to the host, at most 30 times', () => {
+  const click = (deck: ReturnType<typeof deckBootstrap>, attributes: Record<string, string> | null, type = 'click', viaPath = false) => {
+    const element = attributes && { getAttribute: (name: string) => attributes[name] ?? null };
+    const target = { closest: (selector: string) => { assert.equal(selector, 'a,area'); return element; } };
+    const effect = { prevented: false };
+    deck.fire('window', type, { ...(viaPath ? { composedPath: () => [target], target: null } : { target }), preventDefault() { effect.prevented = true; } });
+    return effect.prevented;
+  };
+  const deck = deckBootstrap(true);
+  assert.equal(click(deck, { href: 'https://en.wikipedia.org/wiki/Wave' }), true);
+  assert.equal(click(deck, { 'xlink:href': 'http://phet.colorado.edu/sims' }, 'click', true), true);
+  assert.equal(click(deck, { href: 'https://example.org/' }, 'auxclick'), true, 'a middle click is cancelled but not passed on');
+  assert.equal(click(deck, { href: 'page2.html' }), true);
+  assert.equal(click(deck, { href: 'javascript:alert(1)' }), true);
+  assert.equal(click(deck, { href: `https://example.org/${'a'.repeat(2000)}` }), true);
+  assert.equal(click(deck, {}), true, 'a link without an address');
+  assert.equal(click(deck, { href: '#/2' }), false, 'links inside the deck keep working');
+  assert.equal(click(deck, null), false);
+  assert.deepEqual(deck.messages(), [['link', 'https://en.wikipedia.org/wiki/Wave'], ['link', 'http://phet.colorado.edu/sims']]);
+  for (let index = 0; index < 40; index++) click(deck, { href: `https://example.org/${index}` });
+  assert.equal(deck.messages().length, 30);
+  const strict = deckBootstrap(false);
+  assert.equal(click(strict, { href: 'https://example.org/' }), true);
+  assert.deepEqual(strict.messages(), []);
+});
+
+test('the player passes on one stall per playback with the deck\'s last warning, and checked links after a user action', () => {
+  const activation = { isActive: true };
+  const f = playerFixture({ profile: 'tolerant', activation });
+  const { deck } = f.play();
+  deck('ready');
+  deck('warning', 'Uncaught ReferenceError: mermaid is not defined');
+  deck('stalled', 'sideways');
+  deck('stalled', 'blank');
+  deck('stalled', 'rescued');
+  assert.deepEqual(f.stalls, [['blank', 'Uncaught ReferenceError: mermaid is not defined']]);
+  for (const link of ['https://user:secret@example.org/a?b#c', 'https://xn--bcher-kva.example/', 'https://bücher.example/x', 'javascript:alert(1)', 'https://', 'ftp://example.org/', 7]) deck('link', link);
+  activation.isActive = false;
+  deck('link', 'https://example.org/without-a-click');
+  assert.deepEqual(f.links, ['https://example.org/a?b#c', 'https://xn--bcher-kva.example/', 'https://xn--bcher-kva.example/x']);
+  activation.isActive = true;
+  for (let index = 0; index < 40; index++) deck('link', `https://example.org/${index}`);
+  assert.equal(f.links.length, 30, 'at most 30 per playback');
+  const next = f.play();
+  next.deck('stalled', 'rescued');
+  next.deck('link', 'https://example.org/again');
+  assert.deepEqual(f.stalls.at(-1), ['rescued', undefined]);
+  assert.equal(f.links.at(-1), 'https://example.org/again');
+  const strict = playerFixture({ activation: { isActive: true } });
+  const run = strict.play();
+  run.deck('stalled', 'blank');
+  run.deck('link', 'https://example.org/');
+  assert.deepEqual([strict.stalls, strict.links], [[], []]);
+});
+
+test('the tolerant profile keeps the address of a link to a website; every other link loses its address', () => {
+  const run = (profile: string) => {
+    const links = [
+      { localName: 'a', name: 'href', value: 'https://en.wikipedia.org/wiki/Wave' },
+      { localName: 'area', name: 'href', value: ' HTTP://phet.colorado.edu/ ' },
+      { localName: 'a', name: 'xlink:href', value: 'https://example.org/svg' },
+      { localName: 'a', name: 'href', value: 'page2.html' },
+      { localName: 'a', name: 'href', value: 'javascript:alert(1)' },
+      { localName: 'a', name: 'href', value: 'https://exa mple.org/' },
+      { localName: 'a', name: 'href', value: '#/2' },
+    ].map((link) => ({
+      ...link, removed: false, attributes: [],
+      hasAttribute(name: string) { return !this.removed && name === this.name; },
+      getAttribute() { return this.value; },
+      removeAttribute(name: string) { assert.equal(name, this.name); this.removed = true; },
+    }));
+    const prepare = compiledFunction('preparePresentationDocument', {
+      presentationBootstrap() {}, URL,
+      document: { createElement() { return { innerHTML: '', content: { querySelector: () => null, querySelectorAll: (selector: string) => (selector === '*' ? links : []) } }; } },
+    });
+    prepare('<a href="x">x</a>', 'a'.repeat(36), 'b'.repeat(36), { profile });
+    return links.map((link) => !link.removed);
+  };
+  assert.deepEqual(run('tolerant'), [true, true, true, false, false, false, true]);
+  assert.deepEqual(run('strict'), [false, false, false, false, false, false, true]);
+});
+
+test('a standalone export shows the stall and link strips from text, and only its button opens a link', async () => {
+  const exported = exportPresentationHtml('<p>Deck</p>', 'Deck', { profile: 'tolerant' });
+  for (const id of ['rescued', 'link', 'link-open', 'link-dismiss', 'rescued-dismiss', 'stalled']) assert.match(exported, new RegExp(`id="${id}"`));
+  assert.match(exported, /The presentation's start-up script stopped with an error, so the slides are shown with basic settings\./);
+  // The address opens only from the export's own button, without an opener.
+  assert.equal(exported.match(/window\.open\(/g)?.length, 1);
+  assert.match(exported, /addEventListener\('click',\(\)=>\{const url=linkUrl;hideLink\(\);if\(url\)window\.open\(url\.href,'_blank','noopener,noreferrer'\);\}\)/);
+  assert.match(exported, /strong\.textContent=url\.hostname;linkText\.replaceChildren\(/, 'the host name is set as text');
 });

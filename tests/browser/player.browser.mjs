@@ -138,7 +138,7 @@ export default async function run(t) {
   const { exportPresentationHtml } = await tsImport('../../src/lib/presentation-runtime.ts', import.meta.url);
   // Deliberate failures inside the deck: Chromium reports them, the player must not stop.
   t.allowPageError(/Cannot set properties of null \(setting 'marked'\)/);
-  t.allowPageError(/Late failure in a click handler|Rejected inside the deck|Location\.hash setter/);
+  t.allowPageError(/Late failure in a click handler|Rejected inside the deck|Location\.hash setter|notDefinedAnywhere/);
   t.allowConsoleError(/Blocked opening 'about:blank' in a new window because the request was made in a sandboxed frame/);
   t.allowConsoleError(/(?:Refused to load|Loading) the image 'https:\/\/images\.example\.invalid\//);
   t.allowBlockedRequest(/^https:\/\/images\.example\.invalid\//);
@@ -376,6 +376,23 @@ export default async function run(t) {
     await until(async () => (await indices(exportedFrame)).f === 0, 'the deck to keep the keyboard in fullscreen');
     await standalone.evaluate(() => document.exitFullscreen());
     await standalone.close();
+  });
+
+  await t.step('A page that only uses a "reveal" class is no stalled deck, and its website links reach the host only when clicked', async () => {
+    const page2 = '<!doctype html><html><head><title>Scroll page</title></head><body><div class="reveal">Fades in</div><p><a id="out" href="https://phet.colorado.edu/en/simulations">PhET</a> <a id="file" href="notes.pdf">Notes</a></p><script>window.notDefinedAnywhere();</script></body></html>';
+    assert.equal(await page.evaluate((html) => window.play(html, 'tolerant'), page2), 'ready');
+    const pageFrame = await deckFrame(page, '#out');
+    assert.equal(await pageFrame.locator('#out').getAttribute('href'), 'https://phet.colorado.edu/en/simulations', 'the address is kept');
+    assert.equal(await pageFrame.locator('#file').getAttribute('href'), null);
+    await pageFrame.locator('#file').click();
+    await pageFrame.locator('#out').click();
+    await until(async () => (await events(page)).links.length === 1, 'the link to reach the host');
+    await page.waitForTimeout(2600);
+    const reported = await events(page);
+    assert.deepEqual(reported.links, ['https://phet.colorado.edu/en/simulations']);
+    assert.deepEqual(reported.stalls, [], 'no Reveal.js slides, so no stall');
+    assert.equal(await pageFrame.evaluate(() => location.protocol), 'blob:', 'the page did not navigate');
+    await page.evaluate(() => window.player.destroy());
   });
 
   await t.step('Nothing left the page', async () => {
