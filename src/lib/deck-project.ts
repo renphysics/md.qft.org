@@ -169,7 +169,21 @@ function fromPackage(pkg: PresentationPackage, id?: string, title?: string): Dec
  * change what a deck says, never add files to it.
  */
 function storedEdits(files: DeckFiles, edits: DeckEdits | undefined): Map<string, string> {
-  return new Map(Object.entries(edits ?? {}).filter(([path, text]) => typeof text === 'string' && files.has(path) && isTextPath(path)));
+  return new Map(Object.entries(edits ?? {}).map(([path, text]): [string, unknown] => [files.has(path) ? path : earlierSpelling(path, files) ?? path, text])
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && files.has(entry[0]) && isTextPath(entry[0])));
+}
+
+/**
+ * Earlier versions read UTF-8 names from ZIPs without the UTF-8 flag one
+ * character per byte ("SchrÃ¶dinger.md"), and saved edits under that name.
+ * Returns the file such a name stands for now, if the deck has it.
+ */
+function earlierSpelling(path: string, files: DeckFiles): string | undefined {
+  if (!/[\u0080-\u00ff]/.test(path) || /[^\u0000-\u00ff]/.test(path)) return undefined;
+  try {
+    const name = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(path, (char) => char.charCodeAt(0))).normalize('NFC');
+    return files.has(name) ? name : undefined;
+  } catch { return undefined; }
 }
 
 function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: StoredDeckSource): DeckProject {

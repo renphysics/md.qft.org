@@ -171,16 +171,53 @@ const STORED = /\.(?:png|jpe?g|gif|webp|avif|woff2?|zip|gz|br|mp[34]|m4a|webm|og
 /** DOS timestamps are local time; fixed local fields keep output identical everywhere. */
 const FIXED_TIME = new Date(1980, 0, 1, 0, 0, 0);
 
+/**
+ * fflate collects entries in a plain object, where the key "__proto__" sets
+ * the prototype instead of adding an entry. A root file with that name is
+ * written under a stand-in name of the same length, renamed in the finished
+ * ZIP (names are not covered by the checksums).
+ */
+const PROTO_KEY = '__proto__';
+
+function standInName(files: DeckFiles): string {
+  for (let serial = 0; ; serial += 1) {
+    const name = `__qft${String(serial).padStart(3, '0')}_`;
+    if (!files.has(name)) return name;
+  }
+}
+
+function renameEntry(zip: Uint8Array, from: string, to: string): void {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  const fromBytes = new TextEncoder().encode(from);
+  const toBytes = new TextEncoder().encode(to);
+  const eocd = zip.length - 22;
+  const count = view.getUint16(eocd + 10, true);
+  let position = view.getUint32(eocd + 16, true);
+  for (let index = 0; index < count; index += 1) {
+    const nameSize = view.getUint16(position + 28, true);
+    const name = zip.subarray(position + 46, position + 46 + nameSize);
+    if (nameSize === fromBytes.length && name.every((byte, at) => byte === fromBytes[at])) {
+      const local = view.getUint32(position + 42, true);
+      name.set(toBytes);
+      zip.set(toBytes, local + 30);
+    }
+    position += 46 + nameSize + view.getUint16(position + 30, true) + view.getUint16(position + 32, true);
+  }
+}
+
 /** Pack deck files into an ordinary ZIP with sorted paths and fixed timestamps. */
 export function zipDeckFiles(files: DeckFiles): Uint8Array {
-  const input: Zippable = {};
+  const input: Zippable = Object.create(null);
+  const standIn = files.has(PROTO_KEY) ? standInName(files) : undefined;
   for (const path of [...files.keys()].sort()) {
     if (!safePresentationPath(path)) {
       throw new PresentationPackageError('A file path cannot be stored: ' + cleanReportedText(path, 200));
     }
-    input[path] = [files.get(path)!, { level: STORED.test(path) ? 0 : 6, mtime: FIXED_TIME }];
+    input[path === PROTO_KEY ? standIn! : path] = [files.get(path)!, { level: STORED.test(path) ? 0 : 6, mtime: FIXED_TIME }];
   }
-  return zipSync(input, { mtime: FIXED_TIME });
+  const zip = zipSync(input, { mtime: FIXED_TIME });
+  if (standIn) renameEntry(zip, standIn, PROTO_KEY);
+  return zip;
 }
 
 function decodeWith(label: string, bytes: Uint8Array): string | undefined {

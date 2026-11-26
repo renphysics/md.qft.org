@@ -8,6 +8,7 @@ import {
   prepareImageFiles, imageReference, imageIdFromReference,
   validateImageAssets, type DraftImage,
 } from './image-assets';
+import { zipEntryNames } from './presentation-package';
 
 const MAX_ARCHIVE_BYTES = 30 * 1024 * 1024;
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -271,26 +272,32 @@ export async function importWorkspaceBundle(file: File): Promise<WorkspaceBundle
   const seen = new Set<string>();
   const unsupported: string[] = [];
   let files: Record<string, Uint8Array>;
+  // fflate reads names without the UTF-8 flag one character per byte; names
+  // that are UTF-8 all the same (Info-ZIP's zip writes them so) are read as UTF-8.
+  const names = zipEntryNames(bytes);
+  const nameOf = (raw: string) => names.get(raw) ?? raw;
   try {
     files = unzipSync(bytes, { filter: (entry) => {
       entries += 1;
-      if (entries > MAX_PROJECT_ENTRIES || !safeArchivePath(entry.name) || seen.has(entry.name)) throw new Error('Invalid or duplicate archive path.');
-      seen.add(entry.name);
-      if (entry.name.endsWith('/')) return false;
-      const supported = isProjectTextPath(entry.name) || /\.(?:png|jpe?g|webp|gif)$/i.test(entry.name);
+      const name = nameOf(entry.name);
+      if (entries > MAX_PROJECT_ENTRIES || !safeArchivePath(name) || seen.has(name)) throw new Error('Invalid or duplicate archive path.');
+      seen.add(name);
+      if (name.endsWith('/')) return false;
+      const supported = isProjectTextPath(name) || /\.(?:png|jpe?g|webp|gif)$/i.test(name);
       // Count every file before deciding whether to retain it. Hidden or unknown
       // entries cannot evade the expanded-archive limit.
       totalBytes += entry.originalSize;
       if (totalBytes > MAX_ARCHIVE_BYTES) throw new Error('The expanded archive is too large.');
-      if (entry.name.startsWith('__MACOSX/') || /(?:^|\/)(?:\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(entry.name)) return false;
-      if (!supported) { unsupported.push(entry.name); return false; }
-      const limit = entry.name === MANIFEST_NAME ? 32 * 1024 : isProjectTextPath(entry.name) ? MAX_TEXT_BYTES : 8 * 1024 * 1024;
+      if (name.startsWith('__MACOSX/') || /(?:^|\/)(?:\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(name)) return false;
+      if (!supported) { unsupported.push(name); return false; }
+      const limit = name === MANIFEST_NAME ? 32 * 1024 : isProjectTextPath(name) ? MAX_TEXT_BYTES : 8 * 1024 * 1024;
       if (entry.originalSize > limit) throw new Error('The expanded archive is too large.');
       return true;
     } });
   } catch (error) {
     throw new Error(`This ZIP bundle could not be opened. ${error instanceof Error ? error.message : 'Choose a valid Markdown ZIP bundle.'}`);
   }
+  if (names.size) files = Object.fromEntries(Object.entries(files).map(([path, content]) => [nameOf(path), content]));
   // Operating systems commonly ZIP the enclosing folder. Recognize exactly one
   // complete project root without guessing among unrelated documents.
   if (!files[MANIFEST_NAME]) {
