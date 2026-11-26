@@ -8,7 +8,7 @@ import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
   mathStandInSource, mediaHelperSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
-import { defaultImportBindings, scanModuleImports } from './deck-linker-modules';
+import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
 import { PRESENTATION_LIMITS } from './presentation-package';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
@@ -39,6 +39,12 @@ export interface LinkOptions {
   entry?: string;
   /** Largest finished document in UTF-16 code units: the player's 24 MiB limit. */
   maxHtmlLength?: number;
+  /**
+   * Files of the archive that were left out because their names cannot be
+   * used, by deck path, with the reason in words ("its name contains “%”").
+   * A reference to one of them is explained instead of called missing.
+   */
+  skippedFiles?: ReadonlyMap<string, string>;
 }
 
 export interface LinkStats {
@@ -389,6 +395,24 @@ function blockRange(css: string, from: number): { open: number; end: number } | 
   return undefined;
 }
 
+/** The offset of the ")" that closes a bracket opened just before `from`, or the end of the text. */
+function parenthesisEnd(css: string, from: number): number {
+  let depth = 1;
+  for (let index = from; index < css.length; index += 1) {
+    const character = css[index];
+    if (character === '/' && css[index + 1] === '*') {
+      const end = css.indexOf('*/', index + 2);
+      index = end < 0 ? css.length : end + 1;
+    } else if (character === '"' || character === "'") {
+      for (index += 1; index < css.length && css[index] !== character && css[index] !== '\n'; index += 1) {
+        if (css[index] === '\\') index += 1;
+      }
+    } else if (character === '(') depth += 1;
+    else if (character === ')' && --depth === 0) return index;
+  }
+  return css.length;
+}
+
 /** Splits at a separator outside strings, comments and brackets. */
 function splitTopLevel(text: string, separator: string): string[] {
   const parts: string[] = [];
@@ -412,7 +436,7 @@ function splitTopLevel(text: string, separator: string): string[] {
   return parts;
 }
 
-const CSS_SCAN = String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:[^"\\\n]|\\[\s\S])*["\n]?|'(?:[^'\\\n]|\\[\s\S])*['\n]?|(@import)\b|(@font-face)\b|(@namespace)\b|\b(url)\(`;
+const CSS_SCAN = String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:[^"\\\n]|\\[\s\S])*["\n]?|'(?:[^'\\\n]|\\[\s\S])*['\n]?|(@import)\b|(@font-face)\b|(@namespace)\b|\b(url)\(|\b(image-set)\(`;
 
 type CssOrigin = { kind: 'deck'; dir: string } | { kind: 'vendor'; library: VendorLibrary; dir: string };
 
@@ -445,15 +469,22 @@ class DeckLinker {
   private mhchem = false;
   private embeddedVideo = false;
   private unsupportedModules: string[] = [];
+  /** Deck files the finished document already contains, inlined or embedded. */
+  private readonly usedFiles = new Set<string>();
+  /** Files of the deck that links (a and area elements) point to. */
+  private readonly fileLinks = new Set<string>();
+  private readonly skippedLower = new Map<string, string>();
 
   constructor(
     private readonly files: DeckFiles,
     private readonly vendor: VendorProvider,
-    entry: string,
+    private readonly entry: string,
     private readonly detection: DeckDetection,
     private readonly maxLength: number,
+    private readonly skipped: ReadonlyMap<string, string> = new Map(),
   ) {
     this.baseDir = dirname(entry);
+    for (const [path, reason] of skipped) this.skippedLower.set(path.normalize('NFC').toLowerCase(), reason);
     for (const path of files.keys()) {
       const key = path.toLowerCase();
       this.lowerIndex.set(key, this.lowerIndex.has(key) ? null : path);
@@ -490,6 +521,12 @@ class DeckLinker {
 
   private reportMissing(path: string): void {
     this.removedReferences += 1;
+    const reason = this.skipped.get(path) ?? this.skippedLower.get(path.toLowerCase());
+    if (reason) {
+      this.report('skipped-file-reference', 'warning',
+        `The presentation refers to ${path}, which was left out of it because ${reason}. Rename the file and change the reference to the new name, then make the ZIP again.`, path);
+      return;
+    }
     this.report('missing-file', 'warning', `The deck refers to ${path}, but that file is not in it.`, path);
   }
 
@@ -583,6 +620,7 @@ class DeckLinker {
 
   private dataUri(key: string, bytes: Uint8Array, type: string): string | undefined {
     this.assetSizes.set(key, bytes.length);
+    if (this.files.has(key)) this.usedFiles.add(key);
     const cached = this.dataUris.get(key);
     if (cached !== undefined) {
       if (cached) this.embeddedChars += cached.length;
@@ -625,7 +663,8 @@ class DeckLinker {
 
   /* ---------------------------------------------------------------- CSS */
 
-  async rewriteCss(css: string, origin: CssOrigin, chain: string[] = []): Promise<string> {
+  /** `nested`: inside image-set(), where another image-set() is not valid. */
+  async rewriteCss(css: string, origin: CssOrigin, chain: string[] = [], nested = false): Promise<string> {
     const scan = new RegExp(CSS_SCAN, 'gi');
     let output = '';
     let last = 0;
@@ -653,9 +692,42 @@ class DeckLinker {
         output += css.slice(last, match.index) + await this.cssUrl(token.value, origin, css.slice(match.index, token.end));
         last = token.end;
         scan.lastIndex = token.end;
+      } else if (match[5] && !nested) {
+        // image-set("a.png" 1x, url(b.png) 2x): its strings are addresses too.
+        const close = parenthesisEnd(css, scan.lastIndex);
+        output += css.slice(last, scan.lastIndex) + await this.imageSet(css.slice(scan.lastIndex, close), origin, chain);
+        last = close;
+        scan.lastIndex = close;
       }
     }
     return output + css.slice(last);
+  }
+
+  /** The arguments of image-set(): strings at the top level are rewritten like url() values. */
+  private async imageSet(inner: string, origin: CssOrigin, chain: string[]): Promise<string> {
+    let output = '';
+    let last = 0;
+    let depth = 0;
+    for (let index = 0; index < inner.length; index += 1) {
+      const character = inner[index];
+      if (character === '/' && inner[index + 1] === '*') {
+        const end = inner.indexOf('*/', index + 2);
+        index = end < 0 ? inner.length : end + 1;
+      } else if (character === '(') depth += 1;
+      else if (character === ')') depth = Math.max(0, depth - 1);
+      else if (character === '"' || character === "'") {
+        let end = index + 1;
+        for (; end < inner.length && inner[end] !== character && inner[end] !== '\n'; end += 1) if (inner[end] === '\\') end += 1;
+        if (depth === 0) {
+          const original = inner.slice(index, Math.min(end + 1, inner.length));
+          output += await this.rewriteCss(inner.slice(last, index), origin, chain, true)
+            + await this.cssUrl(cssUnescape(inner.slice(index + 1, Math.min(end, inner.length))), origin, original);
+          last = Math.min(end + 1, inner.length);
+        }
+        index = end;
+      }
+    }
+    return output + await this.rewriteCss(inner.slice(last), origin, chain, true);
   }
 
   private async cssUrl(value: string, origin: CssOrigin, original: string): Promise<string> {
@@ -750,6 +822,7 @@ class DeckLinker {
       const key = `deck:${target.path}`;
       if (chain.includes(key) || chain.length >= MAX_IMPORT_DEPTH) return '';
       this.inlinedFiles += 1;
+      this.usedFiles.add(target.path);
       return this.rewriteCss(decodeText(this.files.get(target.path)!, target.path), { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
     }
     if (target.kind === 'missing') {
@@ -865,6 +938,7 @@ class DeckLinker {
     const namespace = element.namespaceURI;
     switch (target.kind) {
       case 'local': {
+        this.usedFiles.add(target.path);
         if (this.isMathPlugin(target.path)) return this.mathElements();
         const code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
         this.inlinedFiles += 1;
@@ -947,6 +1021,7 @@ class DeckLinker {
       const target = this.resolve(src, this.baseDir);
       let reference: LibraryReference | undefined;
       if (target.kind === 'local') {
+        this.usedFiles.add(target.path);
         if (this.isMathPlugin(target.path)) {
           elements.push(...await this.mathElements());
           actions[src] = { plugin: 'RevealMath' };
@@ -1009,6 +1084,7 @@ class DeckLinker {
       dir = dirname(target.path);
       where = target.path;
       this.inlinedFiles += 1;
+      this.usedFiles.add(target.path);
     } else code = textOf(element);
     this.moduleTexts.push(code);
 
@@ -1086,7 +1162,12 @@ class DeckLinker {
 
   private async processLink(element: Element): Promise<void> {
     const rel = (getAttribute(element, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
-    if (!rel.includes('stylesheet') || rel.includes('alternate') || hasAttribute(element, 'disabled')) {
+    const onload = getAttribute(element, 'onload') ?? '';
+    // Stylesheets loaded without blocking the page: <link rel="preload" as="style"
+    // onload="this.rel='stylesheet'">, or media="print" onload="this.media='all'".
+    const preloaded = rel.includes('preload') && (getAttribute(element, 'as') ?? '').trim().toLowerCase() === 'style'
+      && /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload);
+    if ((!rel.includes('stylesheet') && !preloaded) || rel.includes('alternate') || hasAttribute(element, 'disabled')) {
       defaultTreeAdapter.detachNode(element);
       return;
     }
@@ -1096,6 +1177,11 @@ class DeckLinker {
     for (const name of ['id', 'media', 'title']) {
       const value = getAttribute(element, name);
       if (value) attributes[name] = value;
+    }
+    const media = /\bthis\s*\.\s*media\s*=\s*(["'])([^"'\n]{0,200})\1/.exec(onload)?.[2];
+    if (media !== undefined) {
+      if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
+      else delete attributes.media;
     }
     replaceNode(element, css ? [styleElement(css, attributes)] : []);
   }
@@ -1188,6 +1274,7 @@ class DeckLinker {
       if (target.kind === 'local') {
         text = decodeText(this.files.get(target.path)!, target.path);
         this.inlinedFiles += 1;
+        this.usedFiles.add(target.path);
       } else {
         if (target.kind === 'remote') this.reportRemote(target, 'markdown');
         else if (target.kind === 'missing') this.reportMissing(target.path);
@@ -1291,7 +1378,9 @@ class DeckLinker {
         if (getAttribute(element, 'src')) {
           this.report('captions-left-out', 'info', 'Caption tracks cannot be included, so videos play without captions.');
         }
-        removeAttribute(element, 'src');
+        // A <track> without its file reports a loading error while the video plays.
+        defaultTreeAdapter.detachNode(element);
+        return;
       } else {
         await image('src', name === 'source' ? sourcePurpose(element) : mediaPurpose);
         await image('data-src', name === 'source' ? sourcePurpose(element) : mediaPurpose);
@@ -1337,7 +1426,7 @@ class DeckLinker {
     }
     await image('background');
     const style = getAttribute(element, 'style');
-    if (style && /url\(/i.test(style)) setAttribute(element, 'style', await this.rewriteCss(style, { kind: 'deck', dir: this.baseDir }));
+    if (style && /url\(|image-set\(/i.test(style)) setAttribute(element, 'style', await this.rewriteCss(style, { kind: 'deck', dir: this.baseDir }));
   }
 
   /** Of a comma-separated list of video sources, the first the deck contains. */
@@ -1371,6 +1460,7 @@ class DeckLinker {
     const key = `${path}#${id}`;
     if (this.sprites.has(key)) return this.sprites.get(key) ?? undefined;
     const sprite = `qft-sprite-${this.sprites.size + 1}`;
+    this.usedFiles.add(path);
     const source = parse(`<svg>${decodeText(this.files.get(path)!, path).replace(/<\?xml[^<>]*>|<!DOCTYPE[^<>]*>/gi, '')}</svg>`);
     const found = elementsOf(source).find((element) => getAttribute(element, 'id') === id && element.namespaceURI === NS.SVG);
     if (!found) { this.sprites.set(key, null); return undefined; }
@@ -1380,9 +1470,15 @@ class DeckLinker {
     const definitions = createElement('defs', {}, NS.SVG);
     defaultTreeAdapter.appendChild(definitions, found);
     defaultTreeAdapter.appendChild(holder, definitions);
-    for (const nested of elementsOf(holder)) await this.processAssets(nested);
-    prepend(this.body(), holder);
+    // Set first, so that a symbol that uses itself does not recurse.
     this.sprites.set(key, sprite);
+    // The sprite's own references are relative to the sprite file.
+    const pageDir = this.baseDir;
+    this.baseDir = dirname(path);
+    try {
+      for (const nested of elementsOf(holder)) await this.processAssets(nested);
+    } finally { this.baseDir = pageDir; }
+    prepend(this.body(), holder);
     return sprite;
   }
 
@@ -1486,6 +1582,16 @@ class DeckLinker {
       this.report('deck-unreadable', 'error', 'This page is nested too deeply to prepare for playback.');
       return undefined;
     }
+    // Scripts always run in the player, so <noscript> content never applies. The
+    // linker reads it as text and the player as markup; drop it before either.
+    for (const element of elementsOf(this.document)) {
+      if (localName(element) === 'noscript' && element.namespaceURI === NS.HTML) defaultTreeAdapter.detachNode(element);
+    }
+    if (isEmptyPage(this.document)) {
+      const name = cleanReportedText(this.entry.split('/').pop() || 'The start page', 120);
+      this.report('page-empty', 'error', `${name} is empty. Export the presentation again.`, this.entry || undefined);
+      return undefined;
+    }
     const elements = elementsOf(this.document);
     for (const element of elements) if (isTemplate(element)) templateOwners.set(element.content, element);
     this.survey(elements);
@@ -1510,6 +1616,8 @@ class DeckLinker {
       if (EMBEDDING.has(name) && element.namespaceURI === NS.HTML) { await this.processEmbedding(element); continue; }
       if (name === 'section' && hasAttribute(element, 'data-markdown')) await this.processMarkdownSection(element);
       await this.processAssets(element);
+      if (!isAttached(element)) continue;
+      if ((name === 'a' || name === 'area') && element.namespaceURI === NS.HTML) this.noteLink(element);
       this.collectHandlers(element);
     }
     // Inline scripts that call Reveal.initialize with a 3.x dependency list.
@@ -1533,6 +1641,62 @@ class DeckLinker {
     this.sweep();
     this.mathNote();
     this.moduleNote();
+    this.linkNote();
+    this.runtimeFilesNote();
+  }
+
+  /** A link to another file of the deck (a page, a worksheet): it cannot open in the player. */
+  private noteLink(element: Element): void {
+    const href = getAttribute(element, 'href');
+    if (href === undefined) return;
+    const target = this.resolve(href, this.baseDir);
+    if (target.kind === 'local' || target.kind === 'missing') this.fileLinks.add(target.path);
+  }
+
+  private linkNote(): void {
+    if (!this.fileLinks.size) return;
+    const links = [...this.fileLinks];
+    const shown = namedList(links);
+    this.report('file-links', 'warning',
+      `Links to other files of the presentation do not open in the player: ${shown}. Put what they show on a slide, or open those files outside the player.`,
+      links.slice(0, 3).join(', '));
+  }
+
+  /**
+   * Files that the deck's scripts load while it plays: quoted names of deck
+   * files that the document does not already contain, and the relative
+   * addresses given to fetch(), import() and XMLHttpRequest. The player has
+   * no files to serve at that point.
+   */
+  private runtimeFilesNote(): void {
+    const loaded = new Set<string>();
+    const add = (path: string) => { loaded.add(path); };
+    const failed = new Set(this.failedModuleTexts);
+    const texts = [...this.classicTexts, ...this.moduleTexts.filter((code) => !failed.has(code))];
+    for (const code of texts) {
+      const literals = scanStringLiterals(code);
+      if (!literals) continue;
+      const requests = /XMLHttpRequest/.test(code);
+      for (const literal of literals) {
+        const value = literal.value;
+        if (!value || value.length > 300 || /[\n\r]/.test(value) || !/[./]/.test(value)) continue;
+        const target = this.resolve(value, this.baseDir);
+        if (target.kind !== 'local' && target.kind !== 'missing') continue;
+        // Reveal.js and KaTeX come from the bundled copies.
+        if (mapModuleSpecifier(this.importMap.get(value) ?? value) || mapLibraryPath(target.path)) continue;
+        const before = code.slice(Math.max(0, literal.start - 60), literal.start);
+        const loads = /\b(?:fetch|import)\s*\(\s*$/.test(before)
+          || (requests && /\.open\s*\(\s*(["'`])[A-Za-z]{3,7}\1\s*,\s*$/.test(before));
+        if (loads) add(target.path);
+        else if (target.kind === 'local' && target.path !== this.entry && !this.usedFiles.has(target.path)) add(target.path);
+      }
+    }
+    if (!loaded.size) return;
+    const found = [...loaded];
+    const page = cleanReportedText(this.entry.split('/').pop() || 'index.html', 80);
+    this.report('runtime-files', 'warning',
+      `The presentation's scripts load ${namedList(found)} while it plays. The player cannot supply files at that point, so those parts may stay empty. Ask your AI assistant to put that data inside ${page}.`,
+      found.slice(0, 3).join(', '));
   }
 
   /** Whatever is still left that the player would refuse is removed and reported. */
@@ -1597,6 +1761,21 @@ class DeckLinker {
 }
 
 /* ---------------------------------------------------------------- helpers */
+
+/** Up to three names, then how many more. */
+function namedList(names: readonly string[]): string {
+  const shown = names.slice(0, 3).map((name) => cleanReportedText(name, 80)).join(', ');
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+/** Nothing to show and nothing that could show something: no element beyond the page skeleton, no text. */
+function isEmptyPage(document: Document): boolean {
+  const skeleton = new Set(['html', 'head', 'body', 'title', 'meta']);
+  const elements = elementsOf(document);
+  if (elements.some((element) => !skeleton.has(localName(element)))) return false;
+  const body = elements.find((element) => localName(element) === 'body');
+  return !body || !textOf(body).trim();
+}
 
 function styleElement(css: string, attributes: Record<string, string> = {}): Element {
   const element = createElement('style', attributes);
@@ -1747,7 +1926,7 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
     };
     return { html: '', issues: [{ code: 'entry-missing', severity: 'error', message: 'This deck has no HTML page to start from.' }], stats: empty };
   }
-  const linker = new DeckLinker(files, vendor, entry, detection, maxLength);
+  const linker = new DeckLinker(files, vendor, entry, detection, maxLength, options.skippedFiles);
   const html = await linker.link(decodeText(files.get(entry)!, entry)) ?? '';
   const stats = linker.stats(entry, html.length);
   if (html.length > maxLength) {

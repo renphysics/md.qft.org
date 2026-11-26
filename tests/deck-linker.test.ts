@@ -426,7 +426,7 @@ describe('assets', () => {
     assert.match(html, /<section data-background="#ff0000" data-background-video="data:video\/mp4;base64,[^"]+" data-background-video-loop="">/);
     assert.ok(scripts(html)[0].marker === 'media', 'the video helper runs before the deck');
     assert.match(html, /<img alt="a" src="data:image\/png;base64,/);
-    assert.match(html, /<video poster="data:image\/png;base64,[^"]+" data-autoplay=""><source data-src="data:video\/mp4;base64,[^"]+" type="video\/mp4"><track kind="captions"><\/video>/);
+    assert.match(html, /<video poster="data:image\/png;base64,[^"]+" data-autoplay=""><source data-src="data:video\/mp4;base64,[^"]+" type="video\/mp4"><\/video>/);
     assert.match(html, /<picture><img src="data:image\/png/);
     assert.match(html, /<img data-preview-image="data:image\/png;base64,[^"]+" src="data:image\/png;base64,[^"]+" alt="case">/);
     assert.match(html, /<img src="data:image\/png;base64,[^"]+" alt="encoded">/);

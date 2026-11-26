@@ -913,6 +913,9 @@ function classify(files: DeckFiles, issues: IssueList): DeckDetection {
     }
     checkReferences(files, page, issues, [], { revealDeck: false });
     inlineHandlerIssue(page, issues);
+    if (!page.revealRoot && !looksLikeSlides(page)) {
+      issues.add('no-slides-found', 'info', 'No slides were recognized in this page, so it plays as one ordinary page.', page.path);
+    }
     return { kind: 'html', entry: page.path, engine: 'html', ...titleOf(page), issues: issues.list(), flags: {} };
   }
 
@@ -920,13 +923,27 @@ function classify(files: DeckFiles, issues: IssueList): DeckDetection {
   const markdown = [...files.keys()].filter((path) => /\.(?:md|markdown)$/i.test(path));
   if (markdown.length === 1) return { kind: 'markdown-bundle', entry: markdown[0], issues: issues.list(), flags: {} };
   if (usable.length > 1) {
+    const named = usable.slice(0, 3).map((path) => shown(path, 80)).join(', ');
+    const more = usable.length > 3 ? ` and ${usable.length - 3} more` : '';
     issues.add('several-pages', 'info',
-      'This ZIP holds several HTML pages and none of them is clearly the main one. Name the page to open index.html and put it at the top of the ZIP.');
+      `This ZIP holds several HTML pages (${named}${more}) and none of them is clearly the one that starts the presentation. Rename that page to index.html, put it at the top of the ZIP, and open the new ZIP.`);
   } else {
     issues.add('no-deck-found', 'info',
       'No presentation was found. Expected an HTML page made with Reveal.js, a Slidev build, or a portable presentation package.');
   }
   return { kind: 'unknown', issues: issues.list(), flags: {} };
+}
+
+/**
+ * Some sign that an ordinary page is a slide show: several sections, the word
+ * "slide" (in a class, an id or its code), or keys that turn pages. A page
+ * with no text at all is left to the linker, which reports it as empty.
+ */
+function looksLikeSlides(page: PageScan): boolean {
+  if (!page.text.trim()) return true;
+  const sections = page.text.match(/<section\b/gi);
+  if (sections && sections.length > 1) return true;
+  return /\bslides?\b|\bslide[-_]|keydown|ArrowRight|ArrowLeft|PageDown/i.test(page.text);
 }
 
 function inlineHandlerIssue(page: PageScan, issues: IssueList): void {

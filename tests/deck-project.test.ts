@@ -92,8 +92,15 @@ describe('opening decks', () => {
     assert.equal(await openDeck(new File(['# Notes'], 'notes.md')), null);
   });
 
-  it('returns null for a ZIP whose pages are not a presentation', async () => {
-    assert.equal(await openDeck(zipFile({ 'a/page.html': '<p>A</p>', 'b/page.html': '<p>B</p>' })), null);
+  it('explains a ZIP with several pages and no clear start page, and does not save it', async () => {
+    const project = await opened(zipFile({ 'a/page.html': '<p>A</p>', 'b/page.html': '<p>B</p>' }));
+    assert.equal(project.kind, 'unknown');
+    assert.equal(deckSaveInput(project), undefined);
+    const result = await buildPlayable(project, deps());
+    assert.equal(isPlayable(result), false);
+    assert.deepEqual(result.issues.map((issue) => [issue.severity, issue.code]), [['error', 'several-pages']]);
+    assert.match(result.issues[0].message, /\(a\/page\.html, b\/page\.html\)/);
+    assert.match(result.issues[0].message, /Rename that page to index\.html/);
   });
 
   it('opens Slidev source as a deck that explains how to build it', async () => {

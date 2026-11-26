@@ -314,6 +314,9 @@ export async function importWorkspaceBundle(file: File): Promise<WorkspaceBundle
     throw new Error(`This lesson contains an unsupported file: ${unsupported[0]}. Use Markdown, HTML, CSS, JavaScript, JSON, text, or PNG/JPEG/WebP/GIF images.`);
   }
   const candidates = Object.keys(files).filter((name) => /\.(?:md|markdown)$/i.test(name));
+  if (!manifest && !candidates.length) {
+    throw new Error('This ZIP holds no Markdown document and no page to play. A lesson ZIP needs one Markdown (.md) file; a presentation ZIP needs a page such as index.html at the top.');
+  }
   if (!manifest && candidates.length !== 1) throw new Error('A ZIP bundle must contain one Markdown document, or a QFT document manifest.');
   const documentPath = manifest?.document ?? candidates[0];
   if (!files[documentPath] || !/\.(?:md|markdown)$/i.test(documentPath)) throw new Error('The Markdown document is missing from this bundle.');

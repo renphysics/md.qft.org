@@ -24,6 +24,8 @@ export interface DeckArchive {
   folder: string;
   expandedBytes: number;
   issues: DeckIssue[];
+  /** Files left out because their names cannot be used: deck path (wrapping folder removed) and the reason in words. */
+  skipped: Map<string, string>;
 }
 
 /** At most this many skipped files are named individually; the rest are counted. */
@@ -41,6 +43,21 @@ function baseName(name: string, fallback: string): string {
 function zipName(name: string): string {
   const stem = name.replace(/\.(?:zip|html?)$/i, '') || 'presentation';
   return stem.slice(0, 236) + '.zip';
+}
+
+/**
+ * Why a name fails the safe-path rule (safePresentationPath), in words that
+ * complete "… because ___": the first character or form that makes it unusable.
+ */
+export function unusableNameReason(path: string): string {
+  if (!path) return 'it has no name';
+  if (path.length > 1024) return 'its name is longer than 1,024 characters';
+  const character = /[\\:?#%]/.exec(path)?.[0];
+  if (character) return `its name contains “${character}”`;
+  if (/[\u0000-\u001f\u007f]/.test(path)) return 'its name contains an invisible control character';
+  const part = path.split('/').find((segment) => /[. ]$/.test(segment));
+  if (part !== undefined) return `the name “${cleanReportedText(part, 80)}” ends with ${part.endsWith(' ') ? 'a space' : 'a dot'}`;
+  return 'its name cannot be used in a presentation';
 }
 
 /**
@@ -74,6 +91,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   const directory = inspectDirectory(bytes, false);
   const issues: DeckIssue[] = [];
   const kept: { path: string; entry: ArchiveEntry }[] = [];
+  const unusable: string[] = [];
   const unchecked: ArchiveEntry[] = [];
   let skipped = 0;
   for (const entry of directory) {
@@ -82,12 +100,13 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     if (isIgnoredPath(path)) { unchecked.push(entry); continue; }
     if (!usable) {
       unchecked.push(entry);
+      unusable.push(path);
       skipped += 1;
       if (skipped <= NAMED_SKIPS) {
         const shown = cleanReportedText(entry.name, 200);
         issues.push({
           code: 'archive-path-skipped', severity: 'warning', where: shown,
-          message: 'Skipped a file whose name cannot be used in a presentation: ' + shown,
+          message: `Skipped ${shown} because ${unusableNameReason(path)}, which cannot be used in a presentation. Rename it, change the references to the new name, and make the ZIP again.`,
         });
       }
       continue;
@@ -105,6 +124,10 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   const first = kept[0].path.split('/')[0];
   const wrapped = kept.every(({ path }) => path.includes('/') && path.split('/')[0] === first);
   if (wrapped) for (const item of kept) item.path = item.path.slice(first.length + 1);
+  const skippedFiles = new Map<string, string>();
+  for (const path of unusable) {
+    skippedFiles.set(wrapped && path.startsWith(first + '/') ? path.slice(first.length + 1) : path, unusableNameReason(path));
+  }
 
   const seen = new Map<string, boolean>();
   for (const { path } of kept) {
@@ -139,6 +162,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     folder: wrapped ? first : '',
     expandedBytes: directory.reduce((sum, entry) => sum + entry.size, 0),
     issues,
+    skipped: skippedFiles,
   };
 }
 
@@ -148,7 +172,8 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
  * twice gives the same bytes and the same content hash.
  */
 export async function deckFromHtmlFile(file: File): Promise<DeckArchive> {
-  if (!file.size || file.size > PRESENTATION_LIMITS.htmlBytes) {
+  if (!file.size) throw new PresentationPackageError('This HTML file is empty. Export the presentation again.');
+  if (file.size > PRESENTATION_LIMITS.htmlBytes) {
     throw new PresentationPackageError('Choose an HTML file smaller than 24 MB.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -163,6 +188,7 @@ export async function deckFromHtmlFile(file: File): Promise<DeckArchive> {
     folder: '',
     expandedBytes: bytes.length,
     issues: [],
+    skipped: new Map(),
   };
 }
 

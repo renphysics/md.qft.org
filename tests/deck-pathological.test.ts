@@ -57,6 +57,12 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   { name: 'a @font-face src with 40,000 "format("', run: () => link(deck({ 'index.html': page('', `<style>@font-face{font-family:x;src:url(a.woff2) ${'format('.repeat(40_000)}}</style>`), 'a.woff2': 'wOF2' })) },
   { name: 'a javascript: link with 256 KB of spaces after void', run: () => link(deck({ 'index.html': page(`<a href="javascript:void${' '.repeat(256 * KB)}x">go</a>`) })) },
   { name: 'an SVG sprite ending in 64,000 "<?xml" and no >', run: () => link(deck({ 'index.html': page('<svg><use href="s.svg#a"></use></svg>'), 's.svg': `<svg><symbol id="a"></symbol></svg>${'<?xml'.repeat(64 * KB)}` })) },
+  // F2a.6 and F2a.2: image-set() and the scan of script strings for files loaded while playing.
+  { name: 'CSS with 64,000 unclosed image-set( and quotes', run: () => link(deck({ 'index.html': page('', `<style>a{b:${'image-set("x.png" 1x, '.repeat(64 * KB)}}</style>`), 'x.png': 'x' })) },
+  { name: 'CSS with 64,000 nested image-set(', run: () => link(deck({ 'index.html': page('', `<style>a{b:${'image-set('.repeat(64 * KB)}}</style>`) })) },
+  { name: 'a script with 100,000 fetch("x/" calls', run: () => link(deck({ 'index.html': page(`<script>${'fetch("x/a.json");'.repeat(100_000)}</script>`) })) },
+  { name: 'a page with 50,000 links to different missing files', run: () => link(deck({ 'index.html': page(Array.from({ length: 50_000 }, (_, index) => `<a href="p${index}.html">x</a>`).join('')) })) },
+  { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
   { name: 'a Slidev library chunk with 150,000 "export{"', run: () => detectDeck(slidevBuild({ vue: `/*${'export{'.repeat(150_000)}*/` })) },
