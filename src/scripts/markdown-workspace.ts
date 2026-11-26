@@ -19,6 +19,7 @@ import { demoSettingFields, normalizeDemoSettings, type DemoSettings } from '../
 import { createLessonProject, cloneLessonProject, validateLessonProject, projectFilePath, prepareProjectImages } from '../lib/lesson-project';
 import { generateLessonPrompt, createStarterLesson, type LessonAIInput } from '../lib/ai-lesson';
 import { generateSlidevPrompt } from '../lib/slidev-prompt';
+import { generateRevealPrompt } from '../lib/reveal-prompt';
 import { checkLesson, formatLessonReport } from '../lib/lesson-check';
 import type { LessonFileChange } from '../lib/lesson-revision';
 import type { WorkspaceBundle } from '../lib/document-bundle';
@@ -1370,10 +1371,15 @@ class MarkdownWorkspace extends HTMLElement {
   }
 
   private async openFile(file: File): Promise<void> {
-    if (/\.zip$/i.test(file.name)) {
+    // Presentations first: an HTML page or ZIP that is a deck opens in the
+    // library. A ZIP that is not one continues to the Markdown importer.
+    if (/\.(?:zip|html?)$/i.test(file.name)) {
       await this.flush();
       await customElements.whenDefined('qft-presentation-library');
       if (await this.q<PresentationLibrary>('qft-presentation-library').tryOpenFile(file)) return;
+    }
+    if (/\.html?$/i.test(file.name)) throw new Error('This HTML file could not be opened as a presentation.');
+    if (/\.zip$/i.test(file.name)) {
       const { importWorkspaceBundle } = await import('../lib/document-bundle');
       const imported = await importWorkspaceBundle(file);
       await this.flush();
@@ -1384,7 +1390,7 @@ class MarkdownWorkspace extends HTMLElement {
       this.notify(imported.project ? 'Lesson opened. Check lesson helps you spot missing images, equations, or demo dependencies.' : 'Opened the Markdown and its images as a new document.');
       return;
     }
-    if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose Markdown (.md), plain text (.txt), a lesson ZIP, or a prepared Slidev presentation ZIP.');
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose Markdown (.md), plain text (.txt), a lesson ZIP, or a presentation (.html or .zip).');
     if (file.size > MAX_SOURCE_LENGTH * 4) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
     const source = await file.text();
     if (source.length > MAX_SOURCE_LENGTH) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
@@ -1408,9 +1414,15 @@ class MarkdownWorkspace extends HTMLElement {
     catch { fallback.focus(); fallback.select(); return false; }
   }
 
+  private aiFormat(): 'qft' | 'reveal' | 'slidev' {
+    const value = this.q<HTMLSelectElement>('[data-ai-format]').value;
+    return value === 'reveal' || value === 'slidev' ? value : 'qft';
+  }
+
   private async copyAIInstructions(): Promise<void> {
-    const prompt = this.q<HTMLSelectElement>('[data-ai-format]').value === 'slidev'
-      ? generateSlidevPrompt(this.aiInput()) : generateLessonPrompt(this.aiInput());
+    const format = this.aiFormat();
+    const prompt = format === 'slidev' ? generateSlidevPrompt(this.aiInput())
+      : format === 'reveal' ? generateRevealPrompt(this.aiInput()) : generateLessonPrompt(this.aiInput());
     const field = this.q<HTMLTextAreaElement>('[data-ai-prompt]');
     const details = this.q<HTMLDetailsElement>('[data-ai-prompt-details]');
     field.value = prompt;
@@ -1419,13 +1431,17 @@ class MarkdownWorkspace extends HTMLElement {
     details.open = true;
     const copied = await this.copyLessonText(prompt, field);
     details.open = !copied;
-    this.q('[data-ai-status]').textContent = copied
-      ? 'Copied. Paste into your AI assistant, attach your source material, and ask for the lesson ZIP.'
-      : 'Select and copy the instructions below, then paste them into your AI assistant.';
+    this.q('[data-ai-status]').textContent = !copied
+      ? 'Select and copy the instructions below, then paste them into your AI assistant.'
+      : format === 'reveal'
+        ? 'Copied. Paste it into your AI, download the HTML file or ZIP it returns, and open it here.'
+        : 'Copied. Paste into your AI assistant, attach your source material, and ask for the lesson ZIP.';
   }
 
   private async starterLesson(download: boolean): Promise<void> {
-    if (this.q<HTMLSelectElement>('[data-ai-format]').value === 'slidev') {
+    // A Reveal.js deck comes straight from the AI; there is no starter for it.
+    if (this.aiFormat() === 'reveal') return;
+    if (this.aiFormat() === 'slidev') {
       if (download) {
         const link = document.createElement('a');
         link.href = withBase('slidev/interactive-physics.zip');
@@ -1713,11 +1729,18 @@ class MarkdownWorkspace extends HTMLElement {
     click('[data-ai-example]', () => this.lessonAction('[data-ai-status]', () => this.starterLesson(false)));
     click('[data-ai-open]', () => { this.q<HTMLDialogElement>('[data-ai-dialog]').close(); this.q<HTMLInputElement>('[data-file-input]').click(); });
     this.q<HTMLSelectElement>('[data-ai-format]').addEventListener('change', () => {
-      const slidev = this.q<HTMLSelectElement>('[data-ai-format]').value === 'slidev';
-      this.q('[data-ai-format-help]').textContent = slidev ? 'Your coding assistant builds the Slidev package. Open it here to present; revise its source and rebuild for changes.' : 'Markdown lessons can be revised directly in the editor.';
-      this.q('[data-ai-workflow-help]').textContent = slidev ? 'Ask for the built Slidev ZIP with source included. Open it here, test each interaction, and present.' : 'Ask for a lesson ZIP. Open it here, check it, and make your final edits.';
+      const format = this.aiFormat();
+      this.q('[data-ai-format-help]').textContent = format === 'slidev' ? 'Your coding assistant builds the Slidev package. Open it here to present; revise its source and rebuild for changes.'
+        : format === 'reveal' ? 'Paste the prompt into your AI, download the HTML file or ZIP it returns, and open it here.'
+          : 'Markdown lessons can be revised directly in the editor.';
+      this.q('[data-ai-workflow-help]').textContent = format === 'slidev' ? 'Ask for the built Slidev ZIP with source included. Open it here, test each interaction, and present.'
+        : format === 'reveal' ? 'Download the HTML file or ZIP your AI returns. Open it here, read the notes from the check, and present.'
+          : 'Ask for a lesson ZIP. Open it here, check it, and make your final edits.';
+      // No starter for Reveal.js: the AI writes the whole deck.
+      this.q('[data-ai-starter]').hidden = format === 'reveal';
+      this.q('[data-ai-example]').hidden = format === 'reveal';
       this.q<HTMLDetailsElement>('[data-ai-prompt-details]').hidden = true;
-      this.q('[data-ai-status]').textContent = 'Copy the instructions and download the matching starter ZIP.';
+      this.q('[data-ai-status]').textContent = format === 'reveal' ? 'Copy the instructions, then paste them into your AI assistant.' : 'Copy the instructions and download the matching starter ZIP.';
     }, { signal });
     click('[data-lesson-check]', () => this.openLessonCheck());
     click('[data-lesson-check-close]', () => this.q<HTMLDialogElement>('[data-lesson-check-dialog]').close());
@@ -2145,7 +2168,7 @@ class MarkdownWorkspace extends HTMLElement {
       if (files.every((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name))) {
         this.runAction(() => this.insertImages(files, target));
       } else if (files.length === 1) this.runAction(() => this.openFile(files[0]));
-      else this.notify('Drop one Markdown or ZIP file, or drop a group of pictures to insert them.');
+      else this.notify('Drop one Markdown, HTML, or ZIP file, or drop a group of pictures to insert them.');
     }, { capture: true, signal });
     const resizer = this.q('[data-resizer]');
     resizer.addEventListener('pointerdown', (event) => {

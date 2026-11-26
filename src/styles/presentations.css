@@ -47,7 +47,7 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-frame-host { position: absolute; inset: 0; }
 .presentation-dialog .presentation-frame-host iframe { display: block; width: 100%; height: 100%; border: 0; }
 .presentation-dialog .presentation-start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px; text-align: center; color: #f5f2ee; background: radial-gradient(ellipse at 70% 20%, #33514c 0, transparent 65%), #1d282e; }
-.presentation-dialog .presentation-engine { color: #b8d3c9; font-size: 10px; letter-spacing: 2.5px; padding: 6px 11px; border: 1px solid #b8d3c950; border-radius: 20px; }
+.presentation-dialog .presentation-engine { color: #b8d3c9; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; padding: 6px 11px; border: 1px solid #b8d3c950; border-radius: 20px; }
 .presentation-dialog .presentation-start h3 { font: 500 clamp(24px, 3vw, 38px)/1.3 var(--font-prose); letter-spacing: -.7px; margin: 20px 0 12px; max-width: 700px; }
 .presentation-dialog .presentation-start p { color: #c2ceca; font-size: 12px; line-height: 1.8; margin: 0 0 22px; }
 .presentation-dialog .presentation-start .button-primary { background: #e9ddd0; color: #302e2a; }
@@ -62,6 +62,25 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-player-bar > div { display: flex; gap: 12px; align-items: center; }
 .presentation-dialog .presentation-player-bar button { display: inline-flex; gap: 5px; align-items: center; padding: 2px 0; font-size: 10px; background: transparent; }
 .presentation-dialog .presentation-player-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presentation-dialog .presentation-slide-count { color: var(--muted); }
+.presentation-dialog .presentation-notes { flex-shrink: 0; max-height: min(38%, 260px); overflow: auto; margin: 0 2px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--paper); font-size: 12px; }
+.presentation-dialog .presentation-notes > summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; list-style: none; font-weight: 600; font-size: 11px; position: sticky; top: 0; background: var(--paper); }
+.presentation-dialog .presentation-notes > summary::-webkit-details-marker { display: none; }
+.presentation-dialog .presentation-notes > summary svg { margin-left: auto; transition: transform .15s; }
+.presentation-dialog .presentation-notes[open] > summary svg { transform: rotate(180deg); }
+.presentation-dialog .presentation-notes-count { font-weight: 400; color: var(--muted); }
+.presentation-dialog .presentation-notes-body { padding: 0 12px 12px; }
+.presentation-dialog .presentation-notes-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.presentation-dialog .presentation-notes-list li { line-height: 1.55; padding-left: 10px; border-left: 3px solid var(--border); overflow-wrap: anywhere; }
+.presentation-dialog .presentation-notes-list li[data-severity='error'] { border-left-color: #c98b97; }
+.presentation-dialog .presentation-notes-list li[data-severity='warning'] { border-left-color: #d6b072; }
+.presentation-dialog .presentation-notes-list li strong { font-weight: 600; }
+.presentation-dialog .presentation-notes-list li small { display: block; color: var(--muted); font: 10px/1.5 var(--font-code); }
+.presentation-dialog .presentation-notes-list q { font-family: var(--font-code); font-size: 11px; }
+.presentation-dialog .presentation-notes-label { margin: 12px 0 6px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.presentation-dialog .presentation-notes-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.presentation-dialog .presentation-notes-actions .button-secondary { font-size: 11px; padding: 6px 11px; min-height: 32px; }
+.presentation-dialog .presentation-report-text { display: block; width: 100%; min-height: 120px; margin-top: 10px; resize: vertical; white-space: pre; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font: 11px/1.6 var(--font-code); background: var(--code-bg); color: var(--text); }
 .presentation-dialog .presentation-source { min-height: 0; flex: 1; display: flex; flex-direction: column; padding: 16px; }
 .presentation-dialog .presentation-source-heading { display: flex; align-items: flex-end; gap: 15px; margin-bottom: 12px; }
 .presentation-dialog .presentation-source-heading label { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
@@ -77,7 +96,7 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-stage.presentation-fallback-fullscreen { position: fixed; inset: 0; z-index: 5; }
 .presentation-dialog .presentation-exit-fullscreen { position: absolute; top: 10px; right: 12px; z-index: 10; display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border-radius: 5px; color: #eee; background: #172127dc; font-size: 11px; opacity: .6; }
 .presentation-dialog .presentation-exit-fullscreen:hover, .presentation-dialog .presentation-exit-fullscreen:focus-visible { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .presentation-example { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .presentation-example, .presentation-dialog .presentation-notes > summary svg { transition: none; } }
 @media (max-width: 700px) {
   .app-dialog.presentation-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); border-radius: 8px; }
   .presentation-dialog .presentation-topbar { padding: 11px 12px; gap: 8px; }
@@ -98,6 +117,7 @@ qft-presentation-library { display: contents; }
   .presentation-dialog .presentation-stage { flex: 0 0 auto; min-height: 0; aspect-ratio: var(--presentation-aspect, 16 / 9); }
   .presentation-dialog .presentation-stage:has([data-pres-start]:not([hidden])) { min-height: 300px; }
   .presentation-dialog .presentation-keyboard-hint { display: none; }
+  .presentation-dialog .presentation-notes { max-height: 40%; margin-bottom: 8px; }
   .presentation-dialog .presentation-dialog-footer { padding: 9px 12px; font-size: 9px; }
   .presentation-dialog .presentation-dialog-footer a { white-space: nowrap; }
   .presentation-dialog .presentation-start { padding: 20px; }
