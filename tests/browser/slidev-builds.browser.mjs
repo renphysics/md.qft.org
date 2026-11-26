@@ -18,8 +18,8 @@ import { deckFrame } from './player-host.mjs';
 export const title = 'Slidev builds converted in the browser';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/slidev-default-build.zip', import.meta.url));
-/** The official create-slidev template built unchanged (Monaco, Web Workers); used only when present. */
-const MONACO_BUILD = '/tmp/claude-0/-home-user-md-qft-org/62b03238-2ec2-5a4f-bd5c-e84ccde76ebd/scratchpad/research/proto/B2/starter-deck/dist';
+/** The official create-slidev template built unchanged (Monaco, Web Workers): its dist folder, when QFT_SLIDEV_MONACO_BUILD names one. */
+const MONACO_BUILD = process.env.QFT_SLIDEV_MONACO_BUILD?.trim() || '';
 const CONVERTER = /\/slidev-convert[^/]*\.js(?:[?#]|$)|\.wasm(?:[?#]|$)/;
 
 const status = (page) => page.locator('[data-pres-player-status]').textContent();
@@ -232,8 +232,9 @@ export default async function run(t) {
     await page.locator('[data-pres-list]:not([aria-busy])').waitFor();
   });
 
-  if (!existsSync(join(MONACO_BUILD, 'index.html'))) console.log(`SKIP ${t.name}: the official template build (research build absent)`);
+  if (!MONACO_BUILD) console.log(`SKIP ${t.name}: the official template build (QFT_SLIDEV_MONACO_BUILD is not set)`);
   else {
+    assert.ok(existsSync(join(MONACO_BUILD, 'index.html')), `QFT_SLIDEV_MONACO_BUILD names ${MONACO_BUILD}, which has no index.html`);
     await t.step('The official Slidev template build (Monaco, 37 MB) is refused with the reason', async () => {
       await page.locator('[data-pres-input]').setInputFiles({ name: 'welcome-to-slidev-dist.zip', mimeType: 'application/zip', buffer: zipFolder(MONACO_BUILD, 'dist/') });
       await until(async () => /Not saved/.test(await storage(page)), 'the not-saved note', 90_000);

@@ -121,7 +121,7 @@ describe('converting the ordinary Slidev build fixture', () => {
 
 describe('Slidev builds from the research', () => {
   const builds = researchSlidevBuilds();
-  it('converts every router and base-path variant and the Slidev 52 build without warnings', { skip: builds.length ? false : 'the research builds are not on this machine' }, async () => {
+  it('converts every router and base-path variant and the Slidev 52 build without warnings', { skip: builds.length ? false : 'QFT_SLIDEV_BUILDS is not set' }, async () => {
     for (const { name, folder } of builds) {
       const result = await convert(filesFromFolder(folder));
       assert.deepEqual(severities(result.issues, 'error'), [], name);
@@ -137,7 +137,7 @@ describe('Slidev builds from the research', () => {
   });
 
   const monaco = researchMonacoBuild();
-  it('refuses the official template build with one error, naming Monaco', { skip: monaco ? false : 'the research template build is not on this machine' }, async () => {
+  it('refuses the official template build with one error, naming Monaco', { skip: monaco ? false : 'QFT_SLIDEV_MONACO_BUILD is not set' }, async () => {
     const result = await convert(filesFromFolder(monaco!));
     assert.equal(result.html, '');
     // Monaco's own Web Workers and size are the same cause: no second or third error.

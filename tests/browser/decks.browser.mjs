@@ -6,7 +6,7 @@
  * another origin is blocked and recorded by the harness.
  */
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { tsImport } from 'tsx/esm/api';
@@ -15,12 +15,6 @@ import { deckFrame } from './player-host.mjs';
 
 export const title = 'Presentation library for every deck';
 
-/** AI-made decks from the research corpus; played only when present on this machine. */
-const CORPUS = '/tmp/claude-0/-home-user-md-qft-org/62b03238-2ec2-5a4f-bd5c-e84ccde76ebd/scratchpad/research/corpus/naive';
-const RESEARCH = [
-  { file: 'n1-reveal-zip.zip', slides: 9, slider: '#sim-wavelength', readout: 'output[data-sim="wavelength-value"]' },
-  { file: 'n2-reveal-chat-nonet.zip', slides: 9, slider: '#sr-speed', readout: '#sr-speed-out' },
-];
 
 const status = (page) => page.locator('[data-pres-player-status]').textContent();
 
@@ -288,11 +282,13 @@ export default async function run(t) {
     assert.deepEqual(t.externalRequests, []);
   });
 
-  for (const deck of RESEARCH) {
-    const path = `${CORPUS}/${deck.file}`;
-    if (!existsSync(path)) { console.log(`SKIP ${t.name}: ${deck.file} (research corpus absent)`); continue; }
-    await t.step(`The AI-made research deck ${deck.file} plays with its simulation`, async () => {
-      await choose(page, '[data-pres-input]', deck.file, readFileSync(path), 'application/zip');
+  // The two AI-made decks of the research report, from docs/research/presentation-platform/prototypes.zip.
+  const { researchDeck, RESEARCH_DECKS } = await tsImport('../helpers/deck-corpus.ts', import.meta.url);
+  for (const [name, deck] of Object.entries(RESEARCH_DECKS)) {
+    const file = researchDeck(name);
+    assert.ok(file, `${name} is in docs/research/presentation-platform/prototypes.zip`);
+    await t.step(`The AI-made research deck ${file.name} plays with its simulation`, async () => {
+      await choose(page, '[data-pres-input]', file.name, Buffer.from(await file.arrayBuffer()), 'application/zip');
       const frame = await startDeck(page);
       await arrowRight(page, frame);
       await slideCount(page, deck.slides);
@@ -301,7 +297,7 @@ export default async function run(t) {
       await frame.locator(deck.slider).press('End');
       await until(async () => (await frame.locator(deck.readout).textContent()) !== before, 'the simulation readout to follow the slider');
       assert.deepEqual(t.externalRequests, []);
-      await page.screenshot({ path: resolve(t.artifacts, `decks-${deck.file.replace(/\.zip$/, '')}.png`) });
+      await page.screenshot({ path: resolve(t.artifacts, `decks-${name}.png`) });
     });
   }
 

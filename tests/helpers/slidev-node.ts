@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, delimiter, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 import { convertSlidevFiles, createEsbuildBundler } from '../../src/lib/slidev-convert.ts';
@@ -42,30 +42,43 @@ export function filesFromFolder(folder: string, prefix = ''): DeckFiles {
   return files;
 }
 
-const RESEARCH = '/tmp/claude-0/-home-user-md-qft-org/62b03238-2ec2-5a4f-bd5c-e84ccde76ebd/scratchpad/research/proto';
+/** Folders named by an environment variable, separated like PATH entries; none when it is unset. */
+function folders(variable: string): string[] {
+  return (process.env[variable] ?? '').split(delimiter).map((item) => item.trim()).filter(Boolean);
+}
+
+const isBuild = (folder: string) => existsSync(join(folder, 'index.html'));
 
 /**
- * Slidev builds from the research, used only when present on this machine:
- * seven router and base-path variants of one deck (53.1.0), a new deck, the
- * same deck with a Mermaid diagram, and the deck built with Slidev 52.11.5.
+ * Further Slidev builds to convert, used only when QFT_SLIDEV_BUILDS names
+ * them (for example the router and base-path variants and the Slidev 52
+ * build from the research). Each listed folder is a build (it has
+ * index.html), a project with its build in dist/, or a folder of those: its
+ * subfolders that have index.html or dist/index.html.
  */
 export function researchSlidevBuilds(): { name: string; folder: string }[] {
   const builds: { name: string; folder: string }[] = [];
-  const coldInstall = join(RESEARCH, 'B2/cold-install');
-  if (existsSync(coldInstall)) {
-    for (const name of readdirSync(coldInstall).filter((item) => item.startsWith('dist-')).sort()) {
-      builds.push({ name, folder: join(coldInstall, name) });
+  for (const root of folders('QFT_SLIDEV_BUILDS')) {
+    if (isBuild(root)) { builds.push({ name: basename(root), folder: root }); continue; }
+    if (isBuild(join(root, 'dist'))) { builds.push({ name: basename(root), folder: join(root, 'dist') }); continue; }
+    if (!existsSync(root)) throw new Error(`QFT_SLIDEV_BUILDS names ${root}, which does not exist.`);
+    for (const name of readdirSync(root).sort()) {
+      const folder = join(root, name);
+      if (!statSync(folder).isDirectory()) continue;
+      if (isBuild(folder)) builds.push({ name, folder });
+      else if (isBuild(join(folder, 'dist'))) builds.push({ name, folder: join(folder, 'dist') });
     }
-  }
-  for (const name of ['newdeck', 'newdeck-mermaid', 'old52']) {
-    const folder = join(RESEARCH, 'V3', name, 'dist');
-    if (existsSync(join(folder, 'index.html'))) builds.push({ name: `V3 ${name}`, folder });
   }
   return builds;
 }
 
-/** The official create-slidev template built unchanged: Monaco, Web Workers, 37 MB. Undefined when absent. */
+/**
+ * The official create-slidev template built unchanged (Monaco, Web Workers,
+ * 37 MB), from the dist folder that QFT_SLIDEV_MONACO_BUILD names. Undefined when unset.
+ */
 export function researchMonacoBuild(): string | undefined {
-  const folder = join(RESEARCH, 'B2/starter-deck/dist');
-  return existsSync(join(folder, 'index.html')) ? folder : undefined;
+  const [folder] = folders('QFT_SLIDEV_MONACO_BUILD');
+  if (!folder) return undefined;
+  if (!isBuild(folder)) throw new Error(`QFT_SLIDEV_MONACO_BUILD names ${folder}, which has no index.html.`);
+  return folder;
 }

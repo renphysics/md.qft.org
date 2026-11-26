@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { strToU8 } from 'fflate';
 import { deckFromHtmlFile, readDeckArchive } from '../src/lib/deck-archive.ts';
 import { DECK_DETECT_LIMITS, detectDeck } from '../src/lib/deck-detect.ts';
 import { isDeckEngine, isDeckKind, type DeckDetection, type DeckFiles } from '../src/lib/deck-types.ts';
+import { RESEARCH_DECKS, researchDeck, type ResearchDeckName } from './helpers/deck-corpus.ts';
 import { FIXTURE_DECKS, htmlFixture, loadFixtureDeck, zipFixture } from './helpers/deck-fixtures.ts';
 
 const deck = (entries: Record<string, string | Uint8Array>): DeckFiles => new Map(Object.entries(entries)
@@ -520,14 +520,12 @@ describe('deck detection: hostile input', () => {
   });
 });
 
-describe('deck detection on the research corpus', () => {
-  const folder = '/tmp/claude-0/-home-user-md-qft-org/62b03238-2ec2-5a4f-bd5c-e84ccde76ebd/scratchpad/research/corpus/naive/';
-  const zips = existsSync(folder) ? readdirSync(folder).filter((name) => name.endsWith('.zip')) : [];
-
-  it('recognises every AI-made Reveal.js ZIP', { skip: zips.length ? false : 'the research corpus is not on this machine' }, async () => {
-    for (const name of zips) {
-      const archive = await readDeckArchive(new File([new Uint8Array(readFileSync(folder + name))], name));
-      const result = detectDeck(archive.files);
+describe('deck detection on the research decks', () => {
+  it('recognises both AI-made Reveal.js ZIPs from docs/research/presentation-platform/prototypes.zip', async () => {
+    for (const name of Object.keys(RESEARCH_DECKS) as ResearchDeckName[]) {
+      const file = researchDeck(name);
+      assert.ok(file, `${name} is in the research archive`);
+      const result = detectDeck((await readDeckArchive(file)).files);
       assertWellFormed(result);
       assert.equal(result.kind, 'reveal', name);
       assert.equal(result.entry, 'index.html', name);
