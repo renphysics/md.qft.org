@@ -7,63 +7,24 @@
  */
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { build } from 'esbuild';
 import { tsImport } from 'tsx/esm/api';
 import { until } from './harness.mjs';
+import { deckFrame, openHost } from './player-host.mjs';
 
 export const title = 'Linked Reveal.js decks';
 
 const load = (path) => tsImport(path, import.meta.url);
 
 /**
- * Reveal's hash option calls history.replaceState, which an opaque blob:
- * document refuses for its first slide unless that slide has an id. The
- * player's tolerant profile guards these calls; until it does, this test adds
- * the same guard so that it checks the linker rather than that known gap.
+ * Plays linked HTML in the real player under the tolerant profile, as linked
+ * decks are played, and returns its frame once it is ready. The tolerant
+ * profile guards Reveal's History calls (hash: true with an id-less first
+ * slide); every step then checks that the deck reported no warning at all.
  */
-const HISTORY_GUARD = '<script>for(const name of ["replaceState","pushState"]){const call=history[name].bind(history);history[name]=function(...args){try{return call(...args)}catch{}}}</script>';
-
-async function runtimeBundle() {
-  const result = await build({
-    entryPoints: [fileURLToPath(new URL('../../src/lib/presentation-runtime.ts', import.meta.url))],
-    bundle: true, write: false, format: 'iife', globalName: 'QftRuntime', platform: 'browser', target: 'es2022',
-  });
-  return result.outputFiles[0].text;
-}
-
-function testPage(runtime) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Linked deck test</title>
-<style>html,body{margin:0}#host{width:1280px;height:720px}</style></head>
-<body><div id="host"></div><script>${runtime.replace(/<\/script/gi, '<\\/script')}</script><script>
-window.play = (html) => new Promise((resolve) => {
-  window.player?.destroy();
-  const host = document.getElementById('host');
-  window.player = QftRuntime.createPresentationPlayer(host, html, {
-    title: 'Linked deck',
-    sandboxUrl: new URL('../presentation-sandbox.html', location.href).href,
-    onState(state) { if (state === 'ready') resolve('ready'); },
-    onError(message, origin) { resolve(origin + ': ' + message); },
-  });
-  window.player.start();
-});
-</script></body></html>`;
-}
-
-async function deckFrame(page) {
-  return until(async () => {
-    for (const frame of page.frames()) {
-      if (frame.url().startsWith('blob:') && await frame.evaluate(() => !!document.querySelector('.reveal, main, body > *')).catch(() => false)) return frame;
-    }
-    return false;
-  }, 'the deck frame');
-}
-
-/** Plays linked HTML in the real player and returns its frame once it is ready. */
 async function play(page, html, label) {
-  const state = await page.evaluate((source) => window.play(source), html.replace(/<head>/i, `<head>${HISTORY_GUARD}`));
+  const state = await page.evaluate((source) => window.play(source, 'tolerant'), html);
   assert.equal(state, 'ready', `${label}: the player reports`);
-  return deckFrame(page);
+  return deckFrame(page, '.reveal, main, body > *');
 }
 
 async function revealState(frame) {
@@ -116,12 +77,16 @@ export default async function run(t) {
   };
 
   const { context, page } = await t.newPage({ viewport: { width: 1320, height: 760 } });
-  const pageUrl = new URL('__linked-deck-test__/', t.baseUrl).href;
-  const html = testPage(await runtimeBundle());
-  await context.route(pageUrl, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
-  await page.goto(pageUrl, { waitUntil: 'load' });
+  await openHost(t, context, page, '__linked-deck-test__/');
+  /** A deck step that must end with no warning and no error from the player. */
+  const step = (name, action) => t.step(name, async () => {
+    await action();
+    const { warnings, errors } = await page.evaluate(() => /** @type {any} */ (window).events);
+    assert.deepEqual(errors, [], `${name}: errors`);
+    assert.deepEqual(warnings, [], `${name}: warnings`);
+  });
 
-  await t.step('A Reveal.js 5 deck from jsDelivr plays with KaTeX, highlighting, keyboard navigation and its slider', async () => {
+  await step('A Reveal.js 5 deck from jsDelivr plays with KaTeX, highlighting, keyboard navigation and its slider', async () => {
     const frame = await play(page, await linked(loadFixtureDeck('cdn-reveal5-single'), 'reveal 5'), 'reveal 5');
     const state = await revealState(frame);
     assert.equal(state.slides, 8);
@@ -139,7 +104,7 @@ export default async function run(t) {
     await screenshot(t, page, frame, 'linked-reveal5.png');
   });
 
-  await t.step('A cdnjs Reveal.js 4 deck renders its Markdown slides and the converted onclick button works', async () => {
+  await step('A cdnjs Reveal.js 4 deck renders its Markdown slides and the converted onclick button works', async () => {
     const frame = await play(page, await linked(loadFixtureDeck('cdn-reveal4-cdnjs'), 'reveal 4'), 'reveal 4');
     const state = await revealState(frame);
     // Four Markdown slides ("--" is no separator without data-separator-vertical) and one HTML slide.
@@ -151,7 +116,7 @@ export default async function run(t) {
     await screenshot(t, page, frame, 'linked-reveal4.png');
   });
 
-  await t.step('A Reveal.js 6 deck from unpkg plays with math and highlighting', async () => {
+  await step('A Reveal.js 6 deck from unpkg plays with math and highlighting', async () => {
     const frame = await play(page, await linked(loadFixtureDeck('cdn-reveal6-unpkg'), 'reveal 6'), 'reveal 6');
     const state = await revealState(frame);
     assert.equal(state.slides, 4);
@@ -160,7 +125,7 @@ export default async function run(t) {
     assert.ok(state.highlighted >= 1);
   });
 
-  await t.step('A local project gets the missing Reveal.js files and plays external Markdown, backgrounds, lazy images, @import and its script', async () => {
+  await step('A local project gets the missing Reveal.js files and plays external Markdown, backgrounds, lazy images, @import and its script', async () => {
     const frame = await play(page, await linked(loadFixtureDeck('local-project'), 'local project'), 'local project');
     const state = await revealState(frame);
     assert.equal(state.slides, 7, 'three Markdown slides (one with a vertical slide) and three HTML slides');
@@ -185,7 +150,7 @@ export default async function run(t) {
     await screenshot(t, page, frame, 'linked-local-project.png');
   });
 
-  await t.step('A plain HTML page plays with its own stylesheet and script', async () => {
+  await step('A plain HTML page plays with its own stylesheet and script', async () => {
     const frame = await play(page, await linked(loadFixtureDeck('plain-html'), 'plain page'), 'plain page');
     await frame.locator('#angle').focus();
     await frame.locator('#angle').press('Home');
@@ -196,7 +161,7 @@ export default async function run(t) {
   for (const name of Object.keys(RESEARCH_DECKS)) {
     const file = researchDeck(name);
     if (!file) { console.log(`SKIP ${t.name}: ${name} (research archive absent)`); continue; }
-    await t.step(`The AI-made research deck ${name} plays with its formulas and simulation`, async () => {
+    await step(`The AI-made research deck ${name} plays with its formulas and simulation`, async () => {
       const deck = await readDeckArchive(file);
       const frame = await play(page, await linked(deck.files, name), name);
       const expected = RESEARCH_DECKS[name];

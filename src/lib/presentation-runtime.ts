@@ -6,6 +6,19 @@ export type PresentationPlayerState = 'stopped' | 'loading' | 'ready' | 'error';
  * 'player' messages are written by this application.
  */
 export type PresentationMessageOrigin = 'presentation' | 'player';
+/**
+ * How the player treats a deck. Both profiles use the same sandbox and the
+ * same Content Security Policy; neither gives the deck a capability.
+ * - 'strict' (the default) is for packages made with the site's own tool:
+ *   the first error stops playback.
+ * - 'tolerant' is for linked decks and converted builds: errors, rejected
+ *   promises, missing files and blocked requests become warnings; History
+ *   calls that the sandboxed document refuses are guarded; the screen wake
+ *   lock is hidden; fullscreen is requested from the host page.
+ */
+export type PresentationProfile = 'strict' | 'tolerant';
+/** What a deck asked the host to do: enter fullscreen, or leave it. */
+export type PresentationFullscreenRequest = 'enter' | 'exit';
 
 export interface PresentationPlayerOptions {
   title: string;
@@ -13,18 +26,66 @@ export interface PresentationPlayerOptions {
   sandboxUrl?: string;
   /** Portable exports reuse the outer document's nonce for their srcdoc child. */
   scriptNonce?: string;
+  /** Defaults to 'strict'. */
+  profile?: PresentationProfile;
   onState?: (state: PresentationPlayerState) => void;
   onError?: (message: string, origin: PresentationMessageOrigin) => void;
   onEscape?: () => void;
+  /**
+   * Tolerant profile only: a problem that did not stop playback. The text
+   * comes from the deck (at most 350 characters, at most 20 per playback);
+   * present it as the deck's words and insert it as text, never as markup.
+   */
+  onWarning?: (message: string) => void;
+  /**
+   * The slide on show in a Reveal.js deck, whenever it changes: "h/v", or
+   * "h/v/f" while fragment f is the last one shown. Digits only; pass it back
+   * to start() or update() to return to that slide.
+   */
+  onPosition?: (position: string) => void;
+  /** The number of slides in a Reveal.js deck, once per playback. */
+  onSlides?: (count: number) => void;
+  /**
+   * Tolerant profile only: the deck asked to enter fullscreen (F in
+   * Reveal.js) or to leave it. Requests that do not follow a user action in
+   * the deck are dropped, so a deck cannot do this by itself.
+   */
+  onFullscreenRequest?: (request: PresentationFullscreenRequest) => void;
+}
+
+export interface PresentationStartOptions {
+  /** Open at this slide ("h/v" or "h/v/f"); anything else starts at the first slide. */
+  position?: string;
 }
 
 export interface PresentationPlayer {
-  start(): void;
+  /** Start, or start again, at options.position or else the first slide. */
+  start(options?: PresentationStartOptions): void;
   stop(): void;
+  /** Start again at the first slide. */
   restart(): void;
+  /**
+   * Replace the deck's HTML. While the deck is loading, playing, or stopped
+   * by an error, it restarts with the new HTML at options.position, or else
+   * at the last position the deck reported. When stopped, the next start()
+   * uses the new HTML.
+   */
+  update(html: string, options?: PresentationStartOptions): void;
   destroy(): void;
   focus(): void;
   isRunning(): boolean;
+  /** The last position the deck reported, or the one it was started at. */
+  currentPosition(): string | undefined;
+}
+
+export interface PresentationPrepareOptions {
+  /** Defaults to 'strict'. */
+  profile?: PresentationProfile;
+}
+
+export interface PresentationExportOptions {
+  /** Defaults to 'strict'. */
+  profile?: PresentationProfile;
 }
 
 /**
@@ -50,13 +111,27 @@ function presentationRuntimeFactory() {
       if (!message || typeof message !== 'object') return;
       if (frame && event.source === frame.contentWindow) {
         if (message.qftPresentation !== 1 || message.token !== token) return;
-        if (message.kind === 'ready' || message.kind === 'escape') send(message.kind);
-        else if (message.kind === 'error' && typeof message.detail === 'string') send('error', message.detail.slice(0, 350));
+        // The deck can read its token and forge any message, so relay only
+        // known kinds, each with its detail checked again here.
+        const kind = message.kind;
+        const detail = message.detail;
+        if (kind === 'ready' || kind === 'escape') send(kind);
+        else if ((kind === 'error' || kind === 'warning') && typeof detail === 'string') send(kind, detail.slice(0, 350));
+        else if (kind === 'position' && typeof detail === 'string' && /^\d{1,4}\/\d{1,4}(?:\/\d{1,4})?$/.test(detail)) send(kind, detail);
+        else if (kind === 'slides' && typeof detail === 'string' && /^\d{1,5}$/.test(detail)) send(kind, detail);
+        else if (kind === 'fullscreen' && (detail === 'enter' || detail === 'exit')) send(kind, detail);
         return;
       }
       if (event.source !== window.parent) return;
       if (used) {
-        if (message.type === 'qft-presentation-focus' && message.token === token) frame?.focus({ preventScroll: true });
+        // When the deck frame is already this document's active element (the
+        // user had the keyboard in the deck, then chose Present or pressed F),
+        // focus() alone changes nothing and the keyboard stays with the host.
+        // Blurring first makes it a real focus change, as in the host.
+        if (message.type === 'qft-presentation-focus' && message.token === token && frame) {
+          frame.blur();
+          frame.focus({ preventScroll: true });
+        }
         return;
       }
       // Message sizes use JavaScript string length (UTF-16 code units), matching
@@ -66,6 +141,9 @@ function presentationRuntimeFactory() {
         || typeof message.html !== 'string' || !message.html.length || message.html.length > 26 * 1024 * 1024) return;
       used = true;
       token = message.token;
+      // A restore position is the only thing added to the deck's address: a
+      // fragment of digits, which Reveal.js reads when it starts.
+      const fragment = typeof message.fragment === 'string' && /^#\/\d{1,4}\/\d{1,4}(?:\/\d{1,4})?$/.test(message.fragment) ? message.fragment : '';
       frame = document.createElement('iframe');
       frame.title = 'Interactive presentation';
       frame.setAttribute('sandbox', 'allow-scripts');
@@ -73,7 +151,7 @@ function presentationRuntimeFactory() {
       frame.setAttribute('allow', "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; serial 'none'; fullscreen 'none'");
       frame.style.cssText = 'position:fixed;inset:0;display:block;border:0;width:100%;height:100%;background:#fff';
       objectUrl = URL.createObjectURL(new Blob([message.html], { type: 'text/html;charset=utf-8' }));
-      frame.src = objectUrl;
+      frame.src = objectUrl + fragment;
       document.body.replaceChildren(frame);
       // Focusing here, before this document has focus, is refused by the
       // focus-without-user-activation policy. The host hands focus over once
@@ -97,14 +175,29 @@ function presentationRuntimeFactory() {
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'; script-src-attr 'none'"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex, nofollow"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Isolated presentation player</title><style>body{margin:0;padding:24px;background:#faf8f4;color:#66616a;font:14px/1.6 system-ui,sans-serif}</style></head><body><p>Open a presentation from the Markdown workspace.</p><script${scriptNonce ? ` nonce="${scriptNonce}"` : ''}>${setup}</script></body></html>`;
   }
 
-  /** No outer references: also serialized into the isolated document. */
-  function presentationBootstrap(token: string): void {
+  /**
+   * No outer references: also serialized into the isolated document, where it
+   * runs before any deck code. `tolerant` selects the tolerant profile.
+   */
+  function presentationBootstrap(token: string, tolerant: boolean): void {
     let failed = false;
     let reportedErrors = 0;
+    const warned = new Set<string>();
     const send = (kind: string, detail?: string) => parent.postMessage({ qftPresentation: 1, token, kind, detail }, '*');
-    const fail = (message: string) => {
+    // Strict: the first problem stops the deck, which the host then removes.
+    // Tolerant: each distinct problem is reported once and the deck plays on.
+    const report = (message: string) => {
+      const text = message.slice(0, 350);
+      if (tolerant) {
+        if (warned.size < 20 && !warned.has(text)) { warned.add(text); send('warning', text); }
+        return;
+      }
       failed = true;
-      if (reportedErrors++ < 3) send('error', message.slice(0, 350));
+      if (reportedErrors++ < 3) send('error', text);
+    };
+    const describe = (value: unknown, fallback: string) => {
+      try { return String((value as { message?: unknown } | null | undefined)?.message || value || fallback); }
+      catch { return fallback; }
     };
 
     // Slidev and Vue utilities can consult Web Storage. Opaque frames have no
@@ -132,14 +225,127 @@ function presentationRuntimeFactory() {
       }
     }
 
+    if (tolerant) {
+      // A blob: document may change only its fragment. Reveal.js (hash: true)
+      // and Slidev's router also write paths, and the refusal would stop
+      // them: apply the fragment part of the address instead, if any.
+      for (const name of ['pushState', 'replaceState'] as const) {
+        const original = History.prototype[name];
+        if (typeof original !== 'function') continue;
+        Object.defineProperty(History.prototype, name, {
+          configurable: true, writable: true,
+          value: function (this: History, state: unknown, unused: string, url?: string | URL | null) {
+            try { return original.call(this, state, unused, url); }
+            catch (error) {
+              if (!(error instanceof DOMException) || error.name !== 'SecurityError' || url === undefined || url === null) throw error;
+              const address = String(url);
+              const hash = address.indexOf('#');
+              try { return original.call(this, state, unused, hash < 0 ? '#' : address.slice(hash)); }
+              catch { return undefined; }
+            }
+          },
+        });
+      }
+      // The frame has no permission for a wake lock, and Slidev's request for
+      // one would be refused. Without the API, Slidev does not ask.
+      try { delete (Navigator.prototype as { wakeLock?: unknown }).wakeLock; } catch { /* Then the refusal is a warning. */ }
+      // The frame has no fullscreen permission either: ask the host page to
+      // show its stage in fullscreen. The host acts only after a user action.
+      const ask = (request: 'enter' | 'exit') => () => { send('fullscreen', request); return Promise.resolve(); };
+      const replacements: [object, string[], () => Promise<void>][] = [
+        [Element.prototype, ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen'], ask('enter')],
+        [Document.prototype, ['exitFullscreen', 'webkitExitFullscreen', 'webkitCancelFullScreen'], ask('exit')],
+      ];
+      for (const [owner, names, value] of replacements) {
+        for (const name of names) {
+          if (name in owner) try { Object.defineProperty(owner, name, { configurable: true, writable: true, value }); } catch { /* Keep the original. */ }
+        }
+      }
+      for (const name of ['fullscreenEnabled', 'webkitFullscreenEnabled']) {
+        if (name in Document.prototype) try { Object.defineProperty(Document.prototype, name, { configurable: true, get: () => true }); } catch { /* Keep the original. */ }
+      }
+    }
+
+    // Problems in the strict profile keep the wording that points to the
+    // packaging tool; tolerant warnings say what was lost.
+    const missing = (target: EventTarget | null) => {
+      const name = (target as Element | null)?.localName;
+      if (name === 'img' || name === 'image' || name === 'input') return 'A picture in the presentation could not be shown.';
+      if (name === 'video' || name === 'audio' || name === 'source' || name === 'track') return 'A video or sound in the presentation could not be played.';
+      return 'A file that the presentation uses could not be loaded.';
+    };
+    const blocked = (event: SecurityPolicyViolationEvent) => {
+      const directive = String(event.effectiveDirective || event.violatedDirective || 'unknown').slice(0, 40);
+      const nouns: Record<string, string> = {
+        img: 'a picture', font: 'a font', style: 'a stylesheet', script: 'a script', media: 'a video or sound',
+        connect: 'a network request', frame: 'an embedded page', worker: 'a background script', object: 'a plug-in',
+      };
+      let host = '';
+      try {
+        const address = new URL(event.blockedURI);
+        if (address.protocol === 'http:' || address.protocol === 'https:') host = `, ${address.host}`;
+      } catch { /* Not an address, for example 'inline'. */ }
+      return `The player blocked ${nouns[directive.split('-')[0]] ?? 'a resource'} (${directive}${host}).`;
+    };
     window.addEventListener('error', (event) => {
-      if (event instanceof ErrorEvent) fail(event.message || 'The presentation encountered an error.');
-      else fail('A presentation resource could not be loaded. Rebuild the package with all assets included.');
+      if (event instanceof ErrorEvent) report(describe(event.message, 'The presentation encountered an error.'));
+      else report(tolerant ? missing((event as Event).target) : 'A presentation resource could not be loaded. Rebuild the package with all assets included.');
     }, true);
-    window.addEventListener('unhandledrejection', (event) => fail(String(event.reason?.message || event.reason || 'An asynchronous presentation operation failed.')));
+    window.addEventListener('unhandledrejection', (event) => report(describe(event.reason, 'An asynchronous presentation operation failed.')));
     document.addEventListener('securitypolicyviolation', (event) => {
-      fail(`This presentation requested an unsupported resource (${event.effectiveDirective}). Rebuild it with the portable Slidev packaging tool.`);
+      report(tolerant ? blocked(event) : `This presentation requested an unsupported resource (${event.effectiveDirective}). Rebuild it with the portable Slidev packaging tool.`);
     });
+
+    // Reveal.js dispatches its events on the .reveal element and lets them
+    // bubble, so this works without window.Reveal (ES-module decks): h and v
+    // come from the event, the fragment from the slide, as Reveal computes it.
+    let restore: number[] | undefined;
+    try {
+      const match = /^#\/(\d{1,4})\/(\d{1,4})(?:\/(\d{1,4}))?$/.exec(location.hash);
+      if (match) restore = [Number(match[1]), Number(match[2]), match[3] === undefined ? -1 : Number(match[3])];
+    } catch { /* No restore position. */ }
+    let horizontal = 0;
+    let vertical = 0;
+    let reportedPosition = '';
+    let reportedSlides = '';
+    const index = (value: number) => Number.isInteger(value) && value >= 0 && value <= 9999;
+    const positionOf = (root: Element) => {
+      if (!index(horizontal) || !index(vertical)) return '';
+      const present = root.querySelectorAll('.slides section.present');
+      const slide = present[present.length - 1];
+      let fragment = -1;
+      if (slide?.querySelector('.fragment')) {
+        const current = slide.querySelector('.current-fragment');
+        fragment = current?.hasAttribute('data-fragment-index')
+          ? parseInt(current.getAttribute('data-fragment-index')!, 10)
+          : slide.querySelectorAll('.fragment.visible').length - 1;
+      }
+      return `${horizontal}/${vertical}${index(fragment) ? `/${fragment}` : ''}`;
+    };
+    const observe = (event: Event) => {
+      const root = (event.target as Element | null)?.closest?.('.reveal');
+      if (!root) return;
+      const data = event as Event & { indexh?: unknown; indexv?: unknown };
+      if (typeof data.indexh === 'number') horizontal = data.indexh;
+      if (typeof data.indexv === 'number') vertical = data.indexv;
+      if (event.type === 'ready' && restore) {
+        // Reveal.js 3 does not restore a fragment from the address, and
+        // hashOneBasedIndex shifts the slide by one: correct both once. The
+        // slide change reports itself; the lines below then change nothing.
+        const [h, v, f] = restore;
+        restore = undefined;
+        const reveal = (window as { Reveal?: { slide?: unknown; getRevealElement?: unknown } }).Reveal;
+        if (positionOf(root) !== `${h}/${v}${f >= 0 ? `/${f}` : ''}` && reveal && typeof reveal.slide === 'function'
+          && (typeof reveal.getRevealElement !== 'function' || reveal.getRevealElement() === root)) {
+          try { reveal.slide(h, v, f); } catch { /* Keep the slide Reveal.js chose. */ }
+        }
+      }
+      const position = positionOf(root);
+      if (position && position !== reportedPosition) { reportedPosition = position; send('position', position); }
+      const slides = String(root.querySelectorAll('.slides section:not(.stack):not([data-visibility="uncounted"])').length);
+      if (slides !== reportedSlides && slides.length <= 5) { reportedSlides = slides; send('slides', slides); }
+    };
+    for (const type of ['ready', 'slidechanged', 'fragmentshown', 'fragmenthidden']) document.addEventListener(type, observe);
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
       // Let Slidev close its own overlays as well as notifying the outer player.
@@ -162,24 +368,37 @@ function presentationRuntimeFactory() {
   /**
    * Parse in an inert template: imported URLs never load in the editor. Required
    * application resources must be embedded; do not silently strip a broken build.
+   * The tolerant profile keeps the deck's title and adds no styles of its own.
    */
-  function preparePresentationDocument(html: string, token: string, scriptNonce: string): string {
+  function preparePresentationDocument(html: string, token: string, scriptNonce: string, options?: PresentationPrepareOptions): string {
     if (typeof html !== 'string' || !html.trim() || html.length > 24 * 1024 * 1024) throw new Error('The presentation HTML must be smaller than 24 MB.');
     if (!/^[a-f0-9]{36}$/.test(token) || !/^[A-Za-z0-9+/_=-]{16,128}$/.test(scriptNonce)) throw new Error('The presentation could not be initialized.');
+    // Anything but an explicit 'tolerant' is the stricter profile.
+    const tolerant = options?.profile === 'tolerant';
+    // A linked deck has no separate files left; if one remains, say so without
+    // pointing to the Slidev packaging tool, which does not apply to it.
+    const unsupported = (strict: string, linked: string) => new Error(tolerant ? linked : strict);
     const template = document.createElement('template');
     template.innerHTML = html;
     const content = template.content;
     if (content.querySelector('script[src],script[href],script[xlink\\:href]')) {
-      throw new Error('This presentation has separate JavaScript files. Create a portable ZIP with the Slidev packaging tool before opening it.');
+      throw unsupported('This presentation has separate JavaScript files. Create a portable ZIP with the Slidev packaging tool before opening it.',
+        'This presentation still loads a separate script file, which the player cannot open.');
     }
     if (content.querySelector('link[rel~="stylesheet"]')) {
-      throw new Error('This presentation has separate stylesheets. Create a portable ZIP with the Slidev packaging tool before opening it.');
+      throw unsupported('This presentation has separate stylesheets. Create a portable ZIP with the Slidev packaging tool before opening it.',
+        'This presentation still loads a separate stylesheet, which the player cannot open.');
     }
     if (content.querySelector('iframe,frame,frameset,object,embed,portal')) {
-      throw new Error('Embedded websites are not supported in an offline Slidev package. Include the demonstration directly in the presentation.');
+      throw unsupported('Embedded websites are not supported in an offline Slidev package. Include the demonstration directly in the presentation.',
+        'This presentation embeds another web page or a plug-in, which the player cannot show.');
     }
-    if (content.querySelector('script[type="importmap"]')) throw new Error('This presentation still needs JavaScript imports. Rebuild it with the portable Slidev packaging tool.');
+    if (content.querySelector('script[type="importmap"]')) {
+      throw unsupported('This presentation still needs JavaScript imports. Rebuild it with the portable Slidev packaging tool.',
+        'This presentation still needs JavaScript imports, which the player cannot resolve.');
+    }
 
+    const title = tolerant ? (content.querySelector('title')?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) : '';
     // Supplied metadata cannot weaken the policy, navigate the frame, or alter
     // URL resolution. Preload/icon links are unnecessary in a complete package.
     content.querySelectorAll('base,meta,link,title').forEach((element) => element.remove());
@@ -193,7 +412,10 @@ function presentationRuntimeFactory() {
         if (value.startsWith('#')) continue;
         if (/^data:(?:image\/|audio\/|video\/|font\/|application\/(?:font-|vnd\.ms-fontobject))/i.test(value)) continue;
         if (element.localName === 'a' || element.localName === 'area') { element.removeAttribute(name); continue; }
-        if (value) throw new Error('This presentation references an asset outside its HTML. Rebuild the portable package with its pictures, fonts, and media included.');
+        if (value) {
+          throw unsupported('This presentation references an asset outside its HTML. Rebuild the portable package with its pictures, fonts, and media included.',
+            'This presentation still refers to a file outside its HTML, which the player cannot load.');
+        }
         element.removeAttribute(name);
       }
     }
@@ -202,38 +424,56 @@ function presentationRuntimeFactory() {
     // Nonces alone also authorize external scripts carrying the nonce. The second
     // policy intersects with the first and restricts all execution to inline code.
     const inlineOnly = "script-src 'unsafe-inline'; script-src-attr 'none'";
-    const setup = `(()=>{const __name=(value)=>value;(${presentationBootstrap.toString()})(${JSON.stringify(token)});})();`.replace(/<\/script/gi, '<\\/script');
+    const setup = `(()=>{const __name=(value)=>value;(${presentationBootstrap.toString()})(${JSON.stringify(token)},${tolerant});})();`.replace(/<\/script/gi, '<\\/script');
     const escapeAttribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    // HTML template parsing discards the outer html/body tags. Retain useful
-    // declarative language/theme attributes, without executing anything to read them.
-    const rootAttributes = (tag: string) => {
-      const match = html.match(new RegExp(`<${tag}\\b([^>]*)>`, 'i'));
-      if (!match) return '';
-      const attributes = document.createElement('template');
-      attributes.innerHTML = `<div${match[1]}></div>`;
-      const source = attributes.content.querySelector('div');
-      if (!source) return '';
-      return [...source.attributes].filter((attribute) => /^(?:lang|dir|class|style|data-[a-z0-9_-]+)$/i.test(attribute.name))
-        .map((attribute) => ` ${attribute.name}="${escapeAttribute(attribute.value)}"`).join('');
-    };
-    const htmlAttributes = rootAttributes('html');
-    const prepared = `<!doctype html><html${htmlAttributes || ' lang="en"'}><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta http-equiv="Content-Security-Policy" content="${inlineOnly}"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}body{font-family:system-ui,sans-serif}*,*::before,*::after{box-sizing:border-box}</style><script nonce="${scriptNonce}">${setup}</script></head><body${rootAttributes('body')}>${template.innerHTML}</body></html>`;
+    // Template parsing discards the html and body tags, so read their
+    // attributes with the browser's own parser in an inert document, which
+    // runs and loads nothing. Unlike a pattern, it is not misled by a ">" in
+    // an attribute value or by "<body" inside a script. Only declarative
+    // attributes are kept.
+    const roots = /<(?:html|body)[\s/>]/i.test(html) ? new DOMParser().parseFromString(html, 'text/html') : undefined;
+    const rootAttributes = (element: Element | null | undefined) => (element ? [...element.attributes] : [])
+      .filter((attribute) => /^(?:lang|dir|class|style|id|role|translate|data-[a-z0-9_.-]+|aria-[a-z]+)$/i.test(attribute.name))
+      .map((attribute) => ` ${attribute.name}="${escapeAttribute(attribute.value)}"`).join('');
+    const htmlAttributes = rootAttributes(roots?.documentElement);
+    const bodyAttributes = rootAttributes(roots?.body?.localName === 'body' ? roots.body : undefined);
+    const titleElement = title ? `<title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</title>` : '';
+    const styles = tolerant ? '' : '<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}body{font-family:system-ui,sans-serif}*,*::before,*::after{box-sizing:border-box}</style>';
+    const prepared = `<!doctype html><html${htmlAttributes || ' lang="en"'}><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta http-equiv="Content-Security-Policy" content="${inlineOnly}"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">${titleElement}${styles}<script nonce="${scriptNonce}">${setup}</script></head><body${bodyAttributes}>${template.innerHTML}</body></html>`;
     // Serialization can expand entities and nonce-bearing elements. Bound the
     // finished message in UTF-16 code units, exactly as the runner does, so a
     // valid input cannot silently exceed the receiving limit and time out.
-    if (prepared.length > 26 * 1024 * 1024) throw new Error('The presentation is too large after preparing it for playback. Reduce its embedded assets or split the deck, then rebuild the portable ZIP.');
+    if (prepared.length > 26 * 1024 * 1024) {
+      throw unsupported('The presentation is too large after preparing it for playback. Reduce its embedded assets or split the deck, then rebuild the portable ZIP.',
+        'The presentation is too large after preparing it for playback. Reduce its embedded pictures and media, or split the deck.');
+    }
     return prepared;
   }
 
+  /** "h/v" or "h/v/f", digits only: a slide position the player can restore. */
+  function isPresentationPosition(value: unknown): value is string {
+    return typeof value === 'string' && /^\d{1,4}\/\d{1,4}(?:\/\d{1,4})?$/.test(value);
+  }
+
   /** Creation is inert. Only start/restart creates a browsing context. */
-  function createPresentationPlayer(host: HTMLElement, html: string, options: PresentationPlayerOptions): PresentationPlayer {
+  function createPresentationPlayer(host: HTMLElement, initialHtml: string, options: PresentationPlayerOptions): PresentationPlayer {
     const abort = new AbortController();
+    const tolerant = options.profile === 'tolerant';
+    let html = initialHtml;
     let frame: HTMLIFrameElement | undefined;
     let token: string | undefined;
     let timeout: number | undefined;
     let disposed = false;
     let state: PresentationPlayerState = 'stopped';
     let errors = 0;
+    let warnings = 0;
+    // The latest known slide survives stop() and an error, so update() and
+    // start({ position }) can return to it; a start without a position, and
+    // restart(), begin again at the first slide. The reported values are per
+    // playback.
+    let position: string | undefined;
+    let reportedPosition = '';
+    let reportedSlides = -1;
     const setState = (value: PresentationPlayerState) => { state = value; options.onState?.(value); };
     const nonce = () => [...crypto.getRandomValues(new Uint8Array(18))].map((value) => value.toString(16).padStart(2, '0')).join('');
     const stop = () => {
@@ -259,60 +499,95 @@ function presentationRuntimeFactory() {
       current.focus({ preventScroll: true });
       if (token) current.contentWindow?.postMessage({ type: 'qft-presentation-focus', token }, '*');
     };
-    const start = () => {
+    const start = (startOptions?: PresentationStartOptions) => {
       if (disposed) return;
-      stop(); errors = 0;
+      stop(); errors = 0; warnings = 0; reportedPosition = ''; reportedSlides = -1;
+      const requested = startOptions?.position;
+      const restore = isPresentationPosition(requested) ? requested : undefined;
+      position = restore;
       token = nonce();
       let prepared: string;
       const scriptNonce = options.scriptNonce ?? nonce();
-      try { prepared = preparePresentationDocument(html, token, scriptNonce); }
+      try { prepared = preparePresentationDocument(html, token, scriptNonce, { profile: tolerant ? 'tolerant' : 'strict' }); }
       catch (error) { fail(error instanceof Error ? error.message : 'The presentation could not be prepared.', 'player'); return; }
       frame = document.createElement('iframe');
       const current = frame;
       current.className = 'presentation-frame';
-      current.title = `${options.title} — Slidev presentation`;
+      current.title = `${options.title} — ${tolerant ? 'presentation' : 'Slidev presentation'}`;
       current.setAttribute('sandbox', 'allow-scripts');
       current.setAttribute('referrerpolicy', 'no-referrer');
       current.setAttribute('allow', "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; serial 'none'; fullscreen 'none'");
       current.style.cssText = 'display:block;border:0;width:100%;height:100%;background:#fff';
       current.tabIndex = 0;
+      // The runner appends the fragment to the deck's blob: address.
+      const load = restore ? { type: 'qft-presentation-load', token, html: prepared, fragment: `#/${restore}` } : { type: 'qft-presentation-load', token, html: prepared };
       current.addEventListener('load', () => {
-        if (frame === current && token) current.contentWindow?.postMessage({ type: 'qft-presentation-load', token, html: prepared }, '*');
+        if (frame === current && token) current.contentWindow?.postMessage(load, '*');
       }, { once: true, signal: abort.signal });
       if (options.sandboxUrl) current.src = options.sandboxUrl;
       else current.srcdoc = presentationRunnerDocument(scriptNonce);
       host.replaceChildren(current);
       setState('loading');
       timeout = window.setTimeout(() => {
-        if (frame === current && state === 'loading') fail('The presentation has not finished loading. Try Restart, or rebuild it with the portable Slidev packaging tool.', 'player');
+        if (frame === current && state === 'loading') {
+          fail(tolerant ? 'The presentation has not finished loading after 20 seconds. Try Restart.'
+            : 'The presentation has not finished loading. Try Restart, or rebuild it with the portable Slidev packaging tool.', 'player');
+        }
       }, 20_000);
       current.focus({ preventScroll: true });
     };
+    // Everything here comes from the deck, through the runner: check the type
+    // and size of each detail, bound the counts, and pass on text only.
     window.addEventListener('message', (event) => {
       if (!frame || event.source !== frame.contentWindow || !event.data || typeof event.data !== 'object') return;
       const message = event.data;
       if (message.qftPresentation !== 1 || message.token !== token) return;
-      if (message.kind === 'ready' && state === 'loading') {
+      const kind = message.kind;
+      const detail: unknown = message.detail;
+      if (kind === 'ready' && state === 'loading') {
         if (timeout !== undefined) window.clearTimeout(timeout);
         timeout = undefined;
         setState('ready');
         // Keep the keyboard with the deck unless the user has moved on, for
         // example to the source view or another control, while it loaded.
         if (frame && document.activeElement === frame) handOffFocus(frame);
-      } else if (message.kind === 'error' && typeof message.detail === 'string') fail(message.detail, 'presentation');
-      else if (message.kind === 'escape') options.onEscape?.();
+      } else if (kind === 'error' && typeof detail === 'string') fail(detail, 'presentation');
+      else if (kind === 'escape') options.onEscape?.();
+      else if (kind === 'warning') {
+        if (tolerant && typeof detail === 'string' && warnings < 20) { warnings += 1; options.onWarning?.(detail.slice(0, 350)); }
+      } else if (kind === 'position') {
+        if (isPresentationPosition(detail) && detail !== reportedPosition) { reportedPosition = detail; position = detail; options.onPosition?.(detail); }
+      } else if (kind === 'slides') {
+        const count = typeof detail === 'string' && /^\d{1,5}$/.test(detail) ? Number(detail) : -1;
+        if (count >= 0 && count !== reportedSlides) { reportedSlides = count; options.onSlides?.(count); }
+      } else if (kind === 'fullscreen') {
+        // User activation reaches the ancestors of the frame the user acted
+        // in, so a key press in the deck lets this page enter fullscreen. A
+        // request without one is the deck acting by itself: drop it.
+        const activation = typeof navigator === 'undefined' ? undefined : navigator.userActivation;
+        if (tolerant && (detail === 'enter' || detail === 'exit') && activation?.isActive !== false) options.onFullscreenRequest?.(detail);
+      }
     }, { signal: abort.signal });
     return {
-      start, stop, restart: start,
+      start: (startOptions?: PresentationStartOptions) => start(startOptions),
+      stop,
+      restart: () => start(),
+      update(next: string, updateOptions?: PresentationStartOptions) {
+        if (disposed) return;
+        html = next;
+        if (state !== 'stopped') start({ position: updateOptions?.position ?? position });
+      },
       destroy() { if (disposed) return; stop(); disposed = true; abort.abort(); },
       focus() { if (frame) handOffFocus(frame); },
       isRunning() { return !!frame; },
+      currentPosition() { return position; },
     };
   }
   return {
     createPlayer: createPresentationPlayer,
     prepareDocument: preparePresentationDocument,
     runnerDocument: presentationRunnerDocument,
+    isPosition: isPresentationPosition,
   };
 }
 
@@ -322,8 +597,13 @@ export function createPresentationPlayer(host: HTMLElement, html: string, option
 }
 
 /** Validate and prepare one fully bundled application without running it. */
-export function preparePresentationDocument(html: string, token: string, scriptNonce: string): string {
-  return presentationRuntimeFactory().prepareDocument(html, token, scriptNonce);
+export function preparePresentationDocument(html: string, token: string, scriptNonce: string, options: PresentationPrepareOptions = {}): string {
+  return presentationRuntimeFactory().prepareDocument(html, token, scriptNonce, options);
+}
+
+/** "h/v" or "h/v/f", digits only: a slide position that start() and update() accept. */
+export function isPresentationPosition(value: unknown): value is string {
+  return presentationRuntimeFactory().isPosition(value);
 }
 
 /** Both the public runner and exported runner use this exact shell. */
@@ -336,12 +616,17 @@ export function presentationRuntimeSource(): string {
   return `(function(){const __name=(value)=>value;return (${presentationRuntimeFactory.toString()})().createPlayer;})()`;
 }
 
-/** A standalone classroom copy. Imported code stays inert until Start is chosen. */
-export function exportPresentationHtml(html: string, title: string): string {
+/**
+ * A standalone classroom copy. Imported code stays inert until Start is
+ * chosen. It plays with the given profile; under 'tolerant' the deck's own
+ * fullscreen requests (F in Reveal.js) work as the Fullscreen button does.
+ */
+export function exportPresentationHtml(html: string, title: string, options: PresentationExportOptions = {}): string {
   if (typeof html !== 'string' || !html.trim() || html.length > 24 * 1024 * 1024) throw new Error('The presentation HTML must be smaller than 24 MB.');
+  const profile: PresentationProfile = options.profile === 'tolerant' ? 'tolerant' : 'strict';
   const nonce = [...crypto.getRandomValues(new Uint8Array(18))].map((value) => value.toString(16).padStart(2, '0')).join('');
   const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-  const script = `const createPlayer=${presentationRuntimeSource()};const host=document.getElementById('presentation');const status=document.getElementById('status');const start=document.getElementById('start');const stop=document.getElementById('stop');const fullscreen=document.getElementById('fullscreen');const placeholder=document.getElementById('placeholder');const problem=document.getElementById('problem');const player=createPlayer(host,${json(html)},{title:${json(title)},scriptNonce:${json(nonce)},onState(state){start.textContent=state==='stopped'?'Start presentation':'Restart';stop.disabled=state==='stopped';status.textContent=state==='stopped'?'Ready to present · works offline':state==='loading'?'Opening presentation…':state==='ready'?'Live · use the slide controls or arrow keys':'Presentation needs attention';placeholder.hidden=state==='loading'||state==='ready';if(state!=='error')problem.hidden=true;},onError(message,origin){problem.replaceChildren();if(origin==='presentation'){const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=message;problem.append(label,quote);}else problem.textContent=message;problem.hidden=false;},onEscape(){if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}});start.addEventListener('click',()=>player.start());stop.addEventListener('click',()=>player.stop());fullscreen.addEventListener('click',async()=>{if(!player.isRunning())player.start();try{if(!document.fullscreenElement)await document.getElementById('stage').requestFullscreen();else await document.exitFullscreen();player.focus();}catch{status.textContent='Fullscreen is unavailable. Use the browser fullscreen command.';}});window.addEventListener('pagehide',()=>player.destroy(),{once:true});`;
+  const script = `const createPlayer=${presentationRuntimeSource()};const host=document.getElementById('presentation');const status=document.getElementById('status');const start=document.getElementById('start');const stop=document.getElementById('stop');const fullscreen=document.getElementById('fullscreen');const placeholder=document.getElementById('placeholder');const problem=document.getElementById('problem');const player=createPlayer(host,${json(html)},{title:${json(title)},scriptNonce:${json(nonce)},profile:${json(profile)},onState(state){start.textContent=state==='stopped'?'Start presentation':'Restart';stop.disabled=state==='stopped';status.textContent=state==='stopped'?'Ready to present · works offline':state==='loading'?'Opening presentation…':state==='ready'?'Live · use the slide controls or arrow keys':'Presentation needs attention';placeholder.hidden=state==='loading'||state==='ready';if(state!=='error')problem.hidden=true;},onError(message,origin){problem.replaceChildren();if(origin==='presentation'){const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=message;problem.append(label,quote);}else problem.textContent=message;problem.hidden=false;},onEscape(){if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});},onFullscreenRequest(request){void setFullscreen(request==='enter');}});async function setFullscreen(enter){try{if(enter&&!document.fullscreenElement)await document.getElementById('stage').requestFullscreen();else if(!enter&&document.fullscreenElement)await document.exitFullscreen();player.focus();}catch{status.textContent='Fullscreen is unavailable. Use the browser fullscreen command.';}}start.addEventListener('click',()=>player.start());stop.addEventListener('click',()=>player.stop());fullscreen.addEventListener('click',()=>{if(!player.isRunning())player.start();void setFullscreen(!document.fullscreenElement);});window.addEventListener('pagehide',()=>player.destroy(),{once:true});`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src 'self' blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'; script-src-attr 'none'"><title>${escape(title)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f6f4f0;color:#292626;font:14px/1.5 system-ui,sans-serif}header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid #e1ddd7;min-height:52px}h1{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}nav{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;border:1px solid #d3cdc4;border-radius:6px;background:#fff;padding:7px 12px;cursor:pointer}button:first-child{background:#773b49;border-color:#773b49;color:#fff}button:disabled{opacity:.5;cursor:default}button:focus-visible{outline:3px solid #b17683;outline-offset:3px}#stage{position:relative;height:calc(100dvh - 96px);min-height:240px;background:#fff}#stage:fullscreen{height:100dvh;width:100vw}#presentation{height:100%;width:100%}#placeholder{position:absolute;inset:0;display:grid;place-content:center;padding:30px;text-align:center;pointer-events:none}#placeholder[hidden]{display:none}#placeholder>strong{font-size:clamp(22px,4vw,42px);font-weight:600}#problem{max-width:640px;margin:8px auto 0;padding:12px 16px;border:1px solid #cf8796;border-radius:6px;background:#fff0f3;color:#84283d;overflow-wrap:anywhere}#problem[hidden]{display:none}#status{margin:0;padding:10px 18px;font-size:12px;min-height:44px}@media(max-width:600px){header{flex-wrap:wrap}h1{flex-basis:100%}#stage{height:calc(100dvh - 140px)}}</style></head><body><header><h1>${escape(title)}</h1><nav aria-label="Presentation controls"><button id="start">Start presentation</button><button id="stop" disabled>Stop</button><button id="fullscreen">Fullscreen</button></nav></header><main id="stage"><div id="presentation"></div><div id="placeholder"><strong>${escape(title)}</strong><p>Choose Start presentation to run the interactive slides.</p><p id="problem" role="alert" hidden></p></div></main><p id="status" role="status" aria-live="polite">Ready to present · works offline</p><script nonce="${nonce}">${script.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }

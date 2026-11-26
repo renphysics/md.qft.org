@@ -77,6 +77,7 @@ export class SuiteContext {
     this.contexts = [];
     this.allowedConsole = [];
     this.allowedPageErrors = [];
+    this.allowedBlockedRequests = [];
   }
 
   /** Run one named, user-visible behaviour. */
@@ -92,6 +93,12 @@ export class SuiteContext {
   /** Accept an uncaught page or frame error that a suite provokes deliberately. */
   allowPageError(pattern) { this.allowedPageErrors.push(pattern); }
 
+  /**
+   * Accept a request that a suite provokes deliberately and that a Content
+   * Security Policy stops in the browser, so that it never reaches the network.
+   */
+  allowBlockedRequest(pattern) { this.allowedBlockedRequests.push(pattern); }
+
   observe(page) {
     this.observedPages.push(page);
     page.on('pageerror', error => {
@@ -104,7 +111,11 @@ export class SuiteContext {
       if (this.allowedConsole.some(pattern => pattern.test(text))) return;
       this.consoleErrors.push({ page: page.url(), message: text });
     });
-    page.on('requestfailed', request => this.failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
+    page.on('requestfailed', request => {
+      const error = request.failure()?.errorText;
+      if (error === 'csp' && this.allowedBlockedRequests.some(pattern => pattern.test(request.url()))) return;
+      this.failedRequests.push({ url: request.url(), error });
+    });
     return page;
   }
 

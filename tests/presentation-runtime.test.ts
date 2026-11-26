@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { build } from 'esbuild';
 import ts from 'typescript';
-import { exportPresentationHtml, preparePresentationDocument, presentationRunnerDocument, presentationRuntimeSource } from '../src/lib/presentation-runtime';
+import { exportPresentationHtml, isPresentationPosition, preparePresentationDocument, presentationRunnerDocument, presentationRuntimeSource } from '../src/lib/presentation-runtime';
 
 const runnerHtml = readFileSync(new URL('../public/presentation-sandbox.html', import.meta.url), 'utf8');
 const runnerScript = runnerHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
@@ -28,7 +28,11 @@ function runner(origin: string, topLevel = false, script = runnerScript!) {
     document: {
       createElement(tag: string) {
         assert.equal(tag, 'iframe');
-        const value = { attrs: {} as Record<string, string>, style: {}, contentWindow: {}, focusCount: 0, setAttribute(name: string, data: string) { this.attrs[name] = data; }, focus() { this.focusCount++; } };
+        const value = {
+          attrs: {} as Record<string, string>, style: {}, contentWindow: {}, focusCount: 0, calls: [] as string[],
+          setAttribute(name: string, data: string) { this.attrs[name] = data; },
+          blur() { this.calls.push('blur'); }, focus() { this.focusCount++; this.calls.push('focus'); },
+        };
         frames.push(value); return value;
       },
       body: { replaceChildren() {} },
@@ -100,6 +104,10 @@ test('the trusted runner relays only bounded application messages from its actua
   assert.equal(child.focusCount, before);
   frame.send(frame.parent, { type: 'qft-presentation-focus', token });
   assert.equal(child.focusCount, before + 1);
+  // Blur first, so that focusing a frame that is already active still moves the keyboard into it.
+  assert.deepEqual(child.calls, ['blur', 'focus']);
+  frame.send(frame.parent, { type: 'qft-presentation-focus', token: 'b'.repeat(36) });
+  assert.deepEqual(child.calls, ['blur', 'focus'], 'only the current token can ask');
   frame.violate();
   assert.match(frame.messages.at(-1).detail, /unsupported navigation/);
 });
@@ -115,11 +123,51 @@ test('the trusted shell limits application-frame navigation to local blobs', () 
   assert.match(portable, /frame-src blob:/);
 });
 
-function playerFixture() {
+test('the runner relays warnings, positions, slide counts and fullscreen requests only in their checked forms', () => {
+  const frame = runner('null');
+  const token = 'a'.repeat(36);
+  frame.send(frame.parent, { type: 'qft-presentation-load', token, html: '<p>Deck</p>' });
+  const child = frame.frames[0].contentWindow;
+  const deck = (kind: string, detail?: unknown) => frame.send(child, { qftPresentation: 1, token, kind, detail });
+  deck('warning', 'w'.repeat(1000));
+  deck('warning', 42);
+  for (const position of ['3/1/2', '3/1', '3', '-1/0', '1/2/3/4', '12345/0', '1/0\n', ' 1/0', 3]) deck('position', position);
+  for (const count of ['12', 12, '1e3', '123456', '']) deck('slides', count);
+  for (const request of ['enter', 'exit', undefined, 'toggle', 1]) deck('fullscreen', request);
+  deck('navigate', 'https://example.com/');
+  deck('storage', 'drafts');
+  frame.send(child, { qftPresentation: 1, token: 'b'.repeat(36), kind: 'position', detail: '1/0' });
+  frame.send({}, { qftPresentation: 1, token, kind: 'fullscreen', detail: 'enter' });
+  assert.deepEqual(frame.messages.map((message) => [message.kind, message.kind === 'warning' ? message.detail.length : message.detail]), [
+    ['warning', 350], ['position', '3/1/2'], ['position', '3/1'], ['slides', '12'], ['fullscreen', 'enter'], ['fullscreen', 'exit'],
+  ]);
+  assert.ok(frame.messages.every((message) => message.qftPresentation === 1 && message.token === token));
+});
+
+test('a restore position reaches the deck only as a fragment of digits on its blob: address', () => {
+  const cases: [unknown, string][] = [
+    ['#/2/1/0', 'blob:null/package-1#/2/1/0'], ['#/2/1', 'blob:null/package-1#/2/1'], [undefined, 'blob:null/package-1'],
+    ['#/2/1?print-pdf', 'blob:null/package-1'], ['javascript:alert(1)', 'blob:null/package-1'], ['#x', 'blob:null/package-1'],
+    ['/2/1', 'blob:null/package-1'], ['#/2/1/0/9', 'blob:null/package-1'], [7, 'blob:null/package-1'],
+  ];
+  for (const [fragment, address] of cases) {
+    const frame = runner('null');
+    frame.send(frame.parent, { type: 'qft-presentation-load', token: 'a'.repeat(36), html: '<p>Deck</p>', fragment });
+    assert.equal(frame.frames.length, 1, `${String(fragment)} still loads the deck`);
+    assert.equal(frame.frames[0].src, address);
+  }
+});
+
+function playerFixture(settings: { profile?: string; activation?: { isActive: boolean } } = {}) {
   const frames: any[] = [];
   const states: string[] = [];
   const errors: string[] = [];
   const origins: string[] = [];
+  const warnings: string[] = [];
+  const positions: string[] = [];
+  const slides: number[] = [];
+  const fullscreen: string[] = [];
+  const prepared: { html: string; profile: unknown }[] = [];
   const timers = new Map<number, () => void>();
   let clock = 0;
   let receive: (event: any) => void = () => {};
@@ -146,8 +194,13 @@ function playerFixture() {
   };
   const createPlayer = compiledFunction('createPresentationPlayer', {
     crypto, AbortController,
-    preparePresentationDocument(html: string, token: string, nonce: string) { return `prepared|${token}|${nonce}|${html}`; },
+    preparePresentationDocument(html: string, token: string, nonce: string, options: { profile?: unknown }) {
+      prepared.push({ html, profile: options?.profile });
+      return `prepared|${token}|${nonce}|${html}`;
+    },
+    isPresentationPosition: compiledFunction('isPresentationPosition', {}),
     document,
+    ...(settings.activation ? { navigator: { userActivation: settings.activation } } : {}),
     window: {
       addEventListener(_: string, callback: typeof receive) { receive = callback; },
       setTimeout(callback: () => void) { timers.set(++clock, callback); return clock; },
@@ -155,10 +208,23 @@ function playerFixture() {
     },
   });
   const player = createPlayer(host, '<div>Compiled Slidev</div>', {
-    title: 'Lesson', sandboxUrl: '/presentation-sandbox.html',
+    title: 'Lesson', sandboxUrl: '/presentation-sandbox.html', ...(settings.profile ? { profile: settings.profile } : {}),
     onState(value: string) { states.push(value); }, onError(value: string, origin: string) { errors.push(value); origins.push(origin); }, onEscape() { escapes++; },
+    onWarning(value: string) { warnings.push(value); }, onPosition(value: string) { positions.push(value); },
+    onSlides(value: number) { slides.push(value); }, onFullscreenRequest(value: string) { fullscreen.push(value); },
   });
-  return { player, frames, states, errors, origins, timers, host, document, escapeCount: () => escapes, send: (source: unknown, data: unknown) => receive({ source, data }) };
+  /** Start, load the runner, and return the frame with a sender of deck messages. */
+  const play = (options?: unknown) => {
+    player.start(options);
+    const frame = frames.at(-1);
+    frame.load();
+    const token = frame.sent.at(-1).token;
+    return { frame, token, deck: (kind: string, detail?: unknown) => receive({ source: frame.contentWindow, data: { qftPresentation: 1, token, kind, detail } }) };
+  };
+  return {
+    player, frames, states, errors, origins, warnings, positions, slides, fullscreen, prepared, timers, host, document, play,
+    escapeCount: () => escapes, send: (source: unknown, data: unknown) => receive({ source, data }),
+  };
 }
 
 test('the player remains inert until Start and never grants an origin or privileged browser APIs', () => {
@@ -267,6 +333,395 @@ test('ready does not take focus back from a control the user moved to while load
   assert.deepEqual(frame.calls, []);
 });
 
+test('the strict profile is the default: no warnings or fullscreen requests reach the host', () => {
+  const f = playerFixture({ activation: { isActive: true } });
+  const { frame, deck } = f.play();
+  assert.equal(f.prepared[0].profile, 'strict');
+  assert.match(frame.title, /Slidev presentation$/);
+  deck('ready');
+  deck('warning', 'Ignored');
+  deck('fullscreen', 'enter');
+  deck('position', '2/0');
+  assert.deepEqual(f.warnings, []);
+  assert.deepEqual(f.fullscreen, []);
+  assert.deepEqual(f.positions, ['2/0'], 'positions are reported in both profiles');
+  assert.equal(f.states.at(-1), 'ready');
+});
+
+test('the tolerant profile passes on bounded warnings and keeps the deck playing', () => {
+  const f = playerFixture({ profile: 'tolerant' });
+  const { frame, deck } = f.play();
+  assert.equal(f.prepared[0].profile, 'tolerant');
+  assert.match(frame.title, /^Lesson — presentation$/);
+  deck('warning', 'While loading');
+  deck('ready');
+  deck('warning', 'x'.repeat(500));
+  deck('warning', 17);
+  deck('warning', { text: 'object' });
+  for (let index = 0; index < 30; index++) deck('warning', `Problem ${index}`);
+  assert.equal(f.warnings.length, 20);
+  assert.equal(f.warnings[0], 'While loading');
+  assert.equal(f.warnings[1].length, 350);
+  assert.equal(f.warnings[2], 'Problem 0');
+  assert.equal(f.states.at(-1), 'ready');
+  assert.equal(frame.removed, false);
+  assert.deepEqual(f.errors, []);
+  // Each playback has its own budget; an 'error' (the runner reports a
+  // navigation away from the deck) still stops it.
+  const next = f.play();
+  next.deck('warning', 'After restart');
+  assert.equal(f.warnings.at(-1), 'After restart');
+  next.deck('error', 'The presentation attempted an unsupported navigation or resource (frame-src).');
+  assert.equal(f.states.at(-1), 'error');
+  assert.deepEqual(f.origins, ['presentation']);
+  assert.equal(next.frame.removed, true);
+});
+
+test('positions and slide counts are validated, reported once per change, and remembered for the next start', () => {
+  const f = playerFixture({ profile: 'tolerant' });
+  const first = f.play();
+  for (const position of ['0/0', '0/0', '1/0/2', '1/0/2/3', 'x', 5, '1//2', '1/0/']) first.deck('position', position);
+  for (const count of ['9', '9', 'nine', '123456', 9]) first.deck('slides', count);
+  assert.deepEqual(f.positions, ['0/0', '1/0/2']);
+  assert.deepEqual(f.slides, [9]);
+  assert.equal(f.player.currentPosition(), '1/0/2');
+  f.player.stop();
+  assert.equal(f.player.currentPosition(), '1/0/2', 'stopping keeps the position');
+  const resumed = f.play({ position: f.player.currentPosition() });
+  assert.equal(resumed.frame.sent[0].fragment, '#/1/0/2');
+  resumed.deck('position', '1/0/2');
+  resumed.deck('slides', '9');
+  assert.deepEqual(f.positions, ['0/0', '1/0/2', '1/0/2'], 'a new playback reports its first position');
+  assert.deepEqual(f.slides, [9, 9]);
+  for (const position of ['1/0/2/3', '../1', '#/1/0', '1/0?x', 3, undefined]) {
+    const run = f.play({ position });
+    assert.equal('fragment' in run.frame.sent[0], false, `${String(position)} is not passed on`);
+    assert.equal(f.player.currentPosition(), undefined);
+  }
+  f.play({ position: '4/0' });
+  f.player.restart();
+  f.frames.at(-1).load();
+  assert.equal('fragment' in f.frames.at(-1).sent[0], false, 'Restart begins at the first slide');
+});
+
+test('fullscreen requests reach the host only from a tolerant deck, in checked form, after a user action', () => {
+  const activation = { isActive: true };
+  const f = playerFixture({ profile: 'tolerant', activation });
+  const { deck } = f.play();
+  deck('fullscreen', 'enter');
+  deck('ready');
+  deck('fullscreen', 'exit');
+  deck('fullscreen', 'toggle');
+  deck('fullscreen');
+  activation.isActive = false;
+  deck('fullscreen', 'enter');
+  assert.deepEqual(f.fullscreen, ['enter', 'exit']);
+  const other = playerFixture({ profile: 'tolerant' });
+  other.play().deck('fullscreen', 'enter');
+  assert.deepEqual(other.fullscreen, ['enter'], 'without the User Activation API the request is passed on');
+});
+
+test('update replaces the document and restarts a running deck at its last position', () => {
+  const f = playerFixture({ profile: 'tolerant' });
+  f.player.update('<p>Edited while stopped</p>');
+  assert.equal(f.frames.length, 0, 'a stopped player stays stopped');
+  const first = f.play();
+  assert.equal(f.prepared.at(-1)!.html, '<p>Edited while stopped</p>');
+  first.deck('ready');
+  first.deck('position', '3/1');
+  f.player.update('<p>Second edit</p>');
+  assert.equal(first.frame.removed, true);
+  const second = f.frames.at(-1);
+  second.load();
+  assert.equal(second.sent[0].fragment, '#/3/1');
+  assert.notEqual(second.sent[0].token, first.token);
+  assert.equal(f.prepared.at(-1)!.html, '<p>Second edit</p>');
+  first.deck('position', '0/0');
+  assert.deepEqual(f.positions, ['3/1'], 'the replaced frame is no longer heard');
+  f.player.update('<p>Third edit</p>', { position: '0/0/1' });
+  const third = f.frames.at(-1);
+  third.load();
+  assert.equal(third.sent[0].fragment, '#/0/0/1');
+  f.send(third.contentWindow, { qftPresentation: 1, token: third.sent[0].token, kind: 'error', detail: 'Broken' });
+  assert.equal(f.states.at(-1), 'error');
+  f.player.update('<p>Fixed</p>');
+  assert.equal(f.states.at(-1), 'loading', 'an edit replays a deck that an error stopped');
+  assert.equal(f.prepared.at(-1)!.html, '<p>Fixed</p>');
+  const frames = f.frames.length;
+  f.player.destroy();
+  f.player.update('<p>Late</p>');
+  assert.equal(f.frames.length, frames);
+});
+
+/**
+ * Runs the deck bootstrap in a fresh realm with stand-ins for the browser
+ * classes it adapts. Each stand-in behaves as Chromium does inside the
+ * sandboxed blob: document: path History writes throw a SecurityError and
+ * fullscreen is refused by the permissions policy.
+ */
+function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: unknown } = {}) {
+  const sent: any[] = [];
+  const listeners = { window: new Map<string, ((event: any) => void)[]>(), document: new Map<string, ((event: any) => void)[]>() };
+  const on = (map: Map<string, ((event: any) => void)[]>) => (name: string, listener: (event: any) => void) => { map.set(name, [...(map.get(name) ?? []), listener]); };
+  class FakeDOMException extends Error { constructor(message: string, name: string) { super(message); this.name = name; } }
+  class FakeErrorEvent { constructor(readonly message: string) {} }
+  const historyCalls: unknown[][] = [];
+  const refuse = (url: unknown) => { if (typeof url === 'string' && !url.startsWith('#')) throw new FakeDOMException('The operation is insecure.', 'SecurityError'); };
+  class History {
+    pushState(_state: unknown, _title: string, url?: string) { historyCalls.push(['push', url]); refuse(url); }
+    replaceState(state: unknown, _title: string, url?: string) {
+      historyCalls.push(['replace', url]);
+      if (state === 'uncloneable') throw new FakeDOMException('The object could not be cloned.', 'DataCloneError');
+      refuse(url);
+    }
+  }
+  class Element {
+    requestFullscreen() { return Promise.reject(new Error('Disallowed by permissions policy')); }
+    webkitRequestFullscreen() { return undefined; }
+  }
+  class Document {
+    exitFullscreen() { return Promise.reject(new Error('Document not active')); }
+    get fullscreenEnabled() { return false; }
+  }
+  class Navigator { get wakeLock() { return { request: () => Promise.reject(new Error('Disallowed by permissions policy')) }; } }
+  const document = Object.assign(new Document(), { addEventListener: on(listeners.document) });
+  const window: any = { localStorage: { length: 0 }, sessionStorage: { length: 0 }, addEventListener: on(listeners.window) };
+  if (settings.reveal) window.Reveal = settings.reveal;
+  const navigator = new Navigator();
+  compiledFunction('presentationBootstrap', {
+    window, document, navigator, History, Element, Document, Navigator, URL,
+    DOMException: FakeDOMException, ErrorEvent: FakeErrorEvent, location: { hash: settings.hash ?? '' },
+    parent: { postMessage(message: unknown) { sent.push(message); } },
+    requestAnimationFrame(callback: () => void) { callback(); },
+  })('a'.repeat(36), tolerant);
+  return {
+    History, Element, document, navigator, historyCalls, ErrorEvent: FakeErrorEvent,
+    fire(target: 'window' | 'document', name: string, event: Record<string, unknown> = {}) {
+      if (!('type' in event)) Object.defineProperty(event, 'type', { value: name });
+      for (const listener of listeners[target].get(name) ?? []) listener(event);
+    },
+    /** [kind, detail] of every message, after checking the envelope. */
+    messages: () => sent.map((message) => {
+      assert.equal(message.qftPresentation, 1);
+      assert.equal(message.token, 'a'.repeat(36));
+      return message.detail === undefined ? [message.kind] : [message.kind, message.detail];
+    }),
+  };
+}
+
+/** A .reveal element with one current slide whose fragments the test controls. */
+function revealDom(slideCount: number) {
+  const fragments = { total: 0, visible: 0, current: undefined as string | undefined };
+  const slide = {
+    querySelector(selector: string) {
+      if (selector === '.fragment') return fragments.total ? {} : null;
+      assert.equal(selector, '.current-fragment');
+      if (!fragments.visible) return null;
+      return { hasAttribute: () => fragments.current !== undefined, getAttribute: () => fragments.current };
+    },
+    querySelectorAll(selector: string) { assert.equal(selector, '.fragment.visible'); return { length: fragments.visible }; },
+  };
+  const root: any = {
+    closest: (selector: string) => (selector === '.reveal' ? root : null),
+    querySelectorAll(selector: string) {
+      // A vertical stack and its present child, in document order.
+      if (selector === '.slides section.present') return [{}, slide];
+      assert.equal(selector, '.slides section:not(.stack):not([data-visibility="uncounted"])');
+      return { length: slideCount };
+    },
+  };
+  return { root, fragments };
+}
+
+test('the tolerant bootstrap guards History, hides the wake lock and asks the host for fullscreen', async () => {
+  const deck = deckBootstrap(true);
+  const history = new deck.History();
+  // Reveal.js writes pathname + search on the first slide, Slidev's router a path.
+  assert.doesNotThrow(() => history.replaceState({}, '', 'null/1b2c'));
+  assert.doesNotThrow(() => history.pushState({}, '', '/2#/2'));
+  history.replaceState({}, '', '#/3');
+  assert.throws(() => history.replaceState('uncloneable', '', '#/1'), { name: 'DataCloneError' }, 'other errors are not hidden');
+  assert.deepEqual(deck.historyCalls, [['replace', 'null/1b2c'], ['replace', '#'], ['push', '/2#/2'], ['push', '#/2'], ['replace', '#/3'], ['replace', '#/1']]);
+  assert.equal('wakeLock' in deck.navigator, false, 'Slidev does not ask for a wake lock it cannot get');
+  const element = new deck.Element() as any;
+  await element.requestFullscreen();
+  await element.webkitRequestFullscreen();
+  await (deck.document as any).exitFullscreen();
+  assert.equal((deck.document as any).fullscreenEnabled, true);
+  assert.deepEqual(deck.messages(), [['fullscreen', 'enter'], ['fullscreen', 'enter'], ['fullscreen', 'exit']]);
+});
+
+test('in the tolerant profile errors, rejections, missing files and blocked requests are warnings, and the deck still becomes ready', () => {
+  const deck = deckBootstrap(true);
+  const marked = "Uncaught TypeError: Cannot set properties of null (setting 'marked')";
+  deck.fire('window', 'error', new deck.ErrorEvent(marked) as any);
+  deck.fire('window', 'error', new deck.ErrorEvent(marked) as any);
+  // Firefox throws when a deck assigns location.hash in a blob: document.
+  const firefox = "TypeError: Location.hash setter: Access to 'blob:null/1b2c#x' from script denied.";
+  deck.fire('window', 'error', new deck.ErrorEvent(firefox) as any);
+  deck.fire('window', 'error', new deck.ErrorEvent('') as any);
+  deck.fire('window', 'error', { target: { localName: 'img' } });
+  deck.fire('window', 'error', { target: { localName: 'video' } });
+  deck.fire('window', 'error', { target: { localName: 'link' } });
+  deck.fire('window', 'unhandledrejection', { reason: new Error('Wake lock refused') });
+  deck.fire('window', 'unhandledrejection', { reason: { toString() { throw new Error('No text'); } } });
+  deck.fire('window', 'unhandledrejection', { reason: 'x'.repeat(400) });
+  deck.fire('document', 'securitypolicyviolation', { effectiveDirective: 'img-src', blockedURI: 'https://cover.sli.dev/' });
+  deck.fire('document', 'securitypolicyviolation', { effectiveDirective: 'script-src-attr', blockedURI: 'inline' });
+  deck.fire('document', 'securitypolicyviolation', { effectiveDirective: 'base-uri', blockedURI: '' });
+  deck.fire('window', 'load');
+  const messages = deck.messages();
+  assert.deepEqual(messages.at(-1), ['ready']);
+  assert.ok(messages.slice(0, -1).every(([kind]) => kind === 'warning'));
+  assert.deepEqual(messages.slice(0, -1).map(([, detail]) => detail), [
+    marked, firefox, 'The presentation encountered an error.',
+    'A picture in the presentation could not be shown.', 'A video or sound in the presentation could not be played.',
+    'A file that the presentation uses could not be loaded.', 'Wake lock refused', 'An asynchronous presentation operation failed.',
+    'x'.repeat(350), 'The player blocked a picture (img-src, cover.sli.dev).', 'The player blocked a script (script-src-attr).',
+    'The player blocked a resource (base-uri).',
+  ]);
+  const many = deckBootstrap(true);
+  for (let index = 0; index < 25; index++) many.fire('window', 'error', new many.ErrorEvent(`Problem ${index}`) as any);
+  many.fire('window', 'load');
+  assert.equal(many.messages().filter(([kind]) => kind === 'warning').length, 20, 'at most 20 distinct warnings per playback');
+  assert.deepEqual(many.messages().at(-1), ['ready']);
+});
+
+test('the strict bootstrap stops at the first problem and adapts nothing', () => {
+  const deck = deckBootstrap(false);
+  assert.throws(() => new deck.History().replaceState({}, '', 'null/1b2c'), { name: 'SecurityError' });
+  assert.equal('wakeLock' in deck.navigator, true);
+  assert.equal((deck.document as any).fullscreenEnabled, false);
+  deck.fire('window', 'error', { target: { localName: 'img' } });
+  deck.fire('document', 'securitypolicyviolation', { effectiveDirective: 'img-src', blockedURI: 'https://cover.sli.dev/' });
+  deck.fire('window', 'load');
+  assert.deepEqual(deck.messages(), [
+    ['error', 'A presentation resource could not be loaded. Rebuild the package with all assets included.'],
+    ['error', 'This presentation requested an unsupported resource (img-src). Rebuild it with the portable Slidev packaging tool.'],
+  ], 'no ready after an error');
+});
+
+test('Reveal.js events report the position as h/v/f and the slide count, without needing window.Reveal', () => {
+  const deck = deckBootstrap(true);
+  const { root, fragments } = revealDom(7);
+  deck.fire('document', 'ready', { target: root, indexh: 0, indexv: 0 });
+  deck.fire('document', 'slidechanged', { target: root, indexh: 2, indexv: 1 });
+  fragments.total = 2; fragments.visible = 1;
+  deck.fire('document', 'fragmentshown', { target: root });
+  fragments.visible = 2; fragments.current = '5';
+  deck.fire('document', 'fragmentshown', { target: root });
+  fragments.visible = 0; fragments.current = undefined;
+  deck.fire('document', 'fragmenthidden', { target: root });
+  deck.fire('document', 'slidechanged', { target: root, indexh: 2, indexv: 1 });
+  deck.fire('document', 'ready', { target: { closest: () => null }, indexh: 9, indexv: 9 });
+  deck.fire('document', 'ready', { target: null });
+  deck.fire('document', 'slidechanged', { target: root, indexh: 10_000, indexv: 0 });
+  deck.fire('document', 'slidechanged', { target: root, indexh: 1.5, indexv: 0 });
+  assert.deepEqual(deck.messages(), [
+    ['position', '0/0'], ['slides', '7'], ['position', '2/1'], ['position', '2/1/0'], ['position', '2/1/5'], ['position', '2/1'],
+  ]);
+});
+
+test('a restore position is corrected once, when Reveal.js is ready, if the deck did not reach it itself', () => {
+  const calls: number[][] = [];
+  const { root, fragments } = revealDom(5);
+  const reveal = {
+    getRevealElement: () => root,
+    slide(h: number, v: number, f: number) {
+      calls.push([h, v, f]);
+      fragments.visible = f + 1;
+      deck.fire('document', 'fragmentshown', { target: root });
+    },
+  };
+  // Reveal.js 3 shows slide 3 but not its fragment.
+  const deck = deckBootstrap(true, { hash: '#/3/0/1', reveal });
+  fragments.total = 2;
+  deck.fire('document', 'ready', { target: root, indexh: 3, indexv: 0 });
+  deck.fire('document', 'ready', { target: root, indexh: 3, indexv: 0 });
+  assert.deepEqual(calls, [[3, 0, 1]]);
+  assert.deepEqual(deck.messages(), [['position', '3/0/1'], ['slides', '5']]);
+
+  const reached = deckBootstrap(true, { hash: '#/2/0', reveal });
+  fragments.total = 0;
+  reached.fire('document', 'ready', { target: root, indexh: 2, indexv: 0 });
+  const other = deckBootstrap(true, { hash: '#/2/0', reveal: { ...reveal, getRevealElement: () => ({}) } });
+  other.fire('document', 'ready', { target: root, indexh: 0, indexv: 0 });
+  const none = deckBootstrap(true, { hash: '#/2/0/x', reveal });
+  none.fire('document', 'ready', { target: root, indexh: 0, indexv: 0 });
+  assert.deepEqual(calls, [[3, 0, 1]], 'nothing to correct, another deck, or no valid position');
+  assert.deepEqual(other.messages(), [['position', '0/0'], ['slides', '5']]);
+});
+
+/** preparePresentationDocument with an inert template and parser stand-in. */
+function prepareWith(profile: unknown, parsed?: { html?: Record<string, string>; body?: Record<string, string>; bodyName?: string }, found: string[] = []) {
+  let parses = 0;
+  const attributes = (values: Record<string, string> = {}) => Object.entries(values).map(([name, value]) => ({ name, value }));
+  const prepare = compiledFunction('preparePresentationDocument', {
+    presentationBootstrap: function presentationBootstrap() {},
+    document: {
+      createElement() {
+        return { innerHTML: '', content: {
+          querySelector: (selector: string) => selector === 'title' ? { textContent: '  Waves\n & <phases> ' } : found.includes(selector) ? {} : null,
+          querySelectorAll: () => [],
+        } };
+      },
+    },
+    DOMParser: class {
+      parseFromString(_: string, type: string) {
+        assert.equal(type, 'text/html');
+        parses += 1;
+        return { documentElement: { attributes: attributes(parsed?.html) }, body: { localName: parsed?.bodyName ?? 'body', attributes: attributes(parsed?.body) } };
+      }
+    },
+  });
+  const source = parsed ? '<html><body><div class="reveal"></div></body></html>' : '<div class="reveal"></div>';
+  return { html: () => prepare(source, 'a'.repeat(36), 'b'.repeat(36), profile === undefined ? undefined : { profile }), parses: () => parses };
+}
+
+test('the tolerant profile keeps the title and adds no styles; root attributes come from a real parse', () => {
+  const strict = prepareWith(undefined).html();
+  assert.match(strict, /\*,\*::before,\*::after\{box-sizing:border-box\}/);
+  assert.match(strict, /overflow:hidden/);
+  assert.doesNotMatch(strict, /<title>/);
+  assert.match(strict, /\("a{36}",false\)/);
+  for (const profile of ['Tolerant', 'loose', 1]) assert.match(prepareWith(profile).html(), /box-sizing:border-box/, `${String(profile)} is strict`);
+  const tolerant = prepareWith('tolerant').html();
+  assert.doesNotMatch(tolerant, /<style>/);
+  assert.match(tolerant, /<title>Waves &amp; &lt;phases&gt;<\/title>/);
+  assert.match(tolerant, /\("a{36}",true\)/);
+  assert.match(tolerant, /<html lang="en">/, 'no root tags: nothing to parse');
+
+  const parsed = prepareWith('tolerant', {
+    html: { lang: 'de', manifest: 'offline.appcache', 'data-theme': 'dark' },
+    body: { id: 'app', class: 'deck [&>p]:mt-2', style: 'color:red"', onload: 'start()', background: 'paper.png', 'data-x': '1', 'aria-label': 'Deck', role: 'application', 'data-bad"name': 'x' },
+  });
+  const document = parsed.html();
+  assert.equal(parsed.parses(), 1);
+  assert.match(document, /<html lang="de" data-theme="dark">/);
+  assert.match(document, /<body id="app" class="deck \[&amp;&gt;p\]:mt-2" style="color:red&quot;" data-x="1" aria-label="Deck" role="application">/);
+  assert.match(prepareWith('strict', { body: { id: 'app' }, bodyName: 'frameset' }).html(), /<body>/, 'a frameset has no body attributes');
+});
+
+test('a linked deck that still needs a separate file gets a message without the Slidev packaging tool', () => {
+  const cases: [string, RegExp, RegExp][] = [
+    ['script[src],script[href],script[xlink\\:href]', /separate JavaScript files.*Slidev packaging tool/, /still loads a separate script file/],
+    ['link[rel~="stylesheet"]', /separate stylesheets/, /still loads a separate stylesheet/],
+    ['iframe,frame,frameset,object,embed,portal', /offline Slidev package/, /embeds another web page or a plug-in/],
+    ['script[type="importmap"]', /Rebuild it with the portable Slidev packaging tool/, /cannot resolve/],
+  ];
+  for (const [selector, strict, tolerant] of cases) {
+    assert.throws(() => prepareWith('strict', undefined, [selector]).html(), strict);
+    assert.throws(() => prepareWith('tolerant', undefined, [selector]).html(), (error: Error) => tolerant.test(error.message) && !/Slidev/.test(error.message));
+  }
+});
+
+test('isPresentationPosition accepts h/v and h/v/f with at most four digits each', () => {
+  for (const value of ['0/0', '12/3', '1/0/0', '9999/9999/9999']) assert.equal(isPresentationPosition(value), true, value);
+  for (const value of ['0', '0/0/0/0', '10000/0', '-1/0', '1/0/', '#/1/0', ' 1/0', '1/0\n', 1, null, undefined, ['1/0']]) {
+    assert.equal(isPresentationPosition(value), false, String(value));
+  }
+});
+
 test('oversized or invalid documents are rejected before a DOM or frame is created', () => {
   assert.throws(() => preparePresentationDocument('', 'a'.repeat(36), 'b'.repeat(36)), /smaller than/);
   assert.throws(() => preparePresentationDocument('x'.repeat(24 * 1024 * 1024 + 1), 'a'.repeat(36), 'b'.repeat(36)), /smaller than/);
@@ -309,6 +764,9 @@ test('portable exports keep hostile source inert in the parent and serialize val
   assert.ok(script);
   assert.match(html, new RegExp(`script-src 'nonce-${script[1]}'`));
   assert.match(script[2], /\\u003cscript\\u003eparent/);
+  assert.match(script[2], /profile:"strict"/);
+  assert.match(exportPresentationHtml('<p>Deck</p>', 'Deck', { profile: 'tolerant' }), /profile:"tolerant"/);
+  assert.match(exportPresentationHtml('<p>Deck</p>', 'Deck', { profile: 'Tolerant' as never }), /profile:"strict"/);
   new vm.Script(script[2]);
   new vm.Script(presentationRuntimeSource());
   const nodes = new Map<string, any>();
@@ -325,8 +783,10 @@ test('portable exports keep hostile source inert in the parent and serialize val
   assert.equal((context as any).__titleAttack, undefined);
 });
 
-test('a production-minified export starts and completes its isolated handshake without the original bundle', async () => {
-  const compiled = await build({
+let minifiedRuntime: Promise<string> | undefined;
+/** The runtime as the production build ships it: bundled, minified, renamed. */
+function minifiedBundle(): Promise<string> {
+  minifiedRuntime ??= build({
     entryPoints: [fileURLToPath(new URL('../src/lib/presentation-runtime.ts', import.meta.url))],
     bundle: true,
     write: false,
@@ -335,16 +795,26 @@ test('a production-minified export starts and completes its isolated handshake w
     format: 'iife',
     globalName: 'BundledPresentation',
     target: 'es2022',
-  });
-  // Generate the actual downloadable file from renamed production functions,
-  // then open its script in a fresh realm with none of the bundle's bindings.
-  const exported = vm.runInNewContext(`${compiled.outputFiles[0].text}\nBundledPresentation.exportPresentationHtml('<p>Portable lesson</p>', 'Portable lesson');`, { crypto }) as string;
+  }).then((compiled) => compiled.outputFiles[0].text);
+  return minifiedRuntime;
+}
+
+/**
+ * Generate the actual downloadable file from renamed production functions,
+ * then open its script in a fresh realm with none of the bundle's bindings,
+ * start it, and run the runner and deck bootstrap it serializes, each in its
+ * own realm, up to a real ready handshake.
+ */
+async function exportedHandshake(profile?: string) {
+  const options = profile === undefined ? '' : `, ${JSON.stringify({ profile })}`;
+  const exported = vm.runInNewContext(`${await minifiedBundle()}\nBundledPresentation.exportPresentationHtml('<p>Portable lesson</p>', 'Portable lesson'${options});`, { crypto }) as string;
   const outerScript = exported.match(/<script nonce="[a-f0-9]{36}">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(outerScript);
   const nodes = new Map<string, any>();
   const frames: any[] = [];
   const listeners = new Map<string, (...args: any[]) => void>();
   const timers = new Map<number, () => void>();
+  const fullscreenCalls: string[] = [];
   let timerId = 0;
   const getElementById = (id: string) => {
     if (!nodes.has(id)) nodes.set(id, {
@@ -352,6 +822,7 @@ test('a production-minified export starts and completes its isolated handshake w
       children: [] as any[],
       addEventListener(name: string, listener: (...args: any[]) => void) { this.listeners.set(name, listener); },
       replaceChildren(...children: any[]) { this.children = children; },
+      requestFullscreen() { fullscreenCalls.push(id); return Promise.resolve(); },
     });
     return nodes.get(id);
   };
@@ -369,7 +840,7 @@ test('a production-minified export starts and completes its isolated handshake w
           sent: [] as any[], load: () => {}, removed: false,
           setAttribute(name: string, value: string) { this.attrs[name] = value; },
           addEventListener(name: string, listener: () => void) { if (name === 'load') this.load = listener; },
-          focus() {}, remove() { this.removed = true; },
+          focus() {}, blur() {}, remove() { this.removed = true; },
         };
         frame.contentWindow.postMessage = (message: any) => frame.sent.push(message);
         frames.push(frame);
@@ -393,8 +864,6 @@ test('a production-minified export starts and completes its isolated handshake w
   assert.match(outer.sent[0].html, /<p>Portable lesson<\/p>/);
   assert.match(outer.srcdoc, /frame-src blob:/);
 
-  // The runner and inner bootstrap are serialized again inside the exported
-  // factory. Execute each in its own realm and relay a real ready handshake.
   const shellScript = outer.srcdoc.match(/<script nonce="[a-f0-9]{36}">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(shellScript);
   const shell = runner('null', false, shellScript);
@@ -404,6 +873,8 @@ test('a production-minified export starts and completes its isolated handshake w
   const bootstrap = prepared.match(/<script nonce="[a-f0-9]{36}">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(bootstrap);
   const childListeners = new Map<string, (...args: any[]) => void>();
+  class Element { requestFullscreen() { return Promise.reject(new Error('Disallowed by permissions policy')); } }
+  class Document { exitFullscreen() { return Promise.reject(new Error('Document not active')); } get fullscreenEnabled() { return false; } }
   vm.runInNewContext(bootstrap, {
     parent: { postMessage(message: unknown) { shell.send(shell.frames[0].contentWindow, message); } },
     window: {
@@ -411,14 +882,34 @@ test('a production-minified export starts and completes its isolated handshake w
       addEventListener(name: string, listener: (...args: any[]) => void) { childListeners.set(name, listener); },
     },
     document: { addEventListener() {} },
+    History: class { pushState() {} replaceState() {} }, Navigator: class {}, Element, Document,
+    location: { hash: '' },
     requestAnimationFrame(callback: () => void) { callback(); },
   });
   childListeners.get('load')!();
   assert.equal(shell.messages.length, 1);
-  listeners.get('message')!({ source: outer.contentWindow, data: shell.messages[0] });
+  const relay = () => { for (const data of shell.messages.splice(0)) listeners.get('message')!({ source: outer.contentWindow, data }); };
+  relay();
   assert.equal(getElementById('status').textContent, 'Live · use the slide controls or arrow keys');
   assert.equal(timers.size, 0);
+  return { prepared, outer, shell, relay, getElementById, fullscreenCalls, deckElement: new Element() };
+}
+
+test('a production-minified export starts and completes its isolated handshake without the original bundle', async () => {
+  const { prepared, outer, getElementById } = await exportedHandshake();
+  assert.match(prepared, /box-sizing:border-box/, 'the default export keeps the strict profile');
+  assert.match(prepared, /\("[a-f0-9]{36}",false\);\}\)\(\);<\/script>/);
   getElementById('stop').listeners.get('click')();
   assert.equal(outer.removed, true);
   assert.equal(getElementById('status').textContent, 'Ready to present · works offline');
+});
+
+test('a tolerant export plays with the tolerant profile, and F in the deck asks the export for fullscreen', async () => {
+  const { prepared, relay, fullscreenCalls, deckElement } = await exportedHandshake('tolerant');
+  assert.doesNotMatch(prepared, /box-sizing:border-box/);
+  assert.match(prepared, /\("[a-f0-9]{36}",true\);\}\)\(\);<\/script>/, 'the deck bootstrap runs tolerant');
+  await deckElement.requestFullscreen();
+  relay();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fullscreenCalls, ['stage']);
 });
