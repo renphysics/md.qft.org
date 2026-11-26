@@ -1,0 +1,114 @@
+
+####################################################################################################
+##### C1a-player-origin-fidelity
+
+SUMMARY:
+I extended B1's player origin (app on 127.0.0.1:4600, player plus service worker on :4602, full Chromium 158) and tested it with unmodified Slidev builds. The tests checked rendering, keyboard navigation, a v-click step and a Vue button.
+
+- **Mounting (Q1, Q2).** Serving each deck at its own build base on the player root works for 9/9 builds, including the default build (base "/", history router) and a /sub/deck/ build. The worker picks the deck from a ?__deck= token, which Slidev keeps across its own navigations, and from FetchEvent clientId/resultingClientId. The /d/<id>/ prefix mount plays only 2/9 builds. Rewriting the base on the fly plays 0/4.
+- **Routes and two decks.** Deep links (/N, /presenter/N, /overview, /notes, /entry, ?print) work, and so does frame reload. Two decks open at once both play.
+- **Kitchen-sink build (37 MB).** All 16 slides play, and Monaco plus its Web Workers report TypeScript errors even with the network blocked. Remote images, the Tweet embed, PlantUML and fonts need the network. First open takes 2.0–2.2 s.
+- **Presenter (Q3).** Presenter and audience stay in sync across two frames and from a popup.
+- **Reveal (Q4).** External-Markdown, ES-module, menu and chalkboard decks still play.
+- **Edit loop (Q5).** Editing a Reveal deck and reloading takes a median of 82–99 ms.
+- **Worker restart (Q6).** If files live only in worker memory, the deck fails after a restart ("Unknown deck"). Cache Storage, or the app re-supplying files over a MessagePort, both survive.
+
+Two problems came up:
+- **Cross-deck coupling.** Slidev's BroadcastChannel and localStorage belong to the whole player origin, so one deck's presenter drove another deck's audience view when both decks had the same title.
+- **Storage partitioning.** Playwright switches Chrome's storage partitioning off by default. With it switched back on, a player on a different site from the app still plays in its frame, but the Slidev presenter popup and the Reveal speaker view break. The player must be same-site, e.g. player.qft.org next to md.qft.org.
+
+Firefox and Safari were not tested.
+
+FINDINGS (14):
+
+[F1] (critical; verified-empirically) Mounting a deck at its own build base on the player-origin root, with the deck chosen per client, plays all Slidev router/base builds without touching any deck file.
+   EVIDENCE: $C/out/q1-matrix.json. The 9 builds were the ordinary default build, dist-relative, and history/hash/memory x abs/rel plus history-sub. Every one passed render, ArrowRight navigation, the v-click step (hidden 2->1) and the Vue button (intensity 0.00). Root mount: 9/9. Prefix /d/<id>/: 2/9 (hash-rel, memory-rel); absolute builds fail with `404 http://127.0.0.1:4602/assets/index-BwoNhELd.js`, history ./ builds show Slidev's own 'Page /d/<id>/ not found'. Rewrite /r/<id>/ (3 regexes: "/assets/, history:X(`/`), the Vite preload helper `/`+e): 0/4; chunks load, then 'Page /1 not found'. First slide visible 106-126 ms after frame load.
+   SOURCES: prototypes/C1a/player/sw.js | prototypes/C1a/scripts/q1-matrix.mjs | prototypes/C1a/out/q1-matrix.json
+
+[F2] (critical; verified-empirically) In real Chrome (storage partitioning on), a player origin on a different site from the app breaks popups: the Slidev presenter popup returns 404, and the Reveal speaker view's previews fail. Frames still work. The player must be same-site with the app.
+   EVIDENCE: Playwright disables the ThirdPartyStoragePartitioning feature by default (playwright-core coreBundle.js chromiumSwitches, issue 32230). Relaunched with the feature enabled, app on http://localhost:4600 and player on http://127.0.0.1:4602. In the frame, the Slidev deck passes every interaction and two-frame presenter sync works. The popup is top-level, so it uses the first-party partition: controlled=false, cacheKeys='', `404 http://127.0.0.1:4602/presenter/1?__deck=XS`. Reveal speaker view: popup opens, but both preview iframes fail (ERR TypeError, deck not served). Same-site with partitioning on: speaker view previews ready=true. With partitioning off, the popup wrongly works.
+   SOURCES: prototypes/C1a/out/cross-site-partitioned.txt | prototypes/C1a/out/cross-site-reveal.txt | prototypes/C1a/scripts/lib.mjs | https://privacysandbox.google.com/cookies/storage-partitioning | https://github.com/microsoft/playwright/issues/32230
+
+[F3] (critical; verified-empirically) Only Cache Storage, or the app re-supplying files on demand, survives a service-worker restart. Files held only in worker memory are lost: the open deck keeps running until it needs a file, then reload and new frames fail.
+   EVIDENCE: Restart forced with CDP ServiceWorker.stopAllWorkers; a new boot timestamp confirmed it. memory: fetch from the deck 404, frame reload and new frame 'Unknown deck'; keyboard navigation inside the running deck still worked. cache (deck metadata and client map also in Cache Storage): fetch 200 via the restored clientId map, reload to /3 ok, new frame ok. ondemand (worker -> host page -> app over a transferred MessagePort): all ok, and the app answered 92 file requests.
+   SOURCES: prototypes/C1a/out/q4q5q6.json | prototypes/C1a/scripts/q4q5q6.mjs
+
+[F4] (high; verified-empirically) Decks sharing one player origin are coupled: a different deck with the same title, opened as presenter, drove another deck's audience view, and each deck sees the other's slidev-* localStorage.
+   EVIDENCE: Deck DA (ordinary build) audience at /1?__deck=DA; deck DB (history-abs build, same title 'Quantum interference') presenter at /presenter/1?__deck=DB. After 5 ArrowRight in DB's presenter, DA moved to /4?__deck=DA&clicks=0. The channel name is `<title> - Slidev - shared`. Two plain viewers of different decks did not couple: A went to /3 while B stayed on #/1. Frame B saw 21 slidev-* localStorage keys.
+   SOURCES: prototypes/C1a/out/q4q5q6.json | prototypes/C1a/out/q2q3-cd.json
+
+[F5] (high; verified-empirically) Selecting the deck by a query token is robust: Slidev keeps unknown query parameters across its navigations, and a reload without the token still resolves through the navigation's initiator clientId.
+   EVIDENCE: URLs went /1?__deck=X -> /2?__deck=X&clicks=1 -> /3?__deck=X, and /?__deck=X#/3 for hash builds. location.reload() returned to slide 3. After history.replaceState(null,'','/3') removed the token, reload still showed slide 3; the resolver used was 'nav-clientId' (FetchEvent.clientId on the navigation request). A popup opened with no token resolved through the Referer token. Dedicated-worker requests resolved through resultingClientId (0 misses on the 37 MB build).
+   SOURCES: prototypes/C1a/out/q2q3-run1.json | https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent/resultingClientId
+
+[F6] (high; verified-empirically) Deep links and in-deck routes work under the root mount for a default build: /N, /presenter/N, /overview, /notes, /entry and ?print.
+   EVIDENCE: /2 -> 'Amplitudes add'; /5 -> 'Thanks'; /presenter/1 and /presenter/2 -> presenter UI ('Current Slides Screen Mirror', 2 slide containers); /overview -> 5 thumbnails; /notes -> 'No notes for Slide 1.'; /entry -> 'Slides Presenter Notes Overview'; /1?print and /?print -> all 5 pages. The /print path renders only 2 pages; it is not a print route in a build.
+   SOURCES: prototypes/C1a/out/q2q3-run1.json | prototypes/C1a/out/extra-checks.txt
+
+[F7] (high; verified-empirically) Slidev presenter and audience stay in sync (BroadcastChannel) when both are served by the worker, in two frames or with the presenter in a popup.
+   EVIDENCE: Two frames: 2 ArrowRight in /presenter/1 -> audience at /2?clicks=1 with 1 hidden v-click; 5 -> audience at /4?clicks=0. Popup opened like Slidev's own link (<a target=_blank href=/presenter/3>, no token): presenter UI rendered via the Referer token, and the audience frame followed to /3?clicks=0. All of this was same-site; see the partitioning finding for cross-site.
+   SOURCES: prototypes/C1a/out/q2q3-cd.json
+
+[F8] (high; verified-empirically) The 37 MB kitchen-sink template plays unmodified: all 16 slides render, and Monaco with its Web Workers reports TypeScript errors even with the network blocked. Remote images, Tweet/Bluesky embeds, PlantUML and Google Fonts work only when the network is allowed.
+   EVIDENCE: Blocked (worker CSP plus route abort): 16/16 h1; ts.worker and editor.worker served by the worker; typing `const x: number = "s"` gave 1 .squiggly-error; images 0/1, 0/2, 0/3 on slides 3/8/10; Tweet and bsky scripts refused by CSP; PlantUML refused; no page errors. Allowed: every image loaded (8: 2/2, 10: 3/3, 12: PlantUML 1/1), Tweet iframe on slide 7, requests to fonts.gstatic.com and syndication.twitter.com, 0 errors. Mermaid on slide 12 rendered no SVG in either mode (B2's direct-HTTP walk also showed svg=0).
+   SOURCES: prototypes/C1a/out/q1c-block.json | prototypes/C1a/out/q1c-allow.json | prototypes/C1a/scripts/q1c-starter.mjs
+
+[F9] (high; verified-empirically) Editing a Reveal deck costs 82-99 ms (median of 9): replace index.html in the worker's store, reload the frame, restore the slide.
+   EVIDENCE: classic6, 'Code' -> 'Code vN', frame set to index.html?v=N#/3, timer stopped when Reveal was ready on h=3 with the new title. Medians: prefix/cache 99 ms, prefix/memory 94, root/cache 96, root/memory 82 (frame load 76-88 ms, patch ack 4-9 ms); 36/36 runs correct. Slidev frame reload restoring /3: median 176 ms (148-204). A Slidev source edit would also need B2's recompile (about 70 ms); not combined here.
+   SOURCES: prototypes/C1a/out/q5-reveal.json | prototypes/C1a/out/q4q5q6.json
+
+[F10] (medium; verified-empirically) Opening the 37 MB build for the first time takes 2.0-2.2 s from click to first slide. Total browser memory rises from 643 MB to 1.1-1.2 GB after the first render and to 2.0-2.9 GB after walking all slides.
+   EVIDENCE: 9.45 MB ZIP, 314 files. fetch 58-62 ms; fflate unzipSync on the main thread 356-408 ms; store 693-825 ms, of which the worker's cache.put x314 is 293-360 ms and the rest is the two-hop transfer plus the app's own copy; first slide 840-931 ms after store. RSS was summed over CDP SystemInfo process ids from /proc VmRSS: 643 MB app only -> 834 MB after store -> 1101 MB (blocked) / 1228 MB (allowed) after first render -> 2047 MB / 2875 MB after 16 deep-link reloads including Monaco. The figures include the app's duplicate copy of all files.
+   SOURCES: prototypes/C1a/out/q1c-block.json | prototypes/C1a/out/q1c-allow.json
+
+[F11] (medium; verified-empirically) Reveal decks that need sibling files at run time still play under both mounts after the changes: external Markdown, ES modules, and the third-party menu and chalkboard plugins.
+   EVIDENCE: extmd6: ready, 6.0.2, 4 slides, hljs, ArrowRight -> h=1. esm6: ready, 9 slides, ArrowRight steps through 2 fragments then h=1. plugins6/menu.html: menu button present. plugins6/chalkboard.html: chalkboard UI present. Prefix and root mounts identical; 0 errors, 0 bad responses.
+   SOURCES: prototypes/C1a/out/q4q5q6.json
+
+[F12] (medium; verified-empirically) Two different decks can play at the same time in two iframes, both mounted at '/' of the player origin; the worker tells their requests apart by client id.
+   EVIDENCE: Frame A: ordinary history build at /?__deck=DA -> /1?__deck=DA. Frame B: hash-abs build at /?__deck=DB#/1. A navigated to /3 while B stayed on #/1. Full interaction on B passed (#/3). No misses in the worker log. The shared-state caveat is in the coupling finding.
+   SOURCES: prototypes/C1a/out/q2q3-cd.json
+
+[F13] (medium; inferred) Requirements for hosting on GitHub Pages: sw.js must sit at the player root, because Pages cannot send Service-Worker-Allowed. A same-site second origin needs its own custom subdomain, because project sites share <user>.github.io.
+   EVIDENCE: The prototype registers /sw.js with scope '/' from /__host.html; a script under a sub-path would need the Service-Worker-Allowed header for scope '/'. GitHub Pages project sites are served from one origin per user or organisation, and partitioning requires same-site (see the partitioning finding). Not deployed or tested on Pages.
+   SOURCES: prototypes/C1a/player/__host.html
+
+[F14] (medium; verified-empirically) Deck features that work on the player origin but not in the opaque sandbox (Tier 1). Slidev: default builds unmodified, any router/base, dynamic imports, localStorage, deep links and in-deck routes, frame reload, presenter sync, Monaco with Web Workers, remote embeds when allowed. Reveal: plugins loading sibling files, ES modules, external Markdown, speaker view.
+   EVIDENCE: Combined from this task (Q1-Q5) and B1 section 8 for the Reveal speaker view and ?print-pdf. Network blocking here relies on the worker's per-response CSP; the prerender and WebRTC leaks from A1 were not re-tested on this tier.
+   SOURCES: notes/C1a-player-origin-fidelity.md
+
+RECOMMENDATIONS (6):
+
+[R1] (effort M; impact high) Mount each deck at its own build base on the player root, chosen per client
+   WHY: Only strategy that played 9/9 Slidev builds unchanged, including the default build, plus all Reveal decks. Resolution chain: ?__deck= token on the first navigation -> persisted clientId/resultingClientId map -> Referer token -> the navigation's initiator clientId -> client URL. Navigations for missing paths fall back to index.html.
+   RISKS: A deck that strips query strings and also sets no-referrer could lose its deck for popups. Several decks share one origin's storage.
+
+[R2] (effort M; impact high) Store files in Cache Storage, with the app as source of truth answering on-demand requests over a MessagePort
+   WHY: Memory-only files are lost when the worker restarts ('Unknown deck'). Cache Storage and on-demand both survived. Persist deck metadata and the client map; never rely on worker globals. Protocol: put/patch/forget/stats app->worker via a host frame pinned to the app origin; need worker->app.
+   RISKS: Storage eviction and hard reload (which bypasses the worker) are untested. Cache writes for 37 MB take about 0.3 s.
+
+[R3] (effort S; impact high) Host the player on a same-site origin (e.g. player.qft.org) and test with partitioning enabled
+   WHY: With Chrome's default storage partitioning, a cross-site player breaks the Slidev presenter popup and the Reveal speaker view. Playwright disables partitioning by default, so cross-site tests need launchPartitioned() from lib.mjs.
+   RISKS: GitHub Pages needs a custom subdomain for a second origin. A same-site sibling shares cookies scoped to qft.org.
+
+[R4] (effort S; impact medium) Play one deck at a time per player origin, or clear slidev-* state when switching decks
+   WHY: A different deck with the same title drove another deck's audience view through Slidev's per-origin BroadcastChannel and localStorage. Isolating decks that are open at the same time would need separate origins.
+   RISKS: Clearing localStorage resets Slidev's drawings and presenter preferences.
+
+[R5] (effort S; impact medium) Edit loop: patch the file in the store, then navigate the frame with a cache-busting query plus the current route
+   WHY: 82-99 ms median round trip for Reveal, 176 ms for a Slidev reload. Fast enough for edit-and-preview without hot reload.
+   RISKS: Slidev source edits still need an in-browser compiler (B2). Reveal decks without hash:true lose the slide position unless the app tracks it via the postMessage API.
+
+[R6] (effort S; impact low) Move unzip off the main thread and avoid duplicate copies for large decks
+   WHY: For the 37 MB build, sync fflate takes 356-408 ms on the main thread and the app keeps a second copy of every file. Browser memory reached about 1.1-1.2 GB after the first slide.
+   RISKS: Worker-based unzip needs a same-origin worker script on the app's CSP (B2 F5 shows this is allowed).
+
+OPEN QUESTIONS:
+ - Firefox and Safari behaviour was not tested: service worker control of sandboxed allow-same-origin iframes, how each partitions popups opened from a same-site iframe, and BroadcastChannel across frame and popup.
+ - Idle termination by the browser (about 30 s in Chromium) and storage eviction were not tested; the restart was simulated with CDP stopAllWorkers.
+ - Shift-reload of a deck frame bypasses the worker and hits the player's static server (404). Could a 404.html bootstrap on Pages recover?
+ - Security on the player origin was not evaluated: cross-deck storage reads, exfiltration through popups or self-navigation, and the A1 prerender/WebRTC leaks under the worker's CSP.
+ - Why the template's Mermaid slide renders no SVG (also under plain HTTP in B2).
+ - Whether a deck that sets Referrer-Policy no-referrer and drops query strings still resolves for popups; the initiator-clientId fallback was confirmed only for reloads.
+
+ARTIFACTS: notes/C1a-player-origin-fidelity.md | prototypes/C1a/player/sw.js | prototypes/C1a/player/__host.html | prototypes/C1a/www/app.html | prototypes/C1a/scripts/lib.mjs | prototypes/C1a/scripts/q1-matrix.mjs | prototypes/C1a/scripts/q2q3-routes.mjs | prototypes/C1a/scripts/q1c-starter.mjs | prototypes/C1a/scripts/q4q5q6.mjs | prototypes/C1a/scripts/q5-reveal.mjs | prototypes/C1a/scripts/cross-site.mjs | prototypes/C1a/scripts/cross-site-reveal.mjs | prototypes/C1a/out

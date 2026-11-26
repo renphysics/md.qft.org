@@ -1,0 +1,158 @@
+
+####################################################################################################
+##### B7-ai-authoring
+
+SUMMARY:
+The hand-off fails today because the site accepts none of the shapes AI tools naturally produce: 0 of 12 tested shapes play, 3 are silently imported as the wrong thing, and a `.html` file cannot be opened at all.
+
+The natural Reveal.js answer is one HTML file loading reveal.js 4.x/5.x from jsDelivr or cdnjs (88.8% of jsDelivr reveal.js requests are still pre-6). A small browser-side adapter fixes this in the existing sandbox: a CDN-to-bundled map with version coercion to 6.0.2, a RevealMath shim and a `history.replaceState` guard. With it, 3 of 3 real lecture decks and 5 of 5 Reveal ZIP shapes played with zero network requests. `hash: true` is otherwise fatal.
+
+Slidev always needs a build. Coding agents, Claude chat (npm allow-listed) and ChatGPT Work can run one; ChatGPT Chat, Gemini and consumer Copilot cannot. A stock project needs only two headmatter lines plus `--base ./` to build portably (install 43 s, build 6 s here). Whether the player can run that multi-file build is untested.
+
+Agent Skills are the cross-vendor channel (46 clients, Claude Free included); a static site can serve one via `/.well-known/agent-skills/index.json`.
+
+Drafted and tested: a 191-word Reveal prompt, a 197-word Slidev prompt, a SKILL.md outline, and a paste-back report format (`qft-deck-check/1`) with schema and working prototype.
+
+Not verified: any third-party model end-to-end; Claude's sandbox Node version; ChatGPT Chat's current npm access. Rankings are judgments built on these measurements.
+
+FINDINGS (21):
+
+[F1] (critical; verified-empirically) md.qft.org accepts none of the shapes AI tools naturally deliver: 0 of 12 tested shapes play, and 3 of 12 are silently imported as the wrong thing.
+   EVIDENCE: Ran the repo's own inspectPresentationArchive + importWorkspaceBundle (esbuild bundles, unmodified) on 12 ZIPs. Single HTML: 'A ZIP bundle must contain one Markdown document, or a QFT document manifest.' Reveal project: 'This is a website build ZIP. Follow tools/slidev/README.md and use the QFT Slidev packaging tool...'. index.html + README.md: imported as a Markdown document titled 'README'. Slidev slides.md alone: imported as a QFT Markdown document. Built dist + source: rejected as 'Slidev source'. A bare .html file hits markdown-workspace.ts:1387 and is absent from the file picker (MarkdownWorkspace.astro:87).
+   SOURCES: prototypes/B7/scripts/baseline-import.mjs | prototypes/B7/baseline-import-results.json | src/lib/presentation-package.ts:291-329 | src/scripts/markdown-workspace.ts:1372-1393
+
+[F2] (critical; verified-primary-source) The natural answer to 'make me a reveal.js presentation' is ONE HTML file that loads reveal.js 4.x or 5.x from jsDelivr or cdnjs; almost nothing targets reveal.js 6.
+   EVIDENCE: Two Claude Opus 4.6 lecture decks (73 KB, 165 KB): jsDelivr reveal.js@4.6.1 + KaTeX@0.16.9 + Google Fonts, one inline script, canvases and sliders. A University of Chicago course deck: cdnjs 4.5.0 with markdown/highlight/math plugins. Six community skills hard-code jsDelivr @4, @5, @5.1.0 or cdnjs 4.6.1 (the largest has 19.3K installs). jsDelivr month to 2026-11-23: 6,663,177 hits; v5 59.8%, v4 27.3%, v6 11.2%, v3 1.5%; 5.1.0 alone 39.5%.
+   SOURCES: https://data.jsdelivr.com/v1/stats/packages/npm/reveal.js/versions?period=month | https://alexanderhoyle.com/posts/ai-slide-gen.html | https://alexanderhoyle.com/bayesian-inference/part1-beta-binomial.html | https://raw.githubusercontent.com/uchicago-nlp-course/winter2026-lectures/main/lecture-07/index.html | https://raw.githubusercontent.com/claude-office-skills/skills/main/html-slides/SKILL.md | https://raw.githubusercontent.com/ryanbbrown/revealjs-skill/main/skills/revealjs/scripts/create-presentation.js
+
+[F3] (critical; verified-empirically) A small browser-side adapter makes natural Reveal decks play in the site's existing sandbox unchanged: 3 of 3 real lecture decks and 5 of 5 synthetic Reveal ZIP shapes reach 'ready' with zero network requests.
+   EVIDENCE: Prototype inline-deck.mjs (about 150 lines of string processing): maps reveal.js/KaTeX URLs on jsDelivr, unpkg and cdnjs (any version, v3-v6 layouts) to the bundled reveal.js 6.0.2 / KaTeX 0.19.1, inlines relative files, replaces the math plugin with a 12-line shim, guards history.replaceState. Played through QFT.createPresentationPlayer + the shipped presentation-sandbox.html with all network aborted. Claude deck 1: Reveal 6.0.2, 28 slides, 126 KaTeX nodes, ArrowRight navigates, slider redraws canvas. Claude deck 2: 44 slides, 301 KaTeX. UChicago deck written for 4.5.0: 74 Markdown slides, 171 KaTeX, 5 highlighted blocks, 4/4 images. Output 1.4-2.3 MB against a 24 MB limit. Sample is small (3 real decks).
+   SOURCES: prototypes/B7/scripts/inline-deck.mjs | prototypes/B7/scripts/play-test.mjs | prototypes/B7/play-test-results.json | prototypes/B7/shots/claude-lecture-1.png
+
+[F4] (critical; verified-empirically) Reveal's `hash: true` is fatal in the current player, and every real deck sampled uses it.
+   EVIDENCE: Without the guard the fully inlined Claude deck fails with: "Failed to execute 'replaceState' on 'History': A history state object with URL '' cannot be created in a document with origin 'null' and URL 'blob:null/...'". The player removes the frame on any uncaught error (presentation-runtime.ts:127-134, 237-245). A 5-line try/catch wrapper around replaceState/pushState fixes it. All four sampled decks (2 Claude, UChicago, skill example) set hash: true. Agent B1's interim notes report the same error independently.
+   SOURCES: prototypes/B7/play-test-results.json | src/lib/presentation-runtime.ts:127-134
+
+[F5] (high; verified-primary-source) Only some AI tools can build Slidev themselves; Gemini and consumer Copilot chat can only emit text or a single HTML document, and Gemini has no file route for HTML at all.
+   EVIDENCE: Can build by design: coding agents; Claude chat (code execution on all plans, egress allow-list includes registry.npmjs.org and github.com but not jsDelivr/unpkg/cdnjs or md.qft.org; 30 MB file limit); ChatGPT Work (internet-enabled code execution, paid plans). Cannot: Gemini app (Canvas exports = share link, Docs, Slides/PDF, Copy; file generation lists Docs/Sheets/Slides/pdf/docx/xlsx/csv/LaTeX/TXT/RTF/MD; API code execution is Python-only, 30 s, 'You can't install your own libraries'); ChatGPT Chat container ('still can't make outbound network requests'; npm install reported no longer working in Aug 2026, a secondary source). Verified by running only for Claude Code cloud (this session).
+   SOURCES: https://support.claude.com/en/articles/12111783-create-and-edit-files-with-claude.md | https://learn.chatgpt.com/docs/enterprise/chatgpt-work-overview.md | https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex | https://simonwillison.net/2026/Aug/30/understanding-chatgpt-work/ | https://simonwillison.net/2026/Jan/26/chatgpt-containers/ | https://support.google.com/gemini/answer/16047321 | https://blog.google/innovation-and-ai/products/gemini-app/generate-files-in-gemini/ | https://ai.google.dev/gemini-api/docs/code-execution | https://code.claude.com/docs/en/cloud-environments.md
+
+[F6] (high; verified-empirically) A stock Slidev project needs only two headmatter lines and one build flag to produce a location-independent, offline build; the default build does not work from a sub-folder.
+   EVIDENCE: Served from /decks/talk/ with all other network aborted. Default build: blank, 404 for /assets/*. `--base ./` alone: Slidev's own '404 Page /decks/talk/index.html not found' (history router). `routerMode: hash` or `memory` + `fonts: {provider: none}` + `slidev build --base ./`: renders, navigates, KaTeX, public/ image, relative image and a Vue slider component all work, 0 external requests. Cold `npm install` 42.9 s (721 packages, 560-592 MB), build 5.7 s, output 106 files / 2.1 MB; project ZIP with dist 1,291 kB. One Mermaid block raises output to 195 files / 7.5 MB. Missing theme with closed stdin exits 1: 'The theme "@slidev/theme-default" was not found and cannot prompt for installation'. Whether the site can play a multi-file build was not tested.
+   SOURCES: prototypes/B7/scripts/slidev-dist-test.mjs | prototypes/B7/scripts/slidev-prompt-test.mjs | prototypes/B7/scripts/slidev-memory-test.mjs | prototypes/B7/slidev-timing/timing.txt
+
+[F7] (high; verified-empirically) The reveal.js 6 file layout breaks the plugin URLs models have memorised, and the 6.0.2 math plugin fetches KaTeX from a CDN at run time even in a vendored deck.
+   EVIDENCE: 6.0.2 moved plugins from plugin/<name>/<name>.js to dist/plugin/<name>.js. cdn.jsdelivr.net/npm/reveal.js@6.0.2/plugin/notes/notes.js returns 404 (yet jsDelivr logs 4,620 requests a month for it). Unversioned jsDelivr URLs silently mix versions: core answers x-jsd-version 6.0.2, plugin/markdown/markdown.js answers 5.2.1; on unpkg the same plugin URL is 404. dist/plugin/math.js injects https://cdn.jsdelivr.net/npm/katex@latest/dist/* (and MathJax 2/3/4). Themes black/white embed fonts (575 KB each); seven other themes @import Google Fonts.
+   SOURCES: https://data.jsdelivr.com/v1/packages/npm/reveal.js@6.0.2?structure=flat | https://data.jsdelivr.com/v1/stats/packages/npm/reveal.js@6.0.2/files?period=month | node_modules/reveal.js/dist/plugin/math.js
+
+[F8] (high; verified-empirically) The site's AI dialog has no Reveal.js option, and its two prompts are long and assume capabilities many tools lack.
+   EVIDENCE: TeacherWorkflow.astro:11 offers only 'Markdown' and 'Slidev — build interactive Vue slides with Codex'. Measured with default inputs: QFT Markdown prompt 849 words / 5,693 chars / 29 imperative rules / 54 numbers; Slidev prompt 454 words; format guide 1,753 words; Slidev README 973 words. The QFT prompt forbids slide frameworks (ai-lesson.ts:58,77), prefers separate demo files (forcing a ZIP Gemini cannot make) and bans SVG. The Slidev prompt needs a terminal four times (attach a 1.67 MB starter, npm ci, bespoke build with about 20 headmatter switches, node pack.mjs) and a VERIFY step no chat sandbox can run.
+   SOURCES: src/components/TeacherWorkflow.astro:11 | src/lib/ai-lesson.ts:58-110 | src/lib/slidev-prompt.ts:22-37 | prototypes/B7/scripts/prompt-metrics.mjs
+
+[F9] (high; verified-primary-source) Agent Skills are now the cross-vendor instruction channel, usable by chat users too, and a static site can distribute one without GitHub.
+   EVIDENCE: agentskills.io lists 46 clients including Claude, Claude Code, ChatGPT & Codex, Cursor, GitHub Copilot, VS Code and Gemini CLI. Claude chat accepts a skill ZIP upload on every plan including Free (Customize > Skills). ChatGPT skills 'build on the open agent skills standard' and travel in plugins. `.agents/skills/` is read by Codex, Gemini CLI and Cursor. The `skills` CLI 1.9.0 source fetches <origin>/.well-known/agent-skills/index.json (schema https://schemas.agentskills.io/discovery/0.2.0/schema.json; entries name, description, type skill-md|archive, url, sha256 digest), so `npx skills add https://md.qft.org` can work on GitHub Pages. Slidev's official skill shows 14.2K installs.
+   SOURCES: https://agentskills.io/specification.md | https://agentskills.io/clients | https://support.claude.com/en/articles/12512180-use-skills-in-claude.md | https://learn.chatgpt.com/docs/build-skills.md | https://cursor.com/docs/skills.md | https://geminicli.com/docs/cli/skills.md | prototypes/B7/dl/skills-cli/package/docs/commands.md
+
+[F10] (high; verified-primary-source) An agent following Slidev's official skill will deliver exactly the shapes md.qft.org rejects.
+   EVIDENCE: The skill (199 lines, 1,136 words, about 50 reference files) teaches `pnpm create slidev`, `pnpm run build` ('Build static SPA'), `--base /talks/my-talk/`, and `routerMode: history # 'history' | 'hash'`. It contains nothing on a relative base, ZIP delivery, offline packaging or `routerMode: memory`. The resulting source project or default dist corresponds to corpus shapes F, H and J, all rejected in the baseline test.
+   SOURCES: https://raw.githubusercontent.com/slidevjs/slidev/main/skills/slidev/SKILL.md | https://raw.githubusercontent.com/slidevjs/slidev/main/skills/slidev/references/core-hosting.md | https://raw.githubusercontent.com/slidevjs/slidev/main/skills/slidev/references/core-headmatter.md | https://sli.dev/guide/work-with-ai.md
+
+[F11] (high; verified-primary-source) @slidev/cli 53.1.0 requires Node >= 22.22.0, newer than both the official Slidev skill and the repo's starter state.
+   EVIDENCE: `npm view @slidev/cli@53.1.0 engines` returns {"node":">=22.22.0"}. The Slidev skill says 'Node.js >= 22.12.0'; tools/slidev/package.json engines says '>=22.12.0'; tools/slidev/README.md says 'Use Node.js 22.12 or newer'. The Node version of Claude's and ChatGPT's sandboxes is unknown, so this is a possible silent blocker for chat-side builds.
+   SOURCES: https://registry.npmjs.org/@slidev/cli | tools/slidev/package.json | https://raw.githubusercontent.com/slidevjs/slidev/main/skills/slidev/SKILL.md
+
+[F12] (high; verified-primary-source) Several current error paths mislead: a Reveal ZIP is told to use the Slidev packer, a built Slidev project is called unbuilt, inline handlers are stripped silently, and one uncaught error blanks the whole deck.
+   EVIDENCE: presentation-package.ts:328 answers any index.html + .js ZIP with the 'QFT Slidev packaging tool' message and a repository path instead of a URL. sourceOnly() (lines 291-301) runs before the build check, so dist + source is rejected (confirmed by corpus J). presentation-runtime.ts:180 removes every on* attribute without notice. Lines 127-134 and 237-245 remove the frame on the first error; confirmed with the skill example deck: 'Uncaught ReferenceError: RevealChart is not defined'.
+   SOURCES: src/lib/presentation-package.ts:291-329 | src/lib/presentation-runtime.ts:164-190 | src/lib/presentation-runtime.ts:237-245
+
+[F13] (medium; verified-empirically) Two chat prompts of at most 200 words are feasible and their technical content was executed here.
+   EVIDENCE: Reveal prompt: 191 words; a deck written to it (3,460 bytes, four pinned reveal.js 6.0.2 URLs, RevealMath.KaTeX, canvas demo) plays in the real player after the adapter: 4 slides, 4 KaTeX nodes, navigation and slider OK, 0 requests. Slidev prompt: 197 words; its exact command sequence was run from an empty directory and the result played offline from a sub-folder. No third-party model was driven with the prompts.
+   SOURCES: prototypes/B7/artefacts/prompt-reveal-chat.txt | prototypes/B7/artefacts/prompt-slidev-chat.txt | prototypes/B7/contract/reveal-profile-reference.html
+
+[F14] (medium; verified-empirically) A compact paste-back report (`qft-deck-check/1`) is implementable and stays small.
+   EVIDENCE: Prototype check-deck.mjs classified 8 corpus items correctly and emitted reports of 483-2,078 characters, all valid against the draft JSON Schema (ajv 2020). Fields: verdict, deck {id, rev, kind, engine}, mustFix/shouldFix items {code, where, found, fix}, handledForYou, optional runtime, rules URL, reply. Slidev router mode is readable statically from the bundle (routerMode:`history`). The site's current Check lesson report covers only QFT Markdown (sample: 1,418 chars, demo-breaking issues only as warnings, no identity or reply shape).
+   SOURCES: prototypes/B7/scripts/check-deck.mjs | prototypes/B7/check-report-examples.txt | prototypes/B7/artefacts/report.schema.outline.json | src/lib/lesson-check.ts:127-136
+
+[F15] (medium; verified-empirically) Third-party libraries are the main residual failure after the adapter; math needs a decision because MathJax is far more common than KaTeX on the web.
+   EVIDENCE: The skill-example deck (reveal 5.1.0 + chart.js + reveal.js-plugins chart + Font Awesome) fails with 'RevealChart is not defined'. jsDelivr monthly hits, web-wide and not deck-specific: mathjax 3.84 G, three 1.61 G, katex 1.00 G, chart.js 855 M, mermaid 307 M, d3 64 M. In the prototype a shim rendered RevealMath.KaTeX decks with bundled KaTeX; MathJax decks were not tested.
+   SOURCES: prototypes/B7/play-test-results.json | https://data.jsdelivr.com/v1/stats/packages/npm/mathjax?period=month
+
+[F16] (medium; verified-primary-source) Claude and ChatGPT changed their packaging channels in 2026: Claude's default 'presentation' is now its own Slides template, and ChatGPT custom GPTs are giving way to plugins that carry skills.
+   EVIDENCE: Anthropic: 'Legacy artifacts are artifacts made in a chat before September 16, 2026... you can't make new ones'; decks export to PowerPoint, PDF or Google Slides. So reveal.js appears only when requested by name. OpenAI: 'Custom GPTs in ChatGPT Enterprise are being retired'; plugins bundle skills and apps and work in Chat and Work. Claude Projects (all plans) and Gemini Gems hold instructions plus files.
+   SOURCES: https://support.claude.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them.md | https://learn.chatgpt.com/docs/build-plugins.md | https://support.claude.com/en/articles/9517075-what-are-projects.md | https://support.google.com/gemini/answer/15235603
+
+[F17] (medium; verified-primary-source) For a folder-based revision loop, reading a dropped folder works in every major browser, but re-reading and writing back is Chromium-only.
+   EVIDENCE: MDN browser-compat-data (main, 2026-11-24): DataTransferItem.webkitGetAsEntry - Chrome 13, Edge 14, Firefox 50, Safari 11.1. Window.showDirectoryPicker - Chrome 86, Chrome Android 132, Firefox false, Safari false.
+   SOURCES: https://raw.githubusercontent.com/mdn/browser-compat-data/main/api/DataTransferItem.json | https://raw.githubusercontent.com/mdn/browser-compat-data/main/api/Window.json
+
+[F18] (medium; secondary-source) A lecturer who actually works this way reports the same pain points: the AI's viewer does not show reveal.js, content gets dropped, and slides are addressed by error-prone counting.
+   EVIDENCE: Blog by a University of Zurich postdoc (2026): notes in LaTeX -> Claude Opus 4.6 web chat -> reveal.js. 'the HTML viewer for Claude doesn't play well with reveal.js, so it's best to download the file and open it in your browser'; 'The LLM may skip or reorder your content'; 'I used slide numbers when asking for fixes... the model may get confused as it requires manual counting'.
+   SOURCES: https://alexanderhoyle.com/posts/ai-slide-gen.html
+
+[F19] (medium; inferred) For chat-only users the options rank: accept the natural single HTML including paste; then the paste-back check report; then the short prompt; then project ZIPs; an uploadable skill; a GitHub Action route for Slidev. For coding agents: published skill with checker first; then accept a standard Slidev build; then standard Reveal ZIPs; then folder drop.
+   EVIDENCE: Judgment built on the measurements above: Gemini and Copilot can emit nothing but pasteable HTML; the adapter moved Reveal shapes from 0/6 to 6/6; only the site can observe run-time errors; agents load skills automatically and can run a checker before delivering. No end-to-end trial with ChatGPT, Gemini or Copilot was possible from this environment.
+   SOURCES: notes/B7-ai-authoring.md
+
+[F20] (low; verified-primary-source) MCP and WebMCP are not worth building now; reveal.js has an llms.txt but no skill; md.qft.org publishes no llms.txt, well-known index or skill.
+   EVIDENCE: WebMCP is 'a proposed web standard' in a Chrome origin trial (M149-M156). Slidev's MCP server is a local authoring aid (localhost/__mcp or stdio). revealjs.com/llms.txt exists (7,166 bytes); AGENTS.md, CLAUDE.md and skill paths in hakimel/reveal.js return 404. The site's dist/ has lesson-format-v2.md and two schemas only; docs/SEO.md:35 declines llms.txt on search grounds.
+   SOURCES: https://developer.chrome.com/docs/ai/webmcp | https://sli.dev/features/mcp.md | https://revealjs.com/llms.txt | docs/SEO.md:35
+
+[F21] (medium; uncertain) Whether Claude's chat sandbox or ChatGPT Chat's container can actually complete a Slidev 53 build this month is unknown.
+   EVIDENCE: Claude: registry access is documented, but Node version and disk (about 1 GB needed) are not, and resources are 'intentionally limited'. ChatGPT Chat: npm install worked through a proxy in January 2026 and was reported not working in August 2026; OpenAI publishes no changelog for the container.
+   SOURCES: https://support.claude.com/en/articles/12111783-create-and-edit-files-with-claude.md | https://simonwillison.net/2026/Aug/30/understanding-chatgpt-work/
+
+RECOMMENDATIONS (10):
+
+[R1] (effort M; impact high) Accept the natural Reveal shape: open, drop and paste a single HTML (and index.html ZIPs) through a CDN-to-bundle adapter
+   WHY: This is what every chat tool emits and the only thing Gemini and Copilot can emit. The prototype took Reveal shapes from 0 of 6 to 6 of 6 and played 3 of 3 real decks in the unchanged sandbox with zero network. Needs: URL map for reveal.js/KaTeX on jsDelivr, unpkg, cdnjs (v3-v6 layouts) coerced to the bundled 6.0.2; RevealMath shim; inlining of relative files; entry detection that prefers index.html over README.md and strips one enclosing folder; `.html` in the file picker; a paste box.
+   RISKS: Version coercion was proven on only three decks; unusual plugins or 3.x APIs may break. The adapter must only ever inject site-bundled files, never fetch. Prototype misses cdnjs v6 `plugin/<name>/plugin.js` paths.
+
+[R2] (effort S; impact high) Guard the History API in the player bootstrap and stop killing the deck on the first non-fatal error
+   WHY: `hash: true` is in every sampled deck and throws at start-up in an opaque blob document. A 5-line try/catch around replaceState/pushState fixed it. One missing optional library currently blanks the stage; report it instead where possible.
+   RISKS: Relaxing the error policy could leave a half-working deck on screen; keep CSP violations visible in the report.
+
+[R3] (effort M; impact high) Emit a `qft-deck-check/1` report for every import, including rejected ones, with a Copy-for-AI button
+   WHY: Only the site can see run-time errors and CSP violations. The prototype's reports are 483-2,078 characters, name file and line, give one imperative fix per item, list what the site already handled, and state the exact reply shape. Reuse the same codes in the CLI checker.
+   RISKS: Static heuristics give false positives (a currency $ triggered a math warning once). Keep evidence snippets short so no lesson text leaks into chats unintentionally.
+
+[R4] (effort S; impact high) Replace the long prompts with short profiles and add a Reveal.js choice to the AI dialog
+   WHY: Current prompts are 849 and 454 words and there is no Reveal prompt at all. The drafted 191-word Reveal and 197-word Slidev prompts fit any chat box; their technical lines were executed here. Publish the detail at stable URLs (/ai/reveal.md, /ai/slidev.md, /ai/check-codes.md) instead of in the prompt.
+   RISKS: The Reveal prompt is only safe to publish after the adapter and history guard ship. Prompts were not trialled on ChatGPT, Gemini or Copilot. Long decks may hit chat output limits.
+
+[R5] (effort M; impact high) Publish an agent skill `qft-deck` with a zero-dependency checker and packer, discoverable from the repo and from the site
+   WHY: Agents load skills automatically and can self-correct before delivering; this replaces the un-runnable VERIFY step. Put it in `skills/qft-deck/` (for `npx skills add renphysics/md.qft.org`), serve `/.well-known/agent-skills/index.json` plus a ZIP (for `npx skills add https://md.qft.org` and for upload to Claude), add `/llms.txt` and a short AGENTS.md block.
+   RISKS: Description must stay within claude.ai's 200-character limit (draft is 191). The checker must be kept in step with the web checker; share one rule source.
+
+[R6] (effort S; impact medium) Fix detection order and error wording now
+   WHY: Cheap and independent of architecture: check for a build before calling a ZIP 'source'; do not tell Reveal users to use the Slidev packer; never import README.md as the document when an index.html is present; replace the repository path with a URL; mention `.html` in the open-file message.
+   RISKS: None significant; add tests for the 12 corpus shapes.
+
+[R7] (effort L; impact high) Define the Slidev contract as a standard build: `routerMode: memory` (or hash), `fonts.provider: none`, `slidev build --base ./`, source alongside dist
+   WHY: Verified to give an offline, location-independent build without the bespoke starter, Vite profile or packer. The checker can read the router mode from the bundle and name the one-line fix. Update all Node statements to 22.22+.
+   RISKS: The current player needs one self-contained HTML; unless it learns to run a multi-file build, the packing step merely moves into the skill's script. That feasibility was not tested by this task.
+
+[R8] (effort L; impact medium) Make revisions round-trip: deck id and revision inside the file, stale-copy warning, slide-level copy and paste with stable ids, folder drop
+   WHY: Keeps site and AI in sync after browser edits: the site stores the authored source and derives the playable form; exports stamp a revision; an incoming file based on an older revision triggers a warning and a diff. Stable slide ids replace slide counting, a failure a real lecturer reported. Folder drop works in all browsers; write-back only in Chromium.
+   RISKS: Models may drop the meta line; treat that as a new deck rather than overwriting. A shared file shares its id.
+
+[R9] (effort M; impact medium) Offer a template repository whose GitHub Action builds Slidev and attaches the ZIP
+   WHY: The only Slidev route for people without Node whose AI cannot build (Gemini, Copilot, ChatGPT Chat), and a natural fit for cloud coding agents, which all work on GitHub repositories.
+   RISKS: Requires a GitHub account, a real hurdle for non-developers. Not prototyped here.
+
+[R10] (effort S; impact low) Do not build an MCP or WebMCP surface yet
+   WHY: Shell-capable agents gain nothing over a CLI plus skill; chat connectors need a hosted server the static site does not have; WebMCP is still an origin trial.
+   RISKS: Revisit if WebMCP ships; it could let in-browser agents push a deck and read the report without copy-paste.
+
+OPEN QUESTIONS:
+ - Can the md.qft.org sandbox play a standard multi-file Slidev build (ES-module graph), or must single-HTML packing stay? This decides whether the Slidev contract really drops the custom packer.
+ - What should the site do with unbuilt Slidev source from Gemini, Copilot or ChatGPT Chat users: compile in the browser, preview a Markdown subset, or route to the GitHub Action?
+ - Does Claude's chat sandbox have Node >= 22.22 and about 1 GB of disk for a Slidev 53 install? Not verifiable from here.
+ - Is ChatGPT Chat's container able to npm install and return ZIPs this month? The two 2026 reports disagree and OpenAI publishes no changelog.
+ - How often do ChatGPT- and Gemini-written decks use inline on...= handlers, MathJax, Chart.js, Plotly or Three.js? My real sample is five decks, none from those models; this sets the size of the bundled allow-list and whether to auto-rewrite inline handlers.
+ - Does coercing reveal.js 4.x/5.x decks onto 6.0.2 hold beyond the three decks tested, especially for third-party plugins and 3.x-era APIs?
+ - Should MathJax be bundled, or mapped onto KaTeX by the shim with a warning about unsupported macros?
+ - Speaker notes survive as <aside class="notes"> but reveal's speaker window cannot open in the sandbox; should the site show notes itself?
+ - Will models reliably preserve a <meta name="qft-deck"> line across revisions? Untested.
+ - I assumed the repository is github.com/renphysics/md.qft.org (from the existing prompt text); confirm before publishing install commands.
+
+ARTIFACTS: notes/B7-ai-authoring.md | prototypes/B7/artefacts/prompt-reveal-chat.txt | prototypes/B7/artefacts/prompt-slidev-chat.txt | prototypes/B7/artefacts/SKILL.outline.md | prototypes/B7/artefacts/report.schema.outline.json | prototypes/B7/artefacts/well-known-index.example.json | prototypes/B7/artefacts/llms.example.txt | prototypes/B7/scripts/inline-deck.mjs | prototypes/B7/scripts/check-deck.mjs | prototypes/B7/scripts/play-test.mjs | prototypes/B7/scripts/play-zip-test.mjs | prototypes/B7/scripts/baseline-import.mjs | prototypes/B7/scripts/slidev-dist-test.mjs | prototypes/B7/scripts/slidev-prompt-test.mjs | prototypes/B7/scripts/slidev-memory-test.mjs | prototypes/B7/scripts/prompt-metrics.mjs | prototypes/B7/baseline-import-results.json | prototypes/B7/play-test-results.json | prototypes/B7/check-report-examples.txt | prototypes/B7/contract/reveal-profile-reference.html | prototypes/B7/corpus | prototypes/B7/real-decks | prototypes/B7/shots

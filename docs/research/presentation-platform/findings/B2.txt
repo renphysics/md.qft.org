@@ -1,0 +1,150 @@
+
+####################################################################################################
+##### B2-slidev
+
+SUMMARY:
+Slidev 53.1.0 is a Vite application: Markdown is compiled to Vue in Node by 22 plugins, and there is no official Node-less or in-browser mode (sli.dev/new is StackBlitz).
+
+An ordinary `slidev build` cannot be opened from a ZIP as-is: it fails on file://, in a blob: document, in an opaque-origin sandbox and, with the default base, on a sub-path. Each failure has a mechanical cause.
+
+Two routes were prototyped and verified in Chromium 158 against a replica of the md.qft.org player:
+
+- **Play built decks.** Six textual patches plus bundling turn an ordinary build into a single HTML the current sandbox plays. It worked for 7 router/base variants, and entirely in the browser with esbuild-wasm in a same-origin Worker under the site's present CSP (0.7–1.7 s). Decks using Monaco are not covered.
+- **Edit source and re-render without Node.** A prebuilt generic Slidev client plus a 708 KB (gzip) in-browser compiler that bundles upstream parser and markdown plugins. Output was DOM- and pixel-identical to the real build for a 5-slide deck, 5/5 slides on a richer deck, and 7/16 on the official kitchen-sink template. Compile takes 0.07–1.4 s with no eval or WebAssembly.
+
+Out of reach without Node or network: npm themes, addons and dependencies, vite/setup/uno config files, Monaco, TwoSlash, remote embeds; icons need bundled data.
+
+Today's player kills a deck on any CSP violation or unhandled rejection, and Slidev's defaults trigger both (Wake Lock; the official template's remote cover image).
+
+Firefox and Safari were not tested.
+
+FINDINGS (21):
+
+[F1] (critical; verified-empirically) An ordinary `slidev build` output (53.1.0) cannot be opened from an uploaded ZIP as-is: it is blank on file://, in a blob: document, in an opaque-origin sandbox, and (default base `/`) under any sub-path.
+   EVIDENCE: Playwright/Chromium 158 matrix over 7 builds of a 5-slide deck (history/hash/memory x base `/`, `./`, `/sub/deck/`). Sub-path with default base: `404 /assets/index-DoWwi6HK.js`. file://: `Access to script at 'file:///.../assets/index-....js' from origin 'null' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: chrome, chrome-untrusted, data, http, https.` blob: document: no requests at all, console `<link rel=modulepreload> has no href value`. sandbox=allow-scripts over HTTP: CORS failure without ACAO; with ACAO `SecurityError: Failed to read the 'localStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.` Only hash or memory builds with `--base ./` work from an arbitrary HTTP sub-path.
+   SOURCES: proto/B2/tools/test-hosting.mjs | proto/B2/results/hosting-*.json | notes section 4
+
+[F2] (critical; verified-empirically) An ordinary default-profile build can be converted in the browser, without rebuilding, into a single HTML that plays in the current md.qft.org sandbox with interactions working.
+   EVIDENCE: Six patches: drop remote links; replace Vite's `__vite__mapDeps=(i,m=...)=>i.map(i=>d[i])` with `()=>[]`; inline all code-split CSS; swap the router call matched by `history:X(`BASE`),routes:` for an injected memory history; turn `new URL(`...`, import.meta.url)` and base-prefixed asset literals into data: URIs; delete `Navigator.prototype.wakeLock`; then bundle the module graph. All 7 variants reached player state `ready` with no errors, slide navigation, KaTeX, scoped CSS and a Vue component responding to clicks. Done first in Node (convert-dist.mjs, 111 lines), then entirely in the browser: esbuild-wasm 0.27.2 inside a same-origin module Worker on a page carrying the site's exact CSP; worker init 148 ms, conversion 1.70 s first deck then 0.72-0.77 s, output 1.45 MB, zero console errors, zero external requests.
+   SOURCES: proto/B2/packer/convert-dist.mjs | proto/B2/wasmtest/site/worker.js | proto/B2/tools/test-wasm-converter.mjs | proto/B2/results/wasm-converter.json | proto/B2/results/run-qft-converted.txt
+
+[F3] (critical; verified-empirically) Re-rendering a Slidev deck from edited source without Node is feasible for a defined subset, using a prebuilt generic Slidev client whose slide list is supplied at runtime plus an in-browser compiler; for simple decks the result is identical to the real build.
+   EVIDENCE: Generic client: a normal `slidev build` with a 58-line vite.config plugin overriding the virtual module `/@slidev/slides` (the client already consumes it as a shallowRef) and a setup file registering built-in components globally. Compiler: 282 lines of glue; reuses @slidev/parser/fs (node:fs aliased to a 23-line VFS), all upstream markdown-it plugins bundled unmodified from the v53.1.0 TypeScript sources, @vue/compiler-sfc, sucrase, UnoCSS generator. Ran on a page with the site's CSP (no eval, no wasm) and played in the player replica. 5-slide deck (KaTeX, v-clicks, Shiki click ranges, TS Vue component with scoped CSS): all 9 states DOM-identical and 0 differing pixels at 1280x720 versus the real build; compile 333 ms cold, 66-71 ms after editing slides.md or the .vue file, player restart about 0.38 s. Richer deck (public and relative images, image-right, two-cols slots, alerts, footnotes, slide-level script setup and style, local .ts import, UnoCSS utilities): 5/5 slides DOM-identical, 266 ms. Official create-slidev template with theme default: 7/16 slides identical, 4 more differ only by noise, compile 1.1-1.4 s with 0 diagnostics.
+   SOURCES: proto/B2/inbrowser/generic-client/vite.config.ts | proto/B2/inbrowser/compiler/src/index.js | proto/B2/tools/test-fidelity.mjs | proto/B2/results/fidelity-ordinary-ref/report.json | proto/B2/results/fidelity-rich/slides-report.json | proto/B2/results/fidelity-starter-default/slides-report.json
+
+[F4] (high; verified-empirically) The current md.qft.org player terminates a deck on any CSP violation or unhandled rejection, and Slidev's own defaults produce both.
+   EVIDENCE: `wakeLock: true` is the default; inside the sandbox the play page's request rejects with `Failed to execute 'request' on 'WakeLock': Access to Screen Wake Lock features is disallowed by permissions policy`, which presentation-runtime.ts treats as fatal (state `error`, frame removed). The official create-slidev template's first slide has `background: https://cover.sli.dev`; the in-browser compiled deck was killed at boot with `This presentation requested an unsupported resource (img-src)`. Both observed in the replica built from the real public/presentation-sandbox.html and src/lib/presentation-runtime.ts.
+   SOURCES: src/lib/presentation-runtime.ts:127-134 | proto/B2/results/run-qft-converted.txt | proto/B2/tools/test-inbrowser-sandbox.mjs
+
+[F5] (high; verified-empirically) A Worker loaded from a same-origin URL is not bound by the page's meta CSP: WebAssembly, `new Function` and `import(blob:)` work there while all three are blocked on the main thread and in blob: Workers.
+   EVIDENCE: Test page with the site's exact policy (`script-src 'self'`). Main thread: `CompileError: WebAssembly.compile(): ... 'unsafe-eval' is not an allowed source`, `EvalError`, blob module import refused. Worker from `probe-worker.js` (classic and module): wasm `allowed`, `new Function` -> 42, `import(blob)` -> 42. Worker from a blob: URL: all blocked. MDN states the same rule (workers take their policy from their own response; blob/data workers inherit). Chromium 158 only; Firefox/Safari from documentation.
+   SOURCES: proto/B2/csptest/ | proto/B2/tools/run-csptest.mjs | https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy#csp_in_workers
+
+[F6] (high; verified-empirically) In an opaque-origin frame only `routerMode: memory` works; hash and history builds make vue-router navigate the frame away. Memory mode exists only since Slidev 52.17.0 (2026-07-10).
+   EVIDENCE: With an in-memory storage shim injected, the memory build played fully in `sandbox=allow-scripts`. Hash and history builds threw `SecurityError: Failed to execute 'replaceState' on 'History': A history state object with URL '...' cannot be created in a document with origin 'null'`, after which vue-router fell back to `location.replace` and the frame left the document; in a blob: document history mode is fatal (`Failed to execute 'replace' on 'Location': '' is not a valid URL.`). `__SLIDEV_MEMORY_ROUTE__` is absent from the 52.16.0 tarball and present from 52.17.0; the `--router-mode` flag appears in 52.15.0.
+   SOURCES: proto/B2/results/hosting-shim_.json | proto/B2/results/run-qft-packed-ordinary.txt | npm tarballs @slidev/cli 52.11.3-53.1.0
+
+[F7] (high; verified-empirically) A deck made from the official template with all features is a different class of artifact: 314 files and 37.35 MB, Web Workers on every slide, two external scripts and a remote diagram server; the conversion route does not handle it.
+   EVIDENCE: create-slidev 53.1.0 template built unchanged: 230 JS files = 35.6 MB (monaco/bundled-types 9.99 MB, modules/shiki 9.76 MB, ts.worker 6.93 MB). Walking all 16 slides: `ts.worker` is created on every slide including slide 1; index.html carries `<script async src="https://platform.twitter.com/widgets.js">` and the bsky embed script; images from cover.sli.dev, sli.dev, github.com; PlantUML rendered by `https://www.plantuml.com/plantuml/svg/...`. Converter result: `The compiled application still contains imports. Dynamic import paths must be statically resolvable.` It also exceeds the player's 24 MB HTML limit and its `worker-src 'none'`.
+   SOURCES: proto/B2/starter-deck/dist | proto/B2/results/starter-walk.json | proto/B2/packer/convert-dist.mjs
+
+[F8] (high; verified-empirically) Gaps of the in-browser compile route, as observed on the official template: icons, the Toc title renderer, Tweet, Mermaid/PlantUML and Monaco; themes, addons, npm dependencies and Node-side config files are out of reach by construction.
+   EVIDENCE: Observed in the 16-slide comparison: `<carbon:arrow-right>` left unresolved (unplugin-icons has no runtime equivalent; @iconify-json/carbon is 1.1 MB, ph 4.3 MB minified), `<Toc>` showing the stub deck's title (virtual module not overridden in the prototype), and Tweet, Mermaid, PlantUml, Monaco excluded from the generic client. From source reading rather than a run: `vite.config.*`, `setup/{shiki,katex,unocss,transformers,preparser,vite-plugins}.ts` and `uno.config.ts` are loaded with jiti in Node; themes and addons are resolved from node_modules; TwoSlash needs the TypeScript language service (3.5 MB minified); Mermaid would add a 5.25 MB chunk.
+   SOURCES: proto/B2/results/fidelity-starter-default/slides-report.json | shared/slidev-starter/node_modules/@slidev/cli/dist/serve-CjzN30uY.mjs:358-370,711-741,3263-3289 | proto/B2/bundles/sizes.json
+
+[F9] (high; verified-empirically) A small default build is 106 files / 1.92 MB, references only Google Fonts and a jsDelivr favicon remotely, uses no eval, workers or fetch, and still ships presenter, overview and notes routes that sync per origin.
+   EVIDENCE: 5-slide deck: 31 JS (600 KB), 12 CSS (154 KB), 59 KaTeX fonts (1.07 MB), logo.png, index.html + identical 404.html, `_redirects`. Module graph: 122 static edges, 15 dynamic imports, no cycles. Only external request seen: `https://fonts.googleapis.com/css2?family=Nunito+Sans...&family=Fira+Code...`; favicon link points to cdn.jsdelivr.net. grep finds no `new Function`, `eval`, `new Worker`. Routes that render over HTTP: `/N`, `/presenter/N`, `/overview`, `/notes`, `/notes-edit`, `/entry`, `?print`; `/export` is not a route in a build. BroadcastChannel names are `"<title> - Slidev - shared"` and `"... - drawings"`, plus about 25 `slidev-*` localStorage keys.
+   SOURCES: proto/B2/cold-install/dist-history-abs | proto/B2/tools/test-routes.mjs | proto/B2/packer/graph.mjs
+
+[F10] (high; verified-empirically) Build cost: cold install 42.9 s, 111 MB of tarballs, 494 MB and 26,512 files on disk; a 5-slide deck builds in about 4 s using 774 MB RSS, the official template in 12.9 s using about 2.6 GB; Node >= 22.22.0 is required.
+   EVIDENCE: `npm install --cache <empty dir>` of @slidev/cli 53.1.0 + @slidev/theme-default: 42.9 s, 720 lockfile entries, 646 tarballs = 111.3 MB; warm cache 15-28 s. Three builds of the small deck: 4.46, 4.40, 3.92 s wall (Vite `built in 2.2-2.6s`, 487 modules), maxRSS 774 MB via process.resourceUsage. Template: 12.9 s wall, 2,571 modules, maxRSS 2,560 MB. `engines.node` of @slidev/cli is `>=22.22.0` while sli.dev/guide still says `>= 22.12.0`. No install scripts except fsevents.
+   SOURCES: proto/B2/cold-install/install.log | proto/B2/cold-install/build-run1.log | proto/B2/starter-deck/build.log | https://sli.dev/guide/
+
+[F11] (medium; verified-empirically) The md.qft.org upload check and the repository's own packer both reject an ordinary build at the first step.
+   EVIDENCE: presentation-package.ts:325-329 throws `This is a website build ZIP...` for index.html + JS without Markdown. Running tools/slidev/pack.mjs on a default build: `Slidev packaging failed: External asset cannot be packaged: https://fonts.googleapis.com/css2?...`. With only that link dropped the packer succeeds but the result is blank in the player: `TypeError: Failed to construct 'URL': Invalid URL` from Vite's preload helper (hash/memory) or the replaceState/Location error (history).
+   SOURCES: src/lib/presentation-package.ts:319-330 | proto/B2/packer/pack-relaxed.mjs | proto/B2/results/run-qft-packed-ordinary.txt
+
+[F12] (medium; verified-primary-source) Slidev's compile step lives in @slidev/cli as 22 Vite plugins; @slidev/client is shipped as TypeScript/Vue source and compiled on every build; KaTeX and static code highlighting happen at build time, and the Vue template compiler is not in the output.
+   EVIDENCE: `ViteSlidevPlugin` at serve.mjs:3358-3383; markdown plugin order at 2531-2550; layout wrapper 666-707; slides virtual module 1436-1469; build-time feature defines 1092-1114; index.html generation with the `slidev:version` meta and the Twitter/BlueSky script tags 772-895. @slidev/client: 205 files, 109 .vue, 15,678 lines, `exports` map points at .ts files. The built `vue` chunk is 86 KB with no compiler markers. Upstream CLI source at tag v53.1.0: 10,017 lines in 78 files, of which Vite plugins 1,696 and markdown syntax 1,045.
+   SOURCES: shared/slidev-starter/node_modules/@slidev/cli/dist/serve-CjzN30uY.mjs | https://raw.githubusercontent.com/slidevjs/slidev/v53.1.0/packages/slidev/node/syntax/index.ts | proto/B2/upstream-src/lines.txt
+
+[F13] (medium; verified-empirically) Browser-safe entry points: @slidev/parser/core and @slidev/types bundle cleanly; @slidev/parser/fs works once node:fs is aliased; @slidev/client, @slidev/cli and unplugin-vue-markdown do not bundle for the browser.
+   EVIDENCE: esbuild 0.27.2, platform browser, minified: parser/core 112.3 KB (36.0 gzip, 101 KB is yaml); parser/fs `Could not resolve "node:fs"`; @slidev/client `Could not resolve "#slidev/slides"` (36 errors for main.ts); @slidev/cli 370 errors; markdown-exit 109 KB; KaTeX 262 KB; Shiki core + JS engine 171 KB (full grammar set 9.6 MB); @vue/compiler-sfc 792 KB (245 gzip); UnoCSS core + presets 412 KB; sucrase 201 KB; Mermaid 5,251 KB; TypeScript 3,491 KB. The upstream markdown plugins bundle from source with three aliases and contribute 13 KB.
+   SOURCES: proto/B2/tools/bundle-sizes.mjs | proto/B2/bundles/sizes.json | proto/B2/inbrowser/compiler/build.mjs
+
+[F14] (medium; verified-empirically) Payload sizes of the two prototyped routes: compiler 2.36 MB minified / 708 KB gzip plus lazy grammars; generic client 2.54 MB; esbuild-wasm 13.5 MB / 3.61 MB gzip.
+   EVIDENCE: Compiler eager part 2,363,899 bytes, gzip 708,154, brotli 573,172; 388 lazy chunks totalling 9.6 MB (a 5-slide deck fetched 6 files). Largest contributors: @vue/compiler-sfc 812 KB, KaTeX 270 KB, css-tree 189 KB, sucrase 185 KB. Generic client: JS 980 KB (464 KB gzip), CSS 1.56 MB because 60 KaTeX font files are inlined in woff2, woff and ttf. esbuild.wasm 13,509,049 bytes, 3,610,237 gzip, plus a 50 KB loader.
+   SOURCES: proto/B2/inbrowser/compiler/dist/size-report.json | proto/B2/inbrowser/generic-client/dist | proto/B2/wasmtest/node_modules/esbuild-wasm
+
+[F15] (medium; verified-empirically) Dated change log relevant to the site: slidev:version meta since 0.49.0; markdown-exit in 52.13.0; Comark replaced MDC in 52.14.0; Vite 8/rolldown in 52.15.0; MCP server, memory router and PWA option in 52.17.0; 53.1.0 (2026-11-05) is latest.
+   EVIDENCE: 18 published @slidev/cli tarballs unpacked and grepped; dates from `npm view @slidev/cli time`. 0.48.0 (2024-03-10) has no `slidev:version`, 0.49.0 (2024-05-10) has it. 52.11.5 (2026-01-30) first ships `skills/`. 52.13.0 (2026-02-27) depends on markdown-exit instead of markdown-it. 52.14.0 (2026-03-02) depends on @comark/markdown-it instead of markdown-it-mdc. 52.15.0 (2026-04-28) vite ^8.0.10. 52.17.0 (2026-07-10) first contains `__mcp`, `__SLIDEV_MEMORY_ROUTE__`, vite-plugin-pwa. Node engine: >=18 until 52.12, >=20.12 from 52.14.2, >=22.12 in 53.0.0, >=22.22.0 in 53.1.0.
+   SOURCES: npm registry: @slidev/cli tarballs 0.36.0-53.1.0 | notes section 7
+
+[F16] (medium; verified-primary-source) The official AI tooling assumes Node and steers agents to ordinary builds: the MCP server and VS Code extension need a running CLI, and the shipped agent skill knows only `history | hash` routing.
+   EVIDENCE: MCP: `http://localhost:<port>/__mcp` on the dev server or `slidev mcp [entry]` over stdio; eight tools (get-info, list-slides, get-slide, update-slide, insert-slide, remove-slide, move-slide, goto-slide). Skill: `npx skills add slidevjs/slidev`, SKILL.md plus 53 reference files generated from docs at v52.11.3; `core-headmatter.md:155` reads `routerMode: history  # 'history' | 'hash'`; the hosting reference recommends `--base /<repo>/`. create-slidev 53.1.0 generates `theme: seriph`, `background: https://cover.sli.dev`, `comark: true`, a Counter.vue, a snippet and an imported page.
+   SOURCES: https://sli.dev/features/mcp | https://sli.dev/guide/work-with-ai | shared/slidev-starter/node_modules/@slidev/cli/skills/slidev/references/core-headmatter.md:155 | proto/B2/create-slidev-template/
+
+[F17] (medium; verified-primary-source) There is no official in-browser playground or Node-less mode; the only official online option is StackBlitz WebContainers.
+   EVIDENCE: `curl -I https://sli.dev/new` returns 302 to `https://stackblitz.com/github/slidevjs/new?file=slides.md`; that starter pins `@slidev/cli ^52.14.2`. The docs index (sli.dev/llms.txt) lists no playground or browser-compile feature, and the repository file list has no such package. Third-party Slidecko imports Slidev projects in the browser by re-implementing rendering. No statement about future Node-less support was found by search; GitHub issues were not reachable.
+   SOURCES: https://sli.dev/new | https://raw.githubusercontent.com/slidevjs/new/main/package.json | https://sli.dev/llms.txt | https://raw.githubusercontent.com/JonasTebben/slidecko/main/README.md
+
+[F18] (medium; verified-empirically) Uploads can be classified reliably and cheaply: a prototype classifier got 17/17 fixtures right, including Slidev version, base path and router mode of builds.
+   EVIDENCE: detect.mjs (113 lines, uses @slidev/parser/core), 0.1-21 ms per fixture. Build: `<meta property="slidev:version">` in index.html, base from the module script `src` minus `assets/index-<hash>.js`, router mode from the vue chunk (no `popstate` = memory; `location.host` = hash; else history), feature flags from `assets/monaco/`, `*.worker-*.js`, external script tags. Source: package.json depending on @slidev/cli or scripts calling slidev; without package.json, headmatter keys and Slidev-only syntax scored, `marp: true` negative. Fixtures: 6 source layouts, 7 builds, the 37 MB template build, the site's portable ZIP, reveal.js, Marp, plain Markdown.
+   SOURCES: proto/B2/tools/detect.mjs | proto/B2/tools/run-detect.mjs
+
+[F19] (medium; inferred) The generic-client route carries a standing maintenance cost: it hooks into internal contracts that upstream has been changing quickly.
+   EVIDENCE: The override depends on the virtual module id `/@slidev/slides`, the SlideRoute shape (`no`, `meta.slide`, `load`, `component`), `useSlideContext` and the `/@slidev/configs` export, none of which are public API. The markdown layer was replaced or restructured in 52.13.0 and 52.14.0 and again into `node/syntax/*.ts` by 53.x, all within nine months. Bundling upstream source instead of copying it limits the exposure to three aliases, but each Slidev bump still needs a rebuild of client and compiler and a diff test against real builds.
+   SOURCES: proto/B2/inbrowser/generic-client/vite.config.ts | proto/B2/upstream-src/ | notes section 7 and 8.3
+
+[F20] (low; verified-empirically) What an opaque-origin `sandbox="allow-scripts"` document can use: BroadcastChannel and blob Workers yes; localStorage, sessionStorage, cookies, IndexedDB, Cache Storage, service workers, History URL changes, fullscreen and Wake Lock no.
+   EVIDENCE: Probe script injected before the deck in a sandboxed srcdoc frame: storage, cookie, `indexedDB.open`, `caches`, `navigator.serviceWorker` each throw SecurityError; `history.replaceState` to any other URL throws SecurityError; `new BroadcastChannel('x')` succeeds; `new Worker(blobURL)` succeeds (md.qft.org's own CSP forbids it); `document.fullscreenEnabled` is false; Wake Lock logs a permissions-policy violation.
+   SOURCES: proto/B2/tools/shim-probe.js | proto/B2/results/hosting-shim_.json
+
+[F21] (low; verified-empirically) Slidev 53.1.0's `#slidev/layouts` virtual module generates invalid JavaScript for hyphenated layout names; the client never imports it, so normal builds are unaffected.
+   EVIDENCE: Importing it in the generic client failed the build with `[PARSE_ERROR] Expected `from` but found `-`` at `import __layout_iframe-left from "/@fs/.../layouts/iframe-left.vue"`. Generator at serve.mjs:1322-1332. A grep of @slidev/client finds no import of `#slidev/layouts`. Anyone building a runtime layout registry needs their own.
+   SOURCES: proto/B2/inbrowser/generic-client/build.log | shared/slidev-starter/node_modules/@slidev/cli/dist/serve-CjzN30uY.mjs:1322-1332 | proto/B2/inbrowser/generic-client/runtime/layouts.ts
+
+RECOMMENDATIONS (8):
+
+[R1] (effort M; impact high) Accept ordinary Slidev build ZIPs by converting them in the browser
+   WHY: This is what an AI agent with a shell produces when it follows the official skill. The conversion (six patches plus bundling) was verified for 7 router/base variants and runs fully client-side in under 2 s with esbuild-wasm in a same-origin Worker, without touching the sandbox policy. Fidelity is that of the real build. Replace the current 'website build ZIP' rejection with this path.
+   RISKS: Two patches are regexes over minified output and were only tested on 53.1.0 builds. Decks with Monaco fail (non-static imports, workers, tens of MB) and need a clear message. Asset URLs resolved at runtime (frontmatter backgrounds, component props) are not covered. First use downloads a 3.6 MB (gzip) wasm file.
+
+[R2] (effort S; impact high) Stop treating every CSP violation and unhandled rejection as fatal
+   WHY: Slidev's defaults trigger both: the Wake Lock request rejects in the sandbox, and the official template's first slide loads a remote image. Remove `navigator.wakeLock` before the deck starts, keep script and connect violations fatal, and downgrade image/font/media violations to a visible notice.
+   RISKS: Less strict failure signalling; a deck with many blocked images looks broken without explanation unless the notice is clear.
+
+[R3] (effort S; impact high) Classify uploads before choosing a path
+   WHY: A 113-line classifier distinguished Slidev source, Slidev build (with version, base, router mode, Monaco/worker/external-script flags), the site's own formats, reveal.js, Marp and plain Markdown in 17/17 fixtures. It lets the site route builds to conversion, sources to editing, and tell the user exactly which feature blocks a deck instead of a generic rejection.
+   RISKS: Router-mode detection reads minified code and is a hint only; builds older than 0.49.0 lack the version meta.
+
+[R4] (effort S; impact medium) Offer structured slide editing on the upstream parser first
+   WHY: @slidev/parser/core is browser-safe at 36 KB gzip and provides parse, prettify and stringify, the same primitives the built-in MCP server uses. Listing, reordering, inserting, deleting slides and editing Markdown, notes and frontmatter can be written back into the ZIP with zero compatibility drift, independent of whether a preview exists.
+   RISKS: Without a preview, users cannot see the effect of an edit until the deck is rebuilt elsewhere.
+
+[R5] (effort L; impact high) Build the generic-client plus in-browser compiler as a labelled preview tier
+   WHY: It is the only route that shows edits without Node. The prototype reached DOM- and pixel-identical output on simple decks with about 430 lines, because it bundles upstream code rather than copying it. Gate it on the classifier's blocker list (non-default theme, addons, Monaco, npm dependencies, config files) and fall back to the build-conversion path otherwise.
+   RISKS: Hooks into non-public Slidev internals and must be rebuilt and diff-tested per Slidev release. Themes need prebuilt packs or network access. Partial compatibility can mislead users if unsupported features degrade silently.
+
+[R6] (effort S; impact medium) Rewrite the site's instructions for AI tools around what was measured
+   WHY: Ask for `slidev build --router-mode memory --base ./` (Slidev >= 52.17), `wakeLock: false`, `fonts.provider: none`, images in `public/` rather than remote URLs, no Monaco, Tweet or PlantUML, and a ZIP containing both `dist/` and the source. The official skill predates memory mode and recommends absolute bases.
+   RISKS: Agents and users will often ignore instructions, so this complements the conversion path rather than replacing it.
+
+[R7] (effort S; impact medium) Run wasm or eval-dependent tooling in same-origin Workers instead of loosening the page CSP
+   WHY: Measured in Chromium 158: a Worker loaded from the site's own URL may compile WebAssembly and evaluate code while the page keeps `script-src 'self'`. This is what allows esbuild-wasm today and would allow heavier compilers later.
+   RISKS: Only verified in Chromium; Firefox and Safari follow the same documented rule but were not run. A CSP response header added later (other hosting) would change this.
+
+[R8] (effort S; impact medium) Do not pursue running the real Slidev toolchain in the browser for now
+   WHY: The toolchain is 111 MB of tarballs and 494 MB on disk, the official template build peaked near 2.6 GB RSS natively, WebContainers need cross-origin isolation headers GitHub Pages cannot send, and packages would be fetched from the network on every project.
+   RISKS: Leaves Monaco, TwoSlash, npm-theme and config-file decks dependent on an external rebuild.
+
+OPEN QUESTIONS:
+ - Firefox and Safari were not available: do file:// module loading, the Worker-versus-meta-CSP rule, and History calls in blob: documents behave as in Chromium 158?
+ - Do the two regex patches (Vite preload helper, `history:X(BASE),routes:` router call) hold for builds made with Slidev 0.49 to 52.x and for esbuild-minified output? Only 53.1.0 builds were tested.
+ - Built decks resolve some asset URLs at runtime (frontmatter `background`/`image`, component props). Is URL virtualisation inside the sandbox acceptable, or does that case require a real origin?
+ - Which themes should be supported in an edit-preview tier, and may the site fetch theme or dependency packages from a CDN, given the promise that nothing is sent to a server?
+ - Is a 3.6 MB (gzip) one-time esbuild-wasm download acceptable, or should the module graph be loaded as blob: modules instead, which would need `blob:` in the sandbox's script-src?
+ - Does upstream plan any Node-less or browser compile mode? Nothing was found in docs or search, and GitHub issues could not be read from here.
+ - Should the edit-preview tier restart the player on each change (about 0.4 s, verified) or update in place through the client's shallowRef slide list (designed for but not tested)?
+
+ARTIFACTS: notes/B2-slidev.md | prototypes/B2/packer/convert-dist.mjs | prototypes/B2/wasmtest/site/worker.js | prototypes/B2/inbrowser/generic-client/vite.config.ts | prototypes/B2/inbrowser/generic-client/setup/main.ts | prototypes/B2/inbrowser/compiler/src/index.js | prototypes/B2/inbrowser/compiler/build.mjs | prototypes/B2/inbrowser/compiler/dist/size-report.json | prototypes/B2/inbrowser/site/ | prototypes/B2/tools/detect.mjs | prototypes/B2/tools/test-hosting.mjs | prototypes/B2/tools/test-wasm-converter.mjs | prototypes/B2/tools/test-fidelity-slides.mjs | prototypes/B2/tools/run-csptest.mjs | prototypes/B2/results/ | prototypes/B2/bundles/sizes.json | prototypes/B2/upstream-src/ | prototypes/B2/qftplayer/

