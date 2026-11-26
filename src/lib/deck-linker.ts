@@ -295,7 +295,7 @@ function fitsPurpose(type: string, purpose: Purpose): boolean {
 
 /** A @font-face src entry's preference: woff2 first. */
 function fontRank(format: string, url: string): number {
-  const hint = `${format} ${url.replace(/[?#].*$/, '')}`.toLowerCase();
+  const hint = `${format} ${url.replace(/[?#][\s\S]*$/, '')}`.toLowerCase();
   if (/woff2/.test(hint)) return 0;
   if (/woff/.test(hint)) return 1;
   if (/truetype|opentype|\.ttf\b|\.otf\b/.test(hint)) return 2;
@@ -683,7 +683,7 @@ class DeckLinker {
         if (/^local\(/i.test(text)) { kept.push(text); continue; }
         const url = /^url\(/i.test(text) ? readCssUrl(text, 4) : undefined;
         if (!url) continue;
-        const format = /format\(([^)]*)\)/i.exec(text.slice(url.end))?.[1] ?? '';
+        const format = /format\(([^()]*)\)/i.exec(text.slice(url.end))?.[1] ?? '';
         const target = this.resolveIn(url.value, origin);
         let usable = target.kind === 'data' || target.kind === 'local';
         if (target.kind === 'vendor') usable = !!(await this.vendor.bytes(target.file));
@@ -705,10 +705,13 @@ class DeckLinker {
   }
 
   private async importRule(prelude: string, origin: CssOrigin, chain: string[]): Promise<string> {
-    const match = /^\s*(?:url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^)\s]*))\s*\)|"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')([\s\S]*?);?\s*$/.exec(prelude);
+    const match = /^\s*(?:url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^)\s]*))\s*\)|"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/.exec(prelude);
     if (!match) return '';
     const url = cssUnescape(match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? '');
-    let conditions = match[6].trim();
+    // The rest, without a final semicolon (cut in code: a lazy pattern before
+    // `\s*$` took quadratic time on long runs of white space).
+    let conditions = prelude.slice(match[0].length).trim();
+    if (conditions.endsWith(';')) conditions = conditions.slice(0, -1).trim();
     const wrappers: string[] = [];
     const layer = /^layer(?:\(\s*([\w.-]+)\s*\))?(?=\s|$)/i.exec(conditions);
     if (layer) { wrappers.push(layer[1] ? `@layer ${layer[1]}` : '@layer'); conditions = conditions.slice(layer[0].length).trim(); }
@@ -830,7 +833,7 @@ class DeckLinker {
 
   private async processScript(element: Element): Promise<void> {
     if (getAttribute(element, LINKER_MARKER)) return;
-    const typeValue = (getAttribute(element, 'type') ?? '').trim().toLowerCase().replace(/;.*$/, '');
+    const typeValue = (getAttribute(element, 'type') ?? '').trim().toLowerCase().replace(/;[\s\S]*$/, '');
     const isModule = typeValue === 'module';
     const src = getAttribute(element, 'src') ?? getAttribute(element, 'href') ?? getAttribute(element, 'xlink:href');
     if (typeValue === 'importmap' || typeValue === 'speculationrules') { defaultTreeAdapter.detachNode(element); return; }
@@ -938,7 +941,7 @@ class DeckLinker {
     const list = code.slice(start, listEnd(code, code.indexOf('[', start)));
     const sources = [...new Set([...list.matchAll(/\bsrc\s*:\s*(['"])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((match) => match[2]))];
     if (!sources.length) return;
-    const actions: Record<string, DependencyAction> = {};
+    const actions: Record<string, DependencyAction> = Object.create(null);
     const elements: Element[] = [];
     for (const src of sources) {
       const target = this.resolve(src, this.baseDir);
@@ -1101,6 +1104,11 @@ class DeckLinker {
 
   /** Pictures and media inside Markdown slides, which become elements only at run time. */
   private async rewriteMarkdown(text: string): Promise<string> {
+    // Checked before any rewriting: the result can only grow from here.
+    if (text.length > this.maxLength) {
+      this.reportMarkdownTooLarge();
+      return MARKDOWN_TOO_LARGE;
+    }
     let output = text;
     const replaceAsync = async (pattern: RegExp, replace: (match: RegExpExecArray) => Promise<string>) => {
       const parts: string[] = [];
@@ -1126,17 +1134,22 @@ class DeckLinker {
       });
     // [label]: url, for labels that pictures use
     const labels = new Set<string>();
-    for (const match of output.matchAll(/!\[([^\]\n]*)\](?:\[([^\]\n]*)\])?/g)) labels.add((match[2] || match[1]).trim().toLowerCase());
+    for (const match of output.matchAll(/!\[([^[\]\n]*)\](?:\[([^[\]\n]*)\])?/g)) labels.add((match[2] || match[1]).trim().toLowerCase());
     await replaceAsync(/^( {0,3}\[([^\]\n]+)\]:[ \t]*)(<[^<>\n]*>|\S+)/gm, async (match) => {
       if (!labels.has(match[2].trim().toLowerCase())) return match[0];
       const url = match[3].startsWith('<') ? match[3].slice(1, -1) : match[3];
       return `${match[1]}${await picture(url)}`;
     });
-    output = output.replace(/<iframe\b[^>]*>(?:[\s\S]*?<\/iframe>)?/gi, (tag) => {
+    const pages = replaceIframes(output, (tag) => {
       const src = /\ssrc\s*=\s*(["'])([^"']*)\1/i.exec(tag)?.[2] ?? '';
       this.embeddedPage(this.resolve(src, this.baseDir), src);
       return `<div style="${PLACEHOLDER_STYLE}">${escapeHtml(placeholderText(this.resolve(src, this.baseDir)))}</div>`;
-    });
+    }, this.maxLength);
+    if (pages === undefined) {
+      this.reportMarkdownTooLarge();
+      return MARKDOWN_TOO_LARGE;
+    }
+    output = pages;
     // HTML inside the Markdown, including <!-- .slide: data-background-image="…" -->
     await replaceAsync(/(\s)(src|poster|data-src|data-background-image|data-background-video|data-background|data-preview-image|data-preview-video|data-background-iframe|data-preview-link)(\s*=\s*)(["'])([^"'<>\n]*)\4/gi,
       async (match) => {
@@ -1156,10 +1169,15 @@ class DeckLinker {
         const replacement = uri ?? (name === 'src' && !media ? PICTURE_PLACEHOLDER : '');
         return `${match[1]}${match[2]}${match[3]}${match[4]}${replacement}${match[4]}`;
       });
-    if (/<[a-z][^>]*\son[a-z]+\s*=/i.test(output)) {
+    if (/<[a-z][^<>]*\son[a-z]+\s*=/i.test(output)) {
       this.report('inline-script-unsupported', 'warning', 'A button or link inside Markdown slides uses an inline script (such as onclick), which does not run here.');
     }
     return output;
+  }
+
+  private reportMarkdownTooLarge(): void {
+    this.report('deck-too-large', 'error',
+      `The Markdown slides are too large to play here once their pictures and embedded pages are included (at most ${formatBytes(this.maxLength)}). Split them into smaller files or use smaller pictures.`);
   }
 
   private async processMarkdownSection(section: Element): Promise<void> {
@@ -1353,7 +1371,7 @@ class DeckLinker {
     const key = `${path}#${id}`;
     if (this.sprites.has(key)) return this.sprites.get(key) ?? undefined;
     const sprite = `qft-sprite-${this.sprites.size + 1}`;
-    const source = parse(`<svg>${decodeText(this.files.get(path)!, path).replace(/<\?xml[^>]*>|<!DOCTYPE[^>]*>/gi, '')}</svg>`);
+    const source = parse(`<svg>${decodeText(this.files.get(path)!, path).replace(/<\?xml[^<>]*>|<!DOCTYPE[^<>]*>/gi, '')}</svg>`);
     const found = elementsOf(source).find((element) => getAttribute(element, 'id') === id && element.namespaceURI === NS.SVG);
     if (!found) { this.sprites.set(key, null); return undefined; }
     defaultTreeAdapter.detachNode(found);
@@ -1390,7 +1408,7 @@ class DeckLinker {
       if ((tag === 'body' || tag === 'frameset') && WINDOW_EVENTS.has(event)) windowHandlers.push(handler);
       else handlers.push(handler);
     }
-    if (script !== undefined && !/^\s*(?:void\s*\(?\s*0\s*\)?\s*;?|;)?\s*$/.test(script)) {
+    if (script !== undefined && !/^(?:void\s*(?:\(\s*0\s*\)|0)\s*;?|;)?$/.test(script.trim())) {
       handlers.push({ event: 'click', code: script, prevent: true });
       handlers.push({ event: 'keydown', code: "if (event.key === 'Enter') this.click();" });
       if (!hasAttribute(element, 'tabindex')) setAttribute(element, 'tabindex', '0');
@@ -1659,6 +1677,44 @@ function placeholderElement(original: Element, target: Target, inSlide = false):
   const element = createElement('div', attributes);
   defaultTreeAdapter.insertText(element, placeholderText(target));
   return element;
+}
+
+const MARKDOWN_TOO_LARGE = '## Slides too large\n\nThese slides are too large to play here.';
+
+/**
+ * Replaces every `<iframe …>` tag in Markdown text, together with its
+ * `</iframe>` when one follows, in one forward pass (a backtracking pattern
+ * here took minutes on unclosed tags). Once a closing tag is missing, later
+ * tags cannot have one either, so the search for it stops. Returns undefined
+ * when the result would grow beyond maxLength.
+ */
+export function replaceIframes(text: string, replace: (tag: string) => string, maxLength: number): string | undefined {
+  const opening = /<iframe\b/gi;
+  const closing = /<\/iframe>/gi;
+  const parts: string[] = [];
+  let length = 0;
+  let last = 0;
+  let closingMissing = false;
+  for (let match; (match = opening.exec(text));) {
+    const tagEnd = text.indexOf('>', match.index + 7);
+    if (tagEnd < 0) break;
+    let end = tagEnd + 1;
+    if (!closingMissing) {
+      closing.lastIndex = end;
+      const close = closing.exec(text);
+      if (close) end = close.index + close[0].length;
+      else closingMissing = true;
+    }
+    const replacement = replace(text.slice(match.index, tagEnd + 1));
+    parts.push(text.slice(last, match.index), replacement);
+    length += match.index - last + replacement.length;
+    if (length > maxLength) return undefined;
+    last = end;
+    opening.lastIndex = end;
+  }
+  if (!parts.length) return text;
+  parts.push(text.slice(last));
+  return parts.join('');
 }
 
 function escapeHtml(value: string): string {

@@ -233,6 +233,8 @@ class Conversion {
     if (!url || isRemote(url) || url.startsWith('#')) return undefined;
     let path = url.split(/[?#]/, 1)[0];
     try { path = decodeURIComponent(path); } catch { /* Keep it as written. */ }
+    // Archive paths are NFC (see deck-archive.ts); a reference may be decomposed.
+    path = path.normalize('NFC');
     let resolved: string | undefined;
     if (this.base.startsWith('/') && this.base !== '/' && path.startsWith(this.base)) resolved = joinPath(this.root.replace(/\/$/, ''), path.slice(this.base.length));
     else if (path.startsWith('/')) resolved = joinPath(this.root.replace(/\/$/, ''), path.slice(1));
@@ -401,7 +403,9 @@ function splitList(value: string): string[] {
   return items;
 }
 
-const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']*?))\s*\)/gi;
+// The bare form excludes "(" and has no white space of its own around it, so
+// that every url( is read once (an earlier pattern was cubic on url( and spaces).
+const CSS_URL = /url\((?:\s*"([^"]*)"\s*|\s*'([^']*)'\s*|([^()"']*))\)/gi;
 
 class StyleSheets {
   private readonly remoteHosts = new Set<string>();
@@ -413,7 +417,7 @@ class StyleSheets {
   process(css: string, path: string, depth = 0): string {
     const folder = dirname(path);
     let text = stripSourceMapComment(css).replace(/\/\*[#@]\s*sourceMappingURL=[^*]*\*\//g, '');
-    text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;]*);/gi, (_rule, _quote: string, url: string) => {
+    text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;@]*);/gi, (_rule, _quote: string, url: string) => {
       if (isRemote(url)) {
         const host = hostOf(url) || 'another site';
         if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the deck plays, so system fonts are used instead.`, url);
@@ -425,7 +429,7 @@ class StyleSheets {
       if (target === undefined || imported === undefined || depth >= 4) { this.missing.add(url); return ''; }
       return this.process(imported, target, depth + 1);
     });
-    text = text.replace(/@font-face\s*\{[^}]*\}/gi, (block) => this.preferWoff2(block, folder));
+    text = text.replace(/@font-face\s*\{[^{}]*\}/gi, (block) => this.preferWoff2(block, folder));
     return text.replace(CSS_URL, (whole, double?: string, single?: string, bare?: string) => {
       const url = (double ?? single ?? bare ?? '').trim();
       if (!url || /^data:/i.test(url) || url.startsWith('#')) return whole;
@@ -444,7 +448,7 @@ class StyleSheets {
    */
   private preferWoff2(block: string, folder: string): string {
     // The value runs to the first ; or } outside url(…) and quotes: data: URIs contain semicolons.
-    const declaration = /(\bsrc\s*:\s*)((?:url\(\s*"[^"]*"\s*\)|url\(\s*'[^']*'\s*\)|url\([^)]*\)|"[^"]*"|'[^']*'|[^;}"'])*)/gi;
+    const declaration = /(\bsrc\s*:\s*)((?:url\(\s*"[^"]*"\s*\)|url\(\s*'[^']*'\s*\)|url\([^()]*\)|"[^"]*"|'[^']*'|[^;}"'])*)/gi;
     return block.replace(declaration, (whole, label: string, value: string) => {
       const entries = splitList(value);
       const woff2 = entries.filter((entry) => {

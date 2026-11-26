@@ -428,7 +428,8 @@ function remoteReference(reference: Reference, cdn: CdnReference, issues: IssueL
 
 const START_CALL = /\bReveal\s*\.\s*initialize\s*\(|\bnew\s+Reveal\s*\(|\.initialize\s*\(\s*\{[\s\S]{0,400}?\b(?:plugins|hash|controls|slideNumber|transition)\s*:/;
 const BANNER = /reveal\.js[\s\S]{0,200}?MIT licensed[\s\S]{0,200}?Hakim El Hattab/;
-const MODULE_IMPORT = /\bimport\s+(?:[\w$*{}\s,]{1,300}?\s+from\s+)?["']([^"'\n]{1,500})["']|\bimport\s*\(\s*["']([^"'\n]{1,500})["']\s*\)/g;
+// `\s+(?=[\w$*{}])` and `\sfrom`, not `\s+from`: overlapping white-space runs made this quadratic.
+const MODULE_IMPORT = /\bimport\s+(?:(?=[\w$*{}])[\w$*{}\s,]{1,300}?\sfrom\s+)?["']([^"'\n]{1,500})["']|\bimport\s*\(\s*["']([^"'\n]{1,500})["']\s*\)/g;
 
 interface RevealCandidate {
   page: PageScan;
@@ -651,14 +652,15 @@ function slidevRouter(files: DeckFiles, entryChunk: string): DeckDetection['flag
   if (call) {
     const name = call[1];
     let body: string | undefined;
-    for (const match of code.matchAll(/import\s*\{([^}]{0,6000})\}\s*from\s*["'`]([^"'`]{1,300})["'`]/g)) {
-      const binding = match[1].split(',').map((part) => part.trim().split(/\s+as\s+/))
-        .find((parts) => (parts[1] ?? parts[0]) === name);
+    for (const match of braceLists(code, 'import', 6000, ROUTER_SEARCH_LIMIT)) {
+      const from = /^\s*from\s*["'`]([^"'`]{1,300})["'`]/.exec(code.slice(match.end, match.end + 320));
+      if (!from) continue;
+      const binding = bindingsOf(match.inner).find((parts) => (parts[1] ?? parts[0]) === name);
       if (!binding) continue;
-      const chunk = resolvePath(entryChunk, match[2]);
+      const chunk = resolvePath(entryChunk, from[1]);
       const library = chunk ? readText(files, chunk) : undefined;
-      const exported = library && /export\s*\{([^}]{0,20000})\}/.exec(library)?.[1].split(',')
-        .map((part) => part.trim().split(/\s+as\s+/)).find((parts) => (parts[1] ?? parts[0]) === binding[0]);
+      const list = library ? braceLists(library, 'export', 20000, library.length).next() : undefined;
+      const exported = list && !list.done ? bindingsOf(list.value.inner).find((parts) => (parts[1] ?? parts[0]) === binding[0]) : undefined;
       if (library && exported) body = functionBody(library, exported[0]);
       break;
     }
@@ -671,6 +673,36 @@ function slidevRouter(files: DeckFiles, entryChunk: string): DeckDetection['flag
   }
   const declared = /["']?routerMode["']?\s*:\s*["'`](history|hash|memory)["'`]/.exec(code)?.[1];
   return declared as DeckDetection['flags']['slidevRouter'];
+}
+
+/** Import lists sit at the top of a module; the rest of a large entry chunk is not searched for them. */
+const ROUTER_SEARCH_LIMIT = 200_000;
+
+/**
+ * Each `keyword { … }` in code whose keyword starts before `limit` and whose
+ * list is at most maxInner characters, found in one forward pass. (A pattern
+ * such as /import\s*\{([^}]{0,6000})\}/ re-read up to 6,000 characters for
+ * every `import{` without a closing brace.)
+ */
+function* braceLists(code: string, keyword: string, maxInner: number, limit: number): Generator<{ inner: string; end: number }> {
+  let nextClose = -1;
+  for (let at = code.indexOf(keyword); at >= 0 && at < limit; at = code.indexOf(keyword, at + keyword.length)) {
+    let open = at + keyword.length;
+    while (open < code.length && /\s/.test(code[open]) && open - at < 200) open += 1;
+    if (code[open] !== '{') continue;
+    if (nextClose <= open) nextClose = code.indexOf('}', open);
+    if (nextClose < 0) return;
+    if (nextClose - open - 1 > maxInner) continue;
+    yield { inner: code.slice(open + 1, nextClose), end: nextClose + 1 };
+  }
+}
+
+/** `a, b as c` → [['a'], ['b', 'c']]. */
+function bindingsOf(list: string): string[][] {
+  return list.split(',').map((part) => {
+    const words = part.trim().split(/\s+/);
+    return words.length === 3 && words[1] === 'as' ? [words[0], words[2]] : [words.join(' ')];
+  });
 }
 
 /** The source of a named function, found by matching braces (strings skipped), at most 4,000 characters. */
@@ -695,12 +727,27 @@ function functionBody(code: string, name: string): string | undefined {
   return code.slice(start, end);
 }
 
+/**
+ * A Vite worker chunk: `name.worker-hash.js`, or a name with "worker" in it and
+ * a hash of six or more characters after a later dash. Checked in code on the
+ * last path segment (the equivalent pattern backtracked heavily on long names).
+ */
+function isWorkerChunk(path: string): boolean {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  if (/\.worker-[\w-]+\.m?js$/i.test(name)) return true;
+  const stem = /^([\w-]+)\.m?js$/i.exec(name)?.[1];
+  if (!stem) return false;
+  const worker = stem.toLowerCase().indexOf('worker');
+  const dash = worker < 0 ? -1 : stem.indexOf('-', worker + 6);
+  return dash >= 0 && stem.length - dash - 1 >= 6;
+}
+
 function detectSlidevBuild(files: DeckFiles, page: PageScan, issues: IssueList): DeckDetection {
   const root = dirOf(page.path);
   const inRoot = [...files.keys()].filter((path) => path.startsWith(root));
   const flags: DeckDetection['flags'] = {
     slidevHasMonaco: inRoot.some((path) => /(?:^|\/)assets\/monaco\//.test(path.slice(root.length))),
-    slidevHasWorkers: inRoot.some((path) => /\.worker-[\w-]+\.m?js$|(?:^|\/)[\w-]*worker[\w-]*-[\w-]{6,}\.m?js$/i.test(path)),
+    slidevHasWorkers: inRoot.some(isWorkerChunk),
   };
   const entryScript = page.scripts.find((script) => script.type === 'module' && script.src && urlKind(script.src) === 'local');
   if (entryScript?.src) {
