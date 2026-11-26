@@ -28,7 +28,7 @@ export function hostPage(runtime) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Player test host</title>
 <style>html,body{margin:0}#present{position:fixed;right:4px;bottom:4px}#stage{width:1280px;height:720px;background:#fff}#stage:fullscreen{width:100vw;height:100vh}#host{width:100%;height:100%}</style></head>
 <body><button id="present" type="button">Present</button><main id="stage"><div id="host"></div></main><script>${runtime.replace(/<\/script/gi, '<\\/script')}</script><script>
-const fresh = () => ({ states: [], errors: [], warnings: [], positions: [], slides: [], fullscreen: [] });
+const fresh = () => ({ states: [], errors: [], warnings: [], positions: [], slides: [], fullscreen: [], escapes: 0 });
 window.events = fresh();
 let settle;
 const pending = () => new Promise((resolve) => { settle = resolve; });
@@ -43,6 +43,7 @@ window.play = (html, profile = 'strict', start = {}) => {
     onState(state) { events.states.push(state); if (state === 'ready') settle?.('ready'); },
     onError(message, origin) { events.errors.push(origin + ': ' + message); settle?.(origin + ': ' + message); },
     onWarning(message) { events.warnings.push(message); },
+    onEscape() { events.escapes += 1; },
     onPosition(position) { events.positions.push(position); },
     onSlides(count) { events.slides.push(count); },
     async onFullscreenRequest(request) {

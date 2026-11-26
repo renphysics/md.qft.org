@@ -225,6 +225,9 @@ function presentationRuntimeFactory() {
       }
     }
 
+    // Tolerant only: an uncaught error that belongs to a problem already reported.
+    let ignoreError: (event: ErrorEvent) => boolean = () => false;
+
     if (tolerant) {
       // A blob: document may change only its fragment. Reveal.js (hash: true)
       // and Slidev's router also write paths, and the refusal would stop
@@ -264,6 +267,171 @@ function presentationRuntimeFactory() {
       for (const name of ['fullscreenEnabled', 'webkitFullscreenEnabled']) {
         if (name in Document.prototype) try { Object.defineProperty(Document.prototype, name, { configurable: true, get: () => true }); } catch { /* Keep the original. */ }
       }
+
+      // An opaque document has no cookies: reading or writing document.cookie
+      // throws, which stops a deck's start-up script. Keep them in memory for
+      // this playback instead. Attributes such as path are ignored; max-age=0,
+      // or an expires date in the past, deletes the cookie.
+      try { void document.cookie; }
+      catch {
+        const jar = new Map<string, string>();
+        try {
+          Object.defineProperty(Document.prototype, 'cookie', {
+            configurable: true,
+            get() { return [...jar].map(([name, value]) => (name ? `${name}=${value}` : value)).join('; '); },
+            set(input: unknown) {
+              let text: string;
+              try { text = String(input); } catch { return; }
+              const [pair, ...attributes] = text.slice(0, 8192).split(';');
+              const equals = pair.indexOf('=');
+              const name = (equals < 0 ? '' : pair.slice(0, equals)).trim();
+              const value = (equals < 0 ? pair : pair.slice(equals + 1)).trim();
+              if (name.length + value.length > 4096) return;
+              let maxAge: number | undefined;
+              let expires: number | undefined;
+              for (const attribute of attributes) {
+                const split = attribute.indexOf('=');
+                const key = (split < 0 ? attribute : attribute.slice(0, split)).trim().toLowerCase();
+                const data = split < 0 ? '' : attribute.slice(split + 1).trim();
+                if (key === 'max-age' && /^-?\d{1,12}$/.test(data)) maxAge = Number(data);
+                else if (key === 'expires') { const time = Date.parse(data); if (!Number.isNaN(time)) expires = time; }
+              }
+              // As in browsers, max-age wins over expires.
+              if (maxAge !== undefined ? maxAge <= 0 : expires !== undefined && expires <= Date.now()) jar.delete(name);
+              else if (jar.has(name) || jar.size < 50) jar.set(name, value);
+            },
+          });
+        } catch { /* Then the deck sees the browser's refusal. */ }
+      }
+      // randomUUID exists only in secure contexts, and an opaque blob:
+      // document is not one. getRandomValues is available everywhere.
+      try {
+        const random = window.crypto;
+        if (random && typeof random.randomUUID !== 'function' && typeof random.getRandomValues === 'function') {
+          Object.defineProperty(random, 'randomUUID', {
+            configurable: true, writable: true,
+            value: function randomUUID() {
+              const bytes = random.getRandomValues(new Uint8Array(16));
+              bytes[6] = (bytes[6] & 0x0f) | 0x40;
+              bytes[8] = (bytes[8] & 0x3f) | 0x80;
+              const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+              return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+            },
+          });
+        }
+      } catch { /* Keep what the browser offers. */ }
+      // Nothing else is imitated: navigator.clipboard, caches and service
+      // workers stay undefined, so a deck's own feature checks still work.
+
+      // The sandbox has no allow-modals, so alert() would do nothing. Show
+      // the text in a small message box inside the deck's own document
+      // instead. Unlike alert(), this returns at once and does not wait for
+      // OK; several messages queue and show one after another.
+      const queued: string[] = [];
+      let messageHost: HTMLElement | undefined;
+      let messageText: HTMLElement | undefined;
+      let messageButton: HTMLButtonElement | undefined;
+      let returnFocus: unknown;
+      const showNext = () => {
+        const text = queued.shift();
+        if (text === undefined) {
+          messageHost?.remove();
+          messageHost = messageText = messageButton = undefined;
+          const previous = returnFocus as { focus?: (options?: FocusOptions) => void } | null | undefined;
+          returnFocus = undefined;
+          try { previous?.focus?.({ preventScroll: true }); } catch { /* Focus stays where it is. */ }
+          return;
+        }
+        if (!messageHost) {
+          returnFocus = document.activeElement;
+          // An unknown element name and inline !important styles: the deck's
+          // own rules cannot hide or restyle it, and the closed shadow root
+          // keeps its insides out of the deck's reach.
+          const element = document.createElement('qft-message');
+          element.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;display:block!important';
+          const root = element.attachShadow({ mode: 'closed' });
+          const style = document.createElement('style');
+          style.textContent = '.backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:rgba(20,18,22,.45);font:16px/1.5 system-ui,sans-serif}'
+            + '.box{box-sizing:border-box;width:min(560px,100%);max-height:100%;overflow:auto;padding:20px 22px 16px;border-radius:10px;background:#fff;color:#222;box-shadow:0 12px 40px rgba(0,0,0,.35)}'
+            + '.text{margin:0 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}.actions{text-align:right}'
+            + 'button{font:inherit;min-width:88px;padding:8px 16px;border:1px solid #773b49;border-radius:6px;background:#773b49;color:#fff;cursor:pointer}'
+            + 'button:focus-visible{outline:3px solid #b17683;outline-offset:2px}';
+          const backdrop = document.createElement('div');
+          backdrop.className = 'backdrop';
+          const box = document.createElement('div');
+          box.className = 'box';
+          box.setAttribute('role', 'alertdialog');
+          box.setAttribute('aria-modal', 'true');
+          box.setAttribute('aria-label', 'Message from the presentation');
+          messageText = document.createElement('p');
+          messageText.className = 'text';
+          messageText.id = 'text';
+          box.setAttribute('aria-describedby', 'text');
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+          messageButton = document.createElement('button');
+          messageButton.type = 'button';
+          messageButton.textContent = 'OK';
+          messageButton.addEventListener('click', () => showNext());
+          // A click beside the box keeps the keyboard on OK.
+          backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) { event.preventDefault(); messageButton?.focus({ preventScroll: true }); } });
+          actions.append(messageButton);
+          box.append(messageText, actions);
+          backdrop.append(box);
+          root.append(style, backdrop);
+          document.documentElement.append(element);
+          messageHost = element;
+        }
+        messageText!.textContent = text;
+        messageButton!.focus({ preventScroll: true });
+      };
+      // While a message shows, no key reaches the deck (no slide change) or
+      // the Escape relay below: this listener on window, in the capture
+      // phase, is the first to see every key, as the bootstrap runs before
+      // any deck code. Enter, Space and Escape close the message.
+      for (const type of ['keydown', 'keypress', 'keyup']) {
+        window.addEventListener(type, (event) => {
+          if (!messageHost) return;
+          event.stopImmediatePropagation();
+          if (type !== 'keydown') return;
+          const key = (event as KeyboardEvent).key;
+          if (key === 'Enter' || key === ' ' || key === 'Spacebar' || key === 'Escape' || key === 'Esc') { event.preventDefault(); showNext(); }
+          else if (key === 'Tab') { event.preventDefault(); messageButton?.focus({ preventScroll: true }); }
+        }, true);
+      }
+      const question = 'This presentation asked a question in a pop-up window, which the player cannot show.';
+      const newWindow = 'This presentation tried to open a new window, for example the speaker view (S key), which the player cannot do.';
+      // Set while the task that called window.open() runs: the deck's next
+      // step usually uses the window it did not get (the notes plugin sets a
+      // property on it), and that TypeError is part of the same problem.
+      let opening = false;
+      const replace = (name: string, value: (...args: unknown[]) => unknown) => {
+        try { Object.defineProperty(window, name, { configurable: true, writable: true, value }); } catch { /* Keep the sandbox's behaviour. */ }
+      };
+      replace('alert', function alert(message?: unknown) {
+        let text = '';
+        try { text = message === undefined ? '' : String(message); } catch { /* An object that cannot become text. */ }
+        if (queued.length < 50) queued.push(text.slice(0, 2000));
+        if (!messageHost) {
+          try { showNext(); } catch { queued.length = 0; (messageHost as HTMLElement | undefined)?.remove(); messageHost = undefined; }
+        }
+      });
+      // As in the sandbox without allow-modals: no answer. Say so once.
+      replace('confirm', function confirm() { report(question); return false; });
+      replace('prompt', function prompt() { report(question); return null; });
+      replace('open', function open() {
+        report(newWindow);
+        opening = true;
+        setTimeout(() => { opening = false; }, 0);
+        return null;
+      });
+      ignoreError = (event: ErrorEvent) => {
+        if (!opening) return false;
+        try {
+          const error = event.error as { name?: unknown } | null | undefined;
+          return error instanceof TypeError || error?.name === 'TypeError';
+        } catch { return false; }
+      };
     }
 
     // Problems in the strict profile keep the wording that points to the
@@ -271,7 +439,7 @@ function presentationRuntimeFactory() {
     const missing = (target: EventTarget | null) => {
       const name = (target as Element | null)?.localName;
       if (name === 'img' || name === 'image' || name === 'input') return 'A picture in the presentation could not be shown.';
-      if (name === 'video' || name === 'audio' || name === 'source' || name === 'track') return 'A video or sound in the presentation could not be played.';
+      if (name === 'video' || name === 'audio' || name === 'source') return 'A video or sound in the presentation could not be played.';
       return 'A file that the presentation uses could not be loaded.';
     };
     const blocked = (event: SecurityPolicyViolationEvent) => {
@@ -288,8 +456,12 @@ function presentationRuntimeFactory() {
       return `The player blocked ${nouns[directive.split('-')[0]] ?? 'a resource'} (${directive}${host}).`;
     };
     window.addEventListener('error', (event) => {
-      if (event instanceof ErrorEvent) report(describe(event.message, 'The presentation encountered an error.'));
-      else report(tolerant ? missing((event as Event).target) : 'A presentation resource could not be loaded. Rebuild the package with all assets included.');
+      if (event instanceof ErrorEvent) {
+        if (!ignoreError(event)) report(describe(event.message, 'The presentation encountered an error.'));
+      } else if (!tolerant) report('A presentation resource could not be loaded. Rebuild the package with all assets included.');
+      // A <track> without its file (the linker cannot keep caption files)
+      // fires an error although its video plays: that is no lost video.
+      else if (((event as Event).target as Element | null)?.localName !== 'track') report(missing((event as Event).target));
     }, true);
     window.addEventListener('unhandledrejection', (event) => report(describe(event.reason, 'An asynchronous presentation operation failed.')));
     document.addEventListener('securitypolicyviolation', (event) => {
@@ -381,6 +553,10 @@ function presentationRuntimeFactory() {
     const template = document.createElement('template');
     template.innerHTML = html;
     const content = template.content;
+    // Template contents are parsed as if scripts were off, so a <noscript>
+    // fallback (a web-font stylesheet, a picture) would look like a separate
+    // file. Scripts always run in the player: that content never applies.
+    for (const element of [...content.querySelectorAll('noscript')]) element.remove();
     if (content.querySelector('script[src],script[href],script[xlink\\:href]')) {
       throw unsupported('This presentation has separate JavaScript files. Create a portable ZIP with the Slidev packaging tool before opening it.',
         'This presentation still loads a separate script file, which the player cannot open.');

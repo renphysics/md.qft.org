@@ -464,7 +464,7 @@ function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: un
   const listeners = { window: new Map<string, ((event: any) => void)[]>(), document: new Map<string, ((event: any) => void)[]>() };
   const on = (map: Map<string, ((event: any) => void)[]>) => (name: string, listener: (event: any) => void) => { map.set(name, [...(map.get(name) ?? []), listener]); };
   class FakeDOMException extends Error { constructor(message: string, name: string) { super(message); this.name = name; } }
-  class FakeErrorEvent { constructor(readonly message: string) {} }
+  class FakeErrorEvent { constructor(readonly message: string, readonly error?: unknown) {} }
   const historyCalls: unknown[][] = [];
   const refuse = (url: unknown) => { if (typeof url === 'string' && !url.startsWith('#')) throw new FakeDOMException('The operation is insecure.', 'SecurityError'); };
   class History {
@@ -482,20 +482,71 @@ function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: un
   class Document {
     exitFullscreen() { return Promise.reject(new Error('Document not active')); }
     get fullscreenEnabled() { return false; }
+    // An opaque document refuses cookies in both directions.
+    get cookie(): string { throw new FakeDOMException('The document is sandboxed and lacks the allow-same-origin flag.', 'SecurityError'); }
+    set cookie(_value: string) { throw new FakeDOMException('The document is sandboxed and lacks the allow-same-origin flag.', 'SecurityError'); }
   }
   class Navigator { get wakeLock() { return { request: () => Promise.reject(new Error('Disallowed by permissions policy')) }; } }
-  const document = Object.assign(new Document(), { addEventListener: on(listeners.document) });
-  const window: any = { localStorage: { length: 0 }, sessionStorage: { length: 0 }, addEventListener: on(listeners.window) };
+  /** Just enough of an element for the message box. */
+  class FakeNode {
+    children: FakeNode[] = [];
+    parent: FakeNode | undefined;
+    listeners = new Map<string, ((event: any) => void)[]>();
+    attrs: Record<string, string> = {};
+    style = { cssText: '' };
+    textContent = '';
+    className = '';
+    id = '';
+    type = '';
+    shadow: { mode: string; root: FakeNode } | undefined;
+    constructor(readonly localName: string) {}
+    append(...nodes: FakeNode[]) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter((node) => node !== this); this.parent = undefined; }
+    setAttribute(name: string, value: string) { this.attrs[name] = value; }
+    addEventListener(name: string, listener: (event: any) => void) { this.listeners.set(name, [...(this.listeners.get(name) ?? []), listener]); }
+    attachShadow(init: { mode: string }) { const root = new FakeNode('#shadow-root'); this.shadow = { mode: init.mode, root }; return root; }
+    focus() { document.activeElement = this; }
+    find(name: string): FakeNode | undefined {
+      for (const node of [...this.children, ...(this.shadow ? [this.shadow.root] : [])]) {
+        if (node.localName === name) return node;
+        const found = node.find(name);
+        if (found) return found;
+      }
+      return undefined;
+    }
+  }
+  const documentElement = new FakeNode('html');
+  const body = new FakeNode('body');
+  documentElement.append(body);
+  const document: any = Object.assign(new Document(), {
+    addEventListener: on(listeners.document), documentElement, body, activeElement: body,
+    createElement: (name: string) => new FakeNode(name),
+  });
+  const timers: (() => void)[] = [];
+  const window: any = {
+    localStorage: { length: 0 }, sessionStorage: { length: 0 }, addEventListener: on(listeners.window),
+    crypto: { getRandomValues: (array: any) => crypto.getRandomValues(array) },
+  };
   if (settings.reveal) window.Reveal = settings.reveal;
   const navigator = new Navigator();
   compiledFunction('presentationBootstrap', {
-    window, document, navigator, History, Element, Document, Navigator, URL,
+    window, document, navigator, History, Element, Document, Navigator, URL, Date,
     DOMException: FakeDOMException, ErrorEvent: FakeErrorEvent, location: { hash: settings.hash ?? '' },
     parent: { postMessage(message: unknown) { sent.push(message); } },
     requestAnimationFrame(callback: () => void) { callback(); },
+    setTimeout(callback: () => void) { timers.push(callback); return timers.length; },
   })('a'.repeat(36), tolerant);
   return {
-    History, Element, document, navigator, historyCalls, ErrorEvent: FakeErrorEvent,
+    History, Element, document, navigator, historyCalls, ErrorEvent: FakeErrorEvent, window, documentElement, body,
+    /** Run the timers that are due, as the next task would. */
+    tick() { for (const callback of timers.splice(0)) callback(); },
+    /** A key event as the window's capture listeners see it; returns what they did to it. */
+    key(type: string, key: string) {
+      const effect = { stopped: false, prevented: false };
+      const event = { type, key, stopImmediatePropagation() { effect.stopped = true; }, preventDefault() { effect.prevented = true; } };
+      for (const listener of listeners.window.get(type) ?? []) { listener(event); if (effect.stopped) break; }
+      return effect;
+    },
     fire(target: 'window' | 'document', name: string, event: Record<string, unknown> = {}) {
       if (!('type' in event)) Object.defineProperty(event, 'type', { value: name });
       for (const listener of listeners[target].get(name) ?? []) listener(event);
@@ -599,6 +650,107 @@ test('the strict bootstrap stops at the first problem and adapts nothing', () =>
     ['error', 'A presentation resource could not be loaded. Rebuild the package with all assets included.'],
     ['error', 'This presentation requested an unsupported resource (img-src). Rebuild it with the portable Slidev packaging tool.'],
   ], 'no ready after an error');
+});
+
+test('the tolerant bootstrap keeps cookies in memory and offers crypto.randomUUID; the strict one adapts neither', () => {
+  const deck = deckBootstrap(true);
+  const document = deck.document;
+  assert.equal(document.cookie, '');
+  document.cookie = 'visits=1; path=/; SameSite=Lax';
+  document.cookie = 'theme=dark; expires=Fri, 31 Dec 2100 23:59:59 GMT';
+  document.cookie = 'visits=2';
+  assert.equal(document.cookie, 'visits=2; theme=dark');
+  document.cookie = 'theme=; max-age=0';
+  assert.equal(document.cookie, 'visits=2');
+  document.cookie = 'visits=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  assert.equal(document.cookie, '');
+  document.cookie = 'kept=1; max-age=60; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  assert.equal(document.cookie, 'kept=1', 'max-age wins over expires');
+  document.cookie = `huge=${'x'.repeat(5000)}`;
+  for (let index = 0; index < 60; index++) document.cookie = `c${index}=1`;
+  assert.equal(document.cookie.split('; ').length, 50, 'at most 50 cookies, none too large');
+  const uuid = deck.window.crypto.randomUUID();
+  assert.match(uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(deck.window.crypto.randomUUID(), uuid);
+  assert.deepEqual(deck.messages(), []);
+
+  const strict = deckBootstrap(false);
+  assert.throws(() => strict.document.cookie, { name: 'SecurityError' });
+  assert.equal(strict.window.crypto.randomUUID, undefined);
+});
+
+test('alert() shows its text in a message box in the deck that returns at once, queues, and keeps keys from the deck', () => {
+  const deck = deckBootstrap(true);
+  const before = deck.key('keydown', 'ArrowRight');
+  assert.deepEqual(before, { stopped: false, prevented: false }, 'without a message, keys reach the deck');
+  assert.equal(deck.window.alert('First <b>answer</b>\nline two'), undefined);
+  deck.window.alert({ toString() { throw new Error('No text'); } });
+  deck.window.alert('y'.repeat(3000));
+  const host = deck.documentElement.find('qft-message');
+  assert.ok(host, 'the box hangs from the root element');
+  assert.equal(host.parent, deck.documentElement);
+  assert.equal(host.shadow?.mode, 'closed');
+  assert.match(host.style.cssText, /position:fixed!important/);
+  const text = host.find('p')!;
+  const button = host.find('button')!;
+  assert.equal(text.textContent, 'First <b>answer</b>\nline two', 'set as text');
+  assert.equal(button.textContent, 'OK');
+  assert.equal(deck.document.activeElement, button, 'OK takes focus');
+  assert.equal(host.find('div')?.children[0]?.attrs.role, 'alertdialog');
+  // Keys while it shows: none reaches the deck; Enter, Space and Escape close it.
+  assert.deepEqual(deck.key('keydown', 'ArrowRight'), { stopped: true, prevented: false });
+  assert.deepEqual(deck.key('keyup', 'ArrowRight'), { stopped: true, prevented: false });
+  assert.deepEqual(deck.key('keydown', 'Tab'), { stopped: true, prevented: true });
+  assert.deepEqual(deck.key('keydown', 'Enter'), { stopped: true, prevented: true });
+  assert.equal(text.textContent, '', 'the next message: an object that cannot become text');
+  assert.deepEqual(deck.key('keydown', ' '), { stopped: true, prevented: true });
+  assert.equal(text.textContent, 'y'.repeat(2000), 'at most 2000 characters');
+  assert.deepEqual(deck.key('keydown', 'Escape'), { stopped: true, prevented: true }, 'Escape does not reach the host relay');
+  assert.equal(deck.documentElement.find('qft-message'), undefined, 'closed after the last message');
+  assert.equal(deck.document.activeElement, deck.body, 'focus goes back');
+  assert.deepEqual(deck.key('keydown', 'Escape'), { stopped: false, prevented: false });
+  // The OK button closes it too.
+  deck.window.alert('Again');
+  const again = deck.documentElement.find('qft-message')!;
+  for (const listener of again.find('button')!.listeners.get('click') ?? []) listener({});
+  assert.equal(deck.documentElement.find('qft-message'), undefined);
+  assert.deepEqual(deck.messages(), [], 'alert itself sends no warning');
+});
+
+test('confirm() and prompt() answer as the sandbox does and warn once per playback', () => {
+  const deck = deckBootstrap(true);
+  assert.equal(deck.window.confirm('Sure?'), false);
+  assert.equal(deck.window.prompt('Your name?'), null);
+  assert.equal(deck.window.confirm('Again?'), false);
+  assert.deepEqual(deck.messages(), [['warning', 'This presentation asked a question in a pop-up window, which the player cannot show.']]);
+  const strict = deckBootstrap(false);
+  assert.equal(strict.window.confirm, undefined, 'the strict profile adapts nothing');
+});
+
+test('window.open() warns once and returns null; the TypeError that follows in the same task is not a second warning', () => {
+  const deck = deckBootstrap(true);
+  const newWindow = 'This presentation tried to open a new window, for example the speaker view (S key), which the player cannot do.';
+  assert.equal(deck.window.open('about:blank', 'reveal.js - Notes'), null);
+  // The notes plugin then sets a property on the null it got.
+  const marked = "Uncaught TypeError: Cannot set properties of null (setting 'marked')";
+  deck.fire('window', 'error', new deck.ErrorEvent(marked, new TypeError("Cannot set properties of null (setting 'marked')")) as any);
+  deck.fire('window', 'error', new deck.ErrorEvent('Uncaught Error: Something else', new Error('Something else')) as any);
+  deck.tick();
+  deck.fire('window', 'error', new deck.ErrorEvent(marked, new TypeError("Cannot set properties of null (setting 'marked')")) as any);
+  assert.equal(deck.window.open(), null);
+  assert.deepEqual(deck.messages(), [['warning', newWindow], ['warning', 'Uncaught Error: Something else'], ['warning', marked]],
+    'only errors outside that task are reported, and the new-window warning only once');
+});
+
+test('a <track> that fires an error is not reported as a video that could not be played', () => {
+  const deck = deckBootstrap(true);
+  deck.fire('window', 'error', { target: { localName: 'track' } });
+  deck.fire('window', 'error', { target: null });
+  deck.fire('window', 'error', { target: { localName: 'video' } });
+  assert.deepEqual(deck.messages(), [
+    ['warning', 'A file that the presentation uses could not be loaded.'],
+    ['warning', 'A video or sound in the presentation could not be played.'],
+  ]);
 });
 
 test('Reveal.js events report the position as h/v/f and the slide count, without needing window.Reveal', () => {
@@ -897,7 +1049,7 @@ async function exportedHandshake(profile?: string) {
 
 test('a production-minified export starts and completes its isolated handshake without the original bundle', async () => {
   const { prepared, outer, getElementById } = await exportedHandshake();
-  assert.match(prepared, /box-sizing:border-box/, 'the default export keeps the strict profile');
+  assert.match(prepared, /\*,\*::before,\*::after\{box-sizing:border-box\}/, 'the default export keeps the strict profile');
   assert.match(prepared, /\("[a-f0-9]{36}",false\);\}\)\(\);<\/script>/);
   getElementById('stop').listeners.get('click')();
   assert.equal(outer.removed, true);
@@ -906,10 +1058,38 @@ test('a production-minified export starts and completes its isolated handshake w
 
 test('a tolerant export plays with the tolerant profile, and F in the deck asks the export for fullscreen', async () => {
   const { prepared, relay, fullscreenCalls, deckElement } = await exportedHandshake('tolerant');
-  assert.doesNotMatch(prepared, /box-sizing:border-box/);
+  assert.doesNotMatch(prepared, /\*,\*::before,\*::after\{box-sizing:border-box\}/);
   assert.match(prepared, /\("[a-f0-9]{36}",true\);\}\)\(\);<\/script>/, 'the deck bootstrap runs tolerant');
   await deckElement.requestFullscreen();
   relay();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(fullscreenCalls, ['stage']);
+});
+
+test('a <noscript> fallback is removed before the checks, in both profiles, since scripts always run in the player', () => {
+  for (const profile of ['strict', 'tolerant']) {
+    let removed = 0;
+    const picture = { localName: 'img', attributes: [], hasAttribute: (name: string) => name === 'src', getAttribute: () => 'p.png', removeAttribute() {} };
+    const prepare = compiledFunction('preparePresentationDocument', {
+      presentationBootstrap() {},
+      document: {
+        createElement() {
+          return {
+            innerHTML: '',
+            content: {
+              // A web-font stylesheet and a picture, parsed as elements because template contents are parsed with scripting off.
+              querySelector: (selector: string) => (selector === 'link[rel~="stylesheet"]' && !removed ? {} : null),
+              querySelectorAll: (selector: string) => {
+                if (selector === 'noscript') return [{ remove() { removed += 1; } }];
+                if (selector === '*') return removed ? [] : [picture];
+                return [];
+              },
+            },
+          };
+        },
+      },
+    });
+    assert.doesNotThrow(() => prepare('<div class="reveal"></div><noscript><link rel="stylesheet" href="f.css"><img src="p.png"></noscript>', 'a'.repeat(36), 'b'.repeat(36), { profile }), profile);
+    assert.equal(removed, 1);
+  }
 });

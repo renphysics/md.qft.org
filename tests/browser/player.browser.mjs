@@ -50,6 +50,76 @@ async function revealDeck({ heading = 'Waves', note = 'In phase', handler = true
 
 const events = (page) => page.evaluate(() => /** @type {any} */ (window).events);
 
+const NEW_WINDOW = 'This presentation tried to open a new window, for example the speaker view (S key), which the player cannot do.';
+const QUESTION = 'This presentation asked a question in a pop-up window, which the player cannot show.';
+
+/**
+ * A Reveal.js deck that does what AI-made lessons often do: read and write
+ * document.cookie and call crypto.randomUUID before Reveal.initialize, give
+ * feedback with alert(), ask with confirm() and prompt(), carry a caption
+ * <track> whose file the linker could not keep, and a <noscript> fallback
+ * with a web-font stylesheet and a picture.
+ */
+async function quizDeck() {
+  const [reset, styles, core] = await Promise.all(['reset.css', 'reveal.css', 'reveal.js'].map(revealFile));
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Quiz deck</title>
+<style>${reset}</style><style>${styles}</style>
+<noscript><link rel="stylesheet" href="https://fonts.example.invalid/css?family=Inter"><img src="fallback.png" alt=""></noscript></head>
+<body><div class="reveal"><div class="slides">
+<section><h1>Quiz</h1><button id="hint" type="button">Show hint</button><button id="two" type="button">Two hints</button>
+<button id="ask" type="button">Your name</button><p id="answer"></p><video muted><track kind="captions" srclang="en" label="English" default></video></section>
+<section><h2>Second slide</h2></section>
+</div></div>
+<script>${scriptText(core)}</script>
+<script>
+const visits = Number((document.cookie.match(/visits=(\\d+)/) || [0, 0])[1]) + 1;
+document.cookie = 'visits=' + visits + '; path=/; max-age=31536000';
+window.started = { cookie: document.cookie, uuid: crypto.randomUUID() };
+document.getElementById('hint').addEventListener('click', () => { window.alertReturned = alert('Think about <b>phase</b>.\\nThen try again.'); });
+document.getElementById('two').addEventListener('click', () => { alert('First hint'); alert('Second hint'); });
+document.getElementById('ask').addEventListener('click', () => {
+  const sure = confirm('Ready?');
+  const name = prompt('Your name?');
+  document.getElementById('answer').textContent = 'Hello ' + (name || '(nobody)') + (sure ? '' : ', not sure');
+});
+Reveal.initialize({ hash: true, transition: 'none' });
+</script></body></html>`;
+}
+
+/**
+ * The message box lives in a closed shadow root, which page scripts and
+ * Playwright locators cannot enter; the DevTools protocol can. Returns the
+ * box's text and whether its OK button has focus, or undefined without a box.
+ */
+async function messageBox(page, frame) {
+  // The opaque deck frame usually runs in its own process, with its own session.
+  const session = await page.context().newCDPSession(frame).catch(() => page.context().newCDPSession(page));
+  try {
+    const { root } = await session.send('DOM.getDocument', { depth: -1, pierce: true });
+    const find = (node) => {
+      if (node.nodeName === 'QFT-MESSAGE') return node;
+      for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? []), ...(node.contentDocument ? [node.contentDocument] : [])]) {
+        const found = find(child);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    const host = find(root);
+    if (!host) return undefined;
+    const shadow = host.shadowRoots?.[0];
+    const texts = [];
+    let button;
+    const walk = (node, inText) => {
+      if (node.nodeName === 'BUTTON') button = node;
+      const text = inText || (node.attributes ?? []).some((value, index, list) => index % 2 === 0 && value === 'class' && list[index + 1] === 'text');
+      if (node.nodeType === 3 && inText) texts.push(node.nodeValue);
+      for (const child of node.children ?? []) walk(child, text);
+    };
+    walk(shadow, false);
+    return { mode: shadow?.shadowRootType, text: texts.join(''), button: Boolean(button) };
+  } finally { await session.detach(); }
+}
+
 async function revealFrame(page) {
   const frame = await deckFrame(page, '.reveal .slides');
   await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal?.isReady?.()), 'Reveal.js to be ready');
@@ -141,10 +211,16 @@ export default async function run(t) {
     await until(() => page.evaluate(() => !document.fullscreenElement), 'fullscreen to end');
 
     await page.keyboard.press('s');
-    await until(async () => (await events(page)).warnings.some((text) => /setting 'marked'/.test(text)), 'the speaker view failure to be a warning');
+    await until(async () => (await events(page)).warnings.includes(NEW_WINDOW), 'the speaker view to be a plain warning');
     await page.keyboard.press('ArrowLeft');
     await until(async () => (await events(page)).positions.at(-1) === '1/0/1', 'the deck to keep playing after S');
+    await page.keyboard.press('s');
+    await page.keyboard.press('ArrowRight');
+    await until(async () => (await events(page)).positions.at(-1) === '2/0', 'the deck to keep playing after a second S');
     const reported = await events(page);
+    assert.equal(reported.warnings.filter((text) => text === NEW_WINDOW).length, 1, 'one warning per playback');
+    assert.ok(!reported.warnings.some((text) => /setting 'marked'/.test(text)), 'the TypeError that follows is not a second, raw warning');
+    await press(page, 'ArrowLeft', '1/0/1');
     assert.deepEqual(reported.errors, []);
     assert.equal(reported.states.at(-1), 'ready');
     assert.equal(await page.locator('#host iframe').count(), 1);
@@ -173,6 +249,70 @@ export default async function run(t) {
     assert.equal(reported.states.at(-1), 'ready');
     assert.ok(reported.warnings.every((text) => typeof text === 'string' && text.length <= 350));
     await press(page, 'ArrowRight', '2/0');
+  });
+
+  await t.step('Cookies and randomUUID work, alert() shows a message box in the deck, confirm() and prompt() warn once', async () => {
+    const quiz = await quizDeck();
+    assert.equal(await page.evaluate((html) => window.play(html, 'tolerant'), quiz), 'ready');
+    const quizFrame = await revealFrame(page);
+    const started = await quizFrame.evaluate(() => /** @type {any} */ (window).started);
+    assert.equal(started.cookie, 'visits=1');
+    assert.match(started.uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(await quizFrame.evaluate(() => [typeof navigator.clipboard, typeof caches, typeof navigator.serviceWorker]), ['undefined', 'undefined', 'undefined'],
+      'feature checks in decks still see what is missing');
+
+    await quizFrame.click('#hint');
+    await until(async () => (await messageBox(page, quizFrame))?.text === 'Think about <b>phase</b>.\nThen try again.', 'the alert text to show as text');
+    assert.equal((await messageBox(page, quizFrame)).mode, 'closed');
+    assert.equal(await quizFrame.evaluate(() => /** @type {any} */ (window).alertReturned), undefined);
+    assert.equal(await quizFrame.evaluate(() => document.activeElement?.localName), 'qft-message', 'OK has the keyboard');
+    // Keys go to the box, not to the deck or the host's Escape handling.
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Escape');
+    await until(async () => (await messageBox(page, quizFrame)) === undefined, 'Escape to close the message');
+    assert.deepEqual(await indices(quizFrame), { h: 0, v: 0, f: undefined }, 'no slide change while the message showed');
+    assert.equal(await quizFrame.evaluate(() => Reveal.isOverview()), false, 'nor the overview that Escape opens');
+    assert.equal((await events(page)).escapes, 0, 'that Escape did not reach the host');
+    assert.equal(await quizFrame.evaluate(() => document.activeElement?.id), 'hint', 'focus goes back to the button');
+    await page.screenshot({ path: resolve(t.artifacts, 'player-before-alert.png') });
+
+    await quizFrame.click('#two');
+    await until(async () => (await messageBox(page, quizFrame))?.text === 'First hint', 'the first of two messages');
+    await page.screenshot({ path: resolve(t.artifacts, 'player-alert.png') });
+    await page.keyboard.press('Enter');
+    await until(async () => (await messageBox(page, quizFrame))?.text === 'Second hint', 'the queued second message');
+    await page.keyboard.press(' ');
+    await until(async () => (await messageBox(page, quizFrame)) === undefined, 'Space to close the last message');
+    await page.keyboard.press('ArrowRight');
+    await until(async () => (await indices(quizFrame)).h === 1, 'keys to reach the deck again');
+    await page.keyboard.press('Escape');
+    await until(async () => (await events(page)).escapes === 1, 'Escape to reach the host again');
+    await until(() => quizFrame.evaluate(() => Reveal.isOverview()), 'Escape to reach the deck again (its overview)');
+    await page.keyboard.press('Escape');
+    await until(() => quizFrame.evaluate(() => !Reveal.isOverview()), 'the overview to close');
+    await page.keyboard.press('ArrowLeft');
+    await until(async () => (await indices(quizFrame)).h === 0, 'the first slide again');
+
+    await quizFrame.click('#ask');
+    await until(async () => (await quizFrame.locator('#answer').textContent()) === 'Hello (nobody), not sure', 'confirm and prompt to answer as the sandbox does');
+    await quizFrame.click('#ask');
+    await until(async () => (await events(page)).warnings.includes(QUESTION), 'the question warning');
+    const reported = await events(page);
+    assert.equal(reported.warnings.filter((text) => text === QUESTION).length, 1, 'one warning per playback');
+    assert.ok(!reported.warnings.some((text) => /video or sound/.test(text)), `no warning for the caption track: ${reported.warnings.join(' | ')}`);
+    assert.deepEqual(reported.errors, []);
+  });
+
+  await t.step('A <noscript> fallback does not stop a deck under either profile', async () => {
+    const plain = '<!doctype html><html><head><title>Plain</title><noscript><link rel="stylesheet" href="https://fonts.example.invalid/css"></noscript></head><body><noscript><img src="p.png" alt=""></noscript><p>Plain page</p></body></html>';
+    for (const profile of ['strict', 'tolerant']) assert.equal(await page.evaluate(([html, value]) => window.play(html, value), [plain, profile]), 'ready', profile);
+    const plainFrame = await deckFrame(page, 'p');
+    assert.equal(await plainFrame.evaluate(() => document.querySelectorAll('noscript').length), 0);
+    // Back to the Reveal.js deck for the next steps.
+    assert.equal(await page.evaluate((html) => window.play(html, 'tolerant'), deck), 'ready');
+    frame = await revealFrame(page);
+    await frame.evaluate(() => Reveal.slide(2, 0));
+    await until(async () => (await events(page)).positions.at(-1) === '2/0', 'the host to hear 2/0');
   });
 
   await t.step('update() replays an edited deck at the same slide and fragment', async () => {
