@@ -23,7 +23,7 @@ Research report · 2026-11-26
 | 4. Edit Slidev source | Reorder and edit slides with an explicit rebuild step; later a preview for simple decks | 1–2 weeks, then 3–5 plus upkeep |
 | 5. Remaining decks (optional) | Third-party plugins, large media, Monaco decks | 1–2 week design spike, then re-estimate |
 
-Sizes are the sums of the per-item estimates in section 8, for one developer working conventionally, with basic tests. Read them as relative sizes. Stages 0, 1 and 3 deliver the whole goal for Reveal.js on today's hosting and security model.
+Sizes are the sums of the per-item estimates in section 8, for one developer working conventionally, with basic tests. Read them as relative sizes. Stages 0, 1 and 3 deliver the whole goal for the Reveal.js decks AI tools produce, on today's hosting and security model.
 
 **Decisions for the owner, with my recommendation**
 
@@ -34,7 +34,7 @@ Sizes are the sums of the per-item estimates in section 8, for one developer wor
 
 ## 2. How this was researched
 
-Fourteen research agents completed work: two code audits, four technology deep-dives (Reveal.js, Slidev, editor, AI hand-off), two assistants that wrote decks from ordinary teacher requests, two prototype agents for a second-origin player, a platform fact-check, and three adversarial verifiers. Agents read the repository and primary sources (upstream source code, official documentation, npm tarballs, CDN statistics), and built and ran prototypes against the site's production build with Playwright. Two reviewers then checked a draft of this report, one against the evidence and one as a critical reader.
+Fourteen research agents completed work: two code audits, four technology deep-dives (Reveal.js, Slidev, editor, AI hand-off), two assistants that wrote decks from ordinary teacher requests, two prototype agents for a second-origin player, a platform fact-check, and three adversarial verifiers. Agents read the repository and primary sources (upstream source code, official documentation, npm tarballs, CDN statistics), and built and ran prototypes against the site's production build with Playwright. Two reviewers then checked a draft of this report, one against the evidence and one as a critical reader. A final pass re-ran eight core behaviours in Firefox.
 
 **Evidence** is kept next to this report. `findings/` holds each agent's numbered findings with evidence pointers; a citation such as "A1 F4" means finding 4 in `findings/A1.txt`. `notes/` holds the long-form notes. `prototypes.zip` holds prototype sources, test scripts and logs; paths such as `prototypes/B7/…` in the findings and notes refer to folders inside that archive.
 
@@ -47,12 +47,13 @@ Fourteen research agents completed work: two code audits, four technology deep-d
 - *Second-round agents.* The first served-mode prototype was unsafe, and Playwright's default settings had hidden the effect of browser storage partitioning.
 - *My own test.* A proposed fix for the WebRTC channel, removing the constructor, can be bypassed through a child frame.
 - *Reviewers.* The stage sizes in the summary did not add up from the per-item estimates, the roadmap order ignored two dependencies, and the served-mode stage claimed more than was proven. All three are corrected here.
+- *Firefox pass.* The core single-file path works in Firefox 159, with three differences: a looping deck freezes the editor, assigning `location.hash` throws, and the network channels differ (section 5.5, Appendix C).
 
 Appendix B lists every re-tested claim.
 
 **Limits**
 
-- **Desktop Chromium only.** Every experiment ran in Chromium 158 on Linux. Nothing was run in Safari, on a phone or tablet, with touch input, or with a screen reader. Firefox: see Appendix B.
+- **Desktop Chromium, plus one Firefox pass.** Experiments ran in Chromium 158 on Linux. Eight core behaviours were re-run once in headless Firefox 159 (Appendix C). Nothing was run in Safari, on a phone or tablet, with touch input, or with a screen reader.
 - **Small deck sample.** Four real AI-made decks; two written by AI assistants for this study, both from one model family; and decks written by the agents themselves. No deck was produced by ChatGPT, Gemini or Copilot.
 - **Gaps.** A first research round was cut short by a usage limit. Its topics were re-covered in a smaller second round, except three: a UX and accessibility audit of the workspace, a dedicated study of presenter and export features, and Slidev decks written by assistants from ordinary requests.
 - **Prototypes, not products.** They prove feasibility and give measurements. None is production code.
@@ -114,11 +115,11 @@ Ordinary behaviour then kills the deck, because every error is fatal (A1 F6; B1 
 - One image the linker failed to inline.
 - For Slidev: the default Wake Lock request, or one remote image.
 
-A 2.2 KB shim (tolerant History calls, fullscreen forwarded to the host, an inert `window.open`, a print stub) removes the first two on Reveal.js 4.x–6.x; the keys then do nothing rather than stop the deck (B1 F6).
+A 2.2 KB shim (tolerant History calls, fullscreen forwarded to the host, an inert `window.open`, a print stub) removes the first two on Reveal.js 4.x–6.x; the keys then do nothing rather than stop the deck (B1 F6). The History guard works in Firefox too, where it must also catch assignments to `location.hash`, which throw there.
 
 Other player findings:
 
-- **Keyboard focus.** In full Chromium, arrow keys do not reach the deck after Start or Present until the user clicks the slide. This affects the shipped Slidev example. A three-line repair works. CI misses it because it runs the headless shell and clicks first (A1 F7, F24; confirmed by two verifiers).
+- **Keyboard focus.** In full Chromium, arrow keys do not reach the deck after Start or Present until the user clicks the slide. This affects the shipped Slidev example. A three-line repair works. CI misses it because it runs the headless shell and clicks first (A1 F7, F24; confirmed by two verifiers). Firefox does not show the defect, and the repair is harmless there.
 - **"Ready" is not proof of a working deck.** A deck whose external Markdown is blocked reaches "Playing locally" with one empty slide (verifier V2).
 - **Remote content cannot load.** The player's policy blocks frames and remote images, so embedded videos, web simulations in iframes and hot-linked pictures stay blank or stop the deck. This is by design and applies to every single-file deck.
 - **Fidelity.** The preparation step injects `box-sizing: border-box` on every element and drops `<title>`, the viewport meta and, in some cases, body attributes (A1 F17).
@@ -150,7 +151,7 @@ Other player findings:
 - **Slidev 53.1.0 is a Vite application.** Markdown is compiled to Vue by 22 plugins in Node. There is no official in-browser mode; the official online option is StackBlitz (B2 F12, F17). It needs Node 22.22 or newer, which is newer than the repository's own starter says (B7 F11).
 - **An ordinary build cannot be opened from a ZIP as it is.** It is blank from `file://`, in a `blob:` document, in an opaque sandbox, and under a sub-path with the default base (B2 F1, re-tested on a new deck).
 - **A build can be converted.** Six textual patches plus bundling turn an ordinary build into one HTML that the current sandbox plays; it worked for 7 router and base-path variants (B2 F2). A verifier converted all 7 again and replayed 6 on the production site before its run was cut off. It then converted three new builds with both the Node and the in-browser converter: a new 7-slide deck, the same deck with a Mermaid diagram, and a build made with Slidev 52.11.5 on Vite 7. No patch broke. Navigation, click steps, KaTeX, an image, scoped CSS and a slider component worked with no external request (verifier V3).
-- **Conversion runs under today's CSP.** esbuild-wasm inside a same-origin Worker converted small decks in 0.9–1.8 s. With one Mermaid diagram it took 7.9 s and produced a 10 MB file. esbuild-wasm is a 3.6 MB (gzip) download, loaded on demand. Decks that use Monaco are not covered.
+- **Conversion runs under today's CSP.** esbuild-wasm inside a same-origin Worker converted small decks in 0.9–1.8 s. With one Mermaid diagram it took 7.9 s and produced a 10 MB file. esbuild-wasm is a 3.6 MB (gzip) download, loaded on demand. Decks that use Monaco are not covered. The Worker rule holds in Firefox too, and a converted build played there.
 - **A location-independent build needs three settings.** A stock project with `routerMode: hash` (or `memory`), `fonts: { provider: none }` and `slidev build --base ./` works from any HTTP folder with the network blocked. It still requests Slidev's default favicon from jsDelivr, so a truly offline build also needs a local `favicon` (B7 F6, corrected by V3). The bespoke starter, Vite profile and packer are not required for this.
 - **Source can be re-rendered without Node for a subset.** A prebuilt generic Slidev client plus a 708 KB (gzip) in-browser compiler, built from upstream parser and Markdown plugins, compiled decks in 0.07–1.4 s with no `eval` or WebAssembly (B2 F3). On a new deck the result had the same DOM on 7 of 7 slides but the same pixels on only 4 of 7: a utility class from slide front matter was lost and code colours differed. Mermaid is unsupported. On the official kitchen-sink template only 7 of 16 slides matched (verifier V3; B2 F3).
 - **Out of reach without Node or network:** npm themes, addons and dependencies, `vite.config` and `setup/` files, Monaco, TwoSlash, remote embeds. Icons need bundled icon data (B2 F8).
@@ -174,14 +175,14 @@ Other player findings:
 - A script-inserted `<link rel="prerender">` causes a real HTTP GET to any URL. It carries data out in the URL only; the deck cannot read a response.
 - WebRTC sends STUN packets to a server the deck names. Only sending was tested; with a cooperating server the channel may work in both directions.
 
-What can leave: the deck's own content, whatever the viewer types or clicks inside the deck, and the viewer's IP address. Once decks are editable on the site, "its own content" includes the teacher's edits and speaker notes. What cannot: the editor's drafts and other saved decks. The small interactive-demo sandbox has the same two channels.
+What can leave: the deck's own content, whatever the viewer types or clicks inside the deck, and the viewer's IP address. Once decks are editable on the site, "its own content" includes the teacher's edits and speaker notes. What cannot: the editor's drafts and other saved decks. The small interactive-demo sandbox has the same two channels. Firefox 159 differs in detail: it sends no prerender request, but a `preconnect` link opens a TCP connection to any host and port, and WebRTC leaks the same way.
 
-No tested in-page fix closes either channel. Freezing the `rel` setter is bypassed by `document.write`. Removing `RTCPeerConnection` is bypassed from a `srcdoc` child frame, which `frame-src 'none'` does not govern; this was shown on a test page carrying the player's exact policy (Appendix B). The accurate statement for users is: decks cannot read your documents, and ordinary network requests are blocked.
+No tested in-page fix closes either channel. Freezing the `rel` setter is bypassed by `document.write`. Removing `RTCPeerConnection` is bypassed from a `srcdoc` child frame, which `frame-src 'none'` does not govern; this was shown on a test page carrying the player's exact policy. A re-test through the shipped player was started but not completed (Appendix B). The accurate statement for users is: decks cannot read your documents, and ordinary network requests are blocked.
 
 Other points:
 
 - **A deck can speak in the editor's voice.** It can forge the player's "ready" and "error" messages, and forged error text appears verbatim in the editor's own notice bar (A1 F13, confirmed). Combined with the two channels, a deck could show "your session expired, sign in at …" in the editor's interface and send out what the user types into the deck. Deck-supplied text should be labelled, or shown only inside the deck's frame.
-- **Runaway decks.** An infinite loop does not freeze the editor on desktop Chromium, which gives sandboxed frames their own process. It froze the tab in a single-process Chromium build. Chrome on Android is documented to share processes in most cases, so the same is expected there; that was not tested (A1 F10; C2 F1).
+- **Runaway decks.** An infinite loop does not freeze the editor on desktop Chromium, which gives sandboxed frames their own process. In Firefox 159 it froze the whole editor tab and Stop could not be clicked, because the deck runs in the editor's process there. Chrome on Android is documented to share processes in most cases, so the same is expected; that was not tested (A1 F10; C2 F1; Appendix C).
 - **A service worker on the app's own origin cannot serve decks.** It cannot reach the opaque sandboxed frame, and a frame given the app's origin can read the editor's storage (A1 F9).
 
 ### 5.6 Served mode: a player on a second origin
@@ -268,7 +269,7 @@ Effort key: S up to 3 days, M 1–2 weeks, L 3–5 weeks.
 | # | Work item | Effort |
 | --- | --- | --- |
 | 0.1 | Fix the defects in section 9 | S each, most of them hours |
-| 0.2 | Cross-browser spike: re-run the prototype scripts in Firefox and WebKit, and try the current player by hand on an iPad and an Android phone (open, Start, swipe, a looping deck, a 20 MB deck) | S |
+| 0.2 | Cross-browser spike: repeat the Firefox pass of Appendix C in release Firefox and in WebKit, and try the current player by hand on an iPad and an Android phone (open, Start, swipe, a looping deck, a 20 MB deck). Test whether serving the runner page from a second site gives Firefox a separate process for the deck; that is untested | S |
 | 0.3 | Collect 20–30 decks from ordinary teacher prompts in ChatGPT, Gemini, Copilot and Claude, and record how many the adapter prototype plays | S |
 | 0.4 | Make the saved-package list tolerant of records it does not understand, before any new engine is stored | S |
 | 0.5 | Accessibility pass on the current player: keyboard path into and out of the deck frame, announcements, focus order | S |
@@ -281,7 +282,7 @@ Effort key: S up to 3 days, M 1–2 weeks, L 3–5 weeks.
 | --- | --- | --- | --- |
 | 1.1 | **Classify uploads.** Accept `.html`, ZIP, a dropped folder and pasted HTML. Detect Reveal.js (entry file, version, problems) and Slidev (source or build, version, base path). Replace the Slidev-specific messages | M | B1 F11; B2 F18 |
 | 1.2 | **Linker.** In the browser: inline relative CSS, scripts and assets, including `data-src`, backgrounds, Markdown images and CSS `url()`/`@import`; inline external Markdown; map Reveal.js and KaTeX CDN URLs to a Reveal.js 6.0.2 distribution served by the site as lazy assets; math shim; convert inline event handlers. It never fetches from third parties | M | B7 F3; A2 F2; verifier V2 |
-| 1.3 | **Tolerant runtime.** History shim; errors after start-up become a visible log instead of removing the frame; relay Reveal's messages through the runner so the host knows slide count and position; fullscreen and the screen wake lock handled by the host; stop altering the deck's document | M | B1 F6, F7; A1 F6, F17 |
+| 1.3 | **Tolerant runtime.** History shim, also covering `location.hash`; errors after start-up become a visible log instead of removing the frame; relay Reveal's messages through the runner so the host knows slide count and position; fullscreen and the screen wake lock handled by the host; stop altering the deck's document | M | B1 F6, F7; A1 F6, F17 |
 | 1.4 | **Package model and migration.** Engines `reveal`, `slidev`, `html`; manifest optional; playability checked at import; de-duplicate by content hash. Design the schema together with stage 3's editable store, version the database, keep existing packages playable, and offer "download everything" before upgrading | M | A1 F15, F23 |
 | 1.5 | **Check report and AI dialog.** Emit a compact `qft-deck-check/1` report for every import, including rejected ones, with a Copy-for-AI button. Add a Reveal.js choice; replace the long prompts with the drafted 191- and 197-word profiles | M | B7 F13, F14 |
 | 1.6 | **Standalone file for every imported deck.** The export exists for packages today | S | — |
@@ -380,7 +381,8 @@ Start with a 1–2 week design spike that compares blob files in the sandbox wit
 
 | Defect | Evidence | Re-tested |
 | --- | --- | --- |
-| Arrow keys do not reach the deck after Start or Present until the user clicks (full Chromium) | A1 F7 | Confirmed by V1 and V3 |
+| Arrow keys do not reach the deck after Start or Present until the user clicks (full Chromium; not Firefox) | A1 F7 | Confirmed by V1 and V3 |
+| In Firefox, a deck with an infinite loop freezes the whole editor tab and Stop cannot be clicked | Appendix C | Firefox pass only |
 | "Playback has no external connections" is inaccurate, for the player and for interactive demos | A1 F4, F5 | Confirmed by V1 |
 | Deck-supplied error text is shown in the editor's notice bar without attribution | A1 F13 | Confirmed by V1 |
 | `?view=scroll` or `?print-pdf` on the site URL breaks the Markdown slide preview | A2 F16 | Confirmed by V1 |
@@ -398,7 +400,7 @@ Start with a 1–2 week design spike that compares blob files in the sandbox wit
 
 ## 10. Open questions and risks
 
-- **Other browsers and devices.** Safari, phones, tablets and touch input were not tested. The History behaviour of `blob:` documents, the focus hand-off, Worker CSP rules, the two network channels and, for served mode, partitioned service workers all need checking; stage 0.2 exists for this.
+- **Other browsers and devices.** Safari, phones, tablets and touch input were not tested, and Firefox only once, in a headless build. Served mode's partitioned service workers were tested in Chromium only. Stage 0.2 exists for this.
 - **Deck sample.** The adapter's pass rates rest on a dozen decks from one AI vendor and from the agents. Stage 0.3 exists for this.
 - **Version coercion.** Six of the seven CDN-linked 4.x and 5.x decks tried played on Reveal.js 6.0.2; the seventh failed for an unrelated reason, a chart plugin. About 87% of jsDelivr's Reveal.js traffic is 4.x or 5.x, so this needs a larger sample. The fallback is to serve one build per major, about 4.7 MB gzip in total (B1 F15).
 - **MathJax.** Rendering MathJax decks with KaTeX is untested; for a physics site this is a central case.
@@ -424,6 +426,7 @@ Start with a 1–2 week design spike that compares blob files in the sandbox wit
 | V1 | Verifier: security and player claims | `notes/V1-security-player.md`, `prototypes/V1/` |
 | V2 | Verifier: Reveal.js pipeline, unseen decks | `findings/V2.txt`, `notes/V2-reveal-pipeline.md`, `prototypes/V2/` |
 | V3 | Verifier: Slidev pipeline, a new deck | `findings/V3.txt`, `notes/V3-slidev-pipeline.md`, `prototypes/V3/` |
+| X2 | Firefox pass of eight core behaviours | `notes/X2-firefox-pass.md`, `prototypes/X2/` |
 | — | My own check of the WebRTC mitigation | `prototypes/M1/` |
 
 The `prototypes/` folders are inside `prototypes.zip`, which has its own README listing the most reusable files. Ready-to-use drafts (the two short AI prompts, a skill outline and the check-report schema) are in `prototypes/B7/artefacts/`. The archive's `test-decks/` folder holds the two decks written by AI assistants for this study. Third-party decks and downloaded packages used in tests are not included.
@@ -436,7 +439,7 @@ Verdicts by the three verifiers, who re-ran most experiments from a copy and add
 | --- | --- |
 | A script-inserted prerender link sends an HTTP GET from inside the player | Confirmed, also from the `file://` export and with background-networking flags removed |
 | WebRTC sends STUN packets from inside the player | Confirmed |
-| Removing `RTCPeerConnection` closes that channel | Verifier: yes. My test on a page carrying the player's policy: no, a `srcdoc` child frame restores it |
+| Removing `RTCPeerConnection` closes that channel | Verifier: yes. My test on a page carrying the player's policy: no, a `srcdoc` child frame restores it. An agent sent to repeat this through the shipped player, and to re-run the isolation probes from a child frame, was stopped by the model's safety filters, so both remain open |
 | Apart from those two channels, a hostile package cannot reach the editor or the network | Confirmed with an independent probe set, run in the deck's main document |
 | Arrow keys do not reach the deck after Start; three-line repair works | Confirmed on the shipped example |
 | `hash: true` kills a Reveal.js deck at start; a History shim fixes it; F and S kill a running deck | Confirmed; S only when the notes plugin is loaded |
@@ -462,3 +465,23 @@ Verdicts by the three verifiers, who re-ran most experiments from a copy and add
 | Build size and cost figures; template is 314 files and 37 MB | Confirmed with caveats: the template was checked statically, and install cost was measured on 52.11.5 |
 | A built Slidev client exposes its router through the Vue app | Confirmed |
 | Slidev upload classifier 17/17 | Kinds confirmed; router mode wrong for a 52.11.5 build |
+
+## Appendix C — Firefox pass
+
+Eight behaviours re-run once in Firefox 159 against the production build. This was Playwright's headless Firefox build: focus is emulated, and the `preconnect` result appeared only with Firefox's release-default network setting restored. Release Firefox on a desktop was not available.
+
+| Behaviour | Chromium 158 | Firefox 159 |
+| --- | --- | --- |
+| Shipped Slidev example: Start, then arrow keys | Plays; keys need a click first | Plays; keys work at once |
+| Inlined Reveal.js 6.0.2 deck | Plays | Plays |
+| `hash: true` deck, without and with the History guard | Stopped by a History error; plays with the guard | Same |
+| `location.hash = '#x'` inside the deck | Silently refused | Throws a TypeError |
+| Adapter output for an AI-made deck (5.2.1 mapped to 6.0.2) | Plays; 36 formulas; slider works | Same |
+| Converted Slidev build | Plays; component responds | Same |
+| WebAssembly in a same-origin Worker under the site's CSP | Allowed there; blocked on the page and in `blob:` Workers | Same |
+| Prerender link inserted by a deck | An HTTP GET leaves | Nothing; Firefox has no prerender |
+| Preconnect link inserted by a deck | Not observable under Playwright | A TCP connection leaves, with no HTTP bytes |
+| WebRTC STUN | Packets leave | Packets leave, to non-loopback addresses |
+| `fetch` and images | Blocked | Blocked |
+| Deck with an infinite loop | Editor stays responsive; Stop works | Editor tab freezes; Stop cannot be clicked |
+| `blob:` URLs made by the parent, and made inside the frame | Fail; work | Same |
