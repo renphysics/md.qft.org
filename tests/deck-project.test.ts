@@ -139,9 +139,9 @@ describe('building playable decks', () => {
     const codes = reveal4.issues.map((issue) => issue.code);
     assert.ok(!codes.includes('inline-event-handler'), 'the linker converts onclick, so the blocking note goes');
     assert.equal(codes.filter((code) => code === 'external-font').length, 1, 'one note per font host');
-    const unpinned = new File([`<!doctype html><html><head><link rel="stylesheet" href="https://unpkg.com/reveal.js/dist/reveal.css"></head><body><div class="reveal"><div class="slides"><section><h1>A</h1></section></div></div><script src="https://unpkg.com/reveal.js/dist/reveal.js"></script><script>Reveal.initialize();</script></body></html>`], 'unpinned.html');
-    const kept = await buildPlayable(await opened(unpinned), deps());
-    assert.ok(kept.issues.some((issue) => issue.code === 'reveal-unpinned-cdn'), 'detection notes the linker does not repeat are kept');
+    const oldPaths = new File([`<!doctype html><html><head><link rel="stylesheet" href="https://unpkg.com/reveal.js@6.0.2/dist/reveal.css"></head><body><div class="reveal"><div class="slides"><section><h1>A</h1></section></div></div><script src="https://unpkg.com/reveal.js@6.0.2/dist/reveal.js"></script><script src="https://unpkg.com/reveal.js@6.0.2/plugin/notes/notes.js"></script><script>Reveal.initialize({ plugins: [RevealNotes] });</script></body></html>`], 'old-paths.html');
+    const kept = await buildPlayable(await opened(oldPaths), deps());
+    assert.ok(kept.issues.some((issue) => issue.code === 'reveal-4x-plugin-paths-on-6x-files'), 'detection notes the linker does not repeat are kept');
     const local = await buildPlayable(await opened(zipFixture('local-project')), deps());
     assert.ok(!local.issues.some((issue) => issue.code === 'library-file-supplied'));
     assert.ok(local.issues.some((issue) => issue.code === 'bundled-library'));

@@ -1,5 +1,6 @@
 import { parse, type DefaultTreeAdapterTypes } from 'parse5';
 import { decodeText } from './deck-archive';
+import { BUNDLED_VERSIONS, mapLibraryUrl } from './deck-vendor';
 import { cleanReportedText } from './presentation-messages';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
 
@@ -583,8 +584,11 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
       if (range) major = Number(range[1]);
     }
   }
-  const unpinned = report.revealCdn.find(({ cdn }) => !cdn.spec || cdn.spec === 'latest');
-  const ranged = report.revealCdn.find(({ cdn }) => cdn.spec && cdn.spec !== 'latest' && !EXACT_VERSION.test(cdn.spec));
+  // A version matters only for files that are really loaded from the CDN; the
+  // ones the bundled copy replaces need nothing from the person.
+  const loadedFromCdn = report.revealCdn.filter(({ url }) => !mapLibraryUrl(url));
+  const unpinned = loadedFromCdn.find(({ cdn }) => !cdn.spec || cdn.spec === 'latest');
+  const ranged = loadedFromCdn.find(({ cdn }) => cdn.spec && cdn.spec !== 'latest' && !EXACT_VERSION.test(cdn.spec));
   if (unpinned) {
     issues.add('reveal-unpinned-cdn', 'warning',
       `Reveal.js is loaded from ${shown(unpinned.cdn.host, 80)} without a version, so its files can change or disappear. Name an exact version, such as reveal.js@6.0.2.`,
@@ -615,8 +619,8 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
     }
   }
   if (major !== undefined && major < 4) {
-    issues.add('reveal-old-version', 'warning',
-      `This deck was made for Reveal.js ${major}. It plays with a newer Reveal.js, and some old plugins may not work. Ask for a deck made with Reveal.js 6.`,
+    issues.add('reveal-old-version', 'info',
+      `This presentation was made for Reveal.js ${major}; it plays with Reveal.js ${BUNDLED_VERSIONS['reveal.js']}. If something looks wrong, ask your AI assistant for a Reveal.js 6 version.`,
       page.path);
   }
 
