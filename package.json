@@ -20,6 +20,10 @@
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-css": "6.3.1",
+    "@codemirror/lang-html": "6.4.12",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/lang-json": "6.0.2",
     "@codemirror/lang-markdown": "6.5.2",
     "@codemirror/language": "6.13.1",
     "@codemirror/search": "6.7.2",
@@ -34,10 +38,12 @@
     "@mdit/plugin-tasklist": "1.1.4",
     "astro": "7.4.4",
     "codemirror": "6.0.2",
+    "esbuild-wasm": "0.28.2",
     "fflate": "0.8.3",
     "highlight.js": "11.12.0",
     "katex": "0.19.1",
     "markdown-it": "15.0.3",
+    "parse5": "8.1.1",
     "reveal.js": "6.0.2"
   },
   "devDependencies": {

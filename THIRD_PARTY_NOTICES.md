@@ -17,6 +17,7 @@ This inventory records the installed browser-facing dependencies and their trans
 | `@codemirror/lang-css` | 6.3.1 | MIT |
 | `@codemirror/lang-html` | 6.4.12 | MIT |
 | `@codemirror/lang-javascript` | 6.2.5 | MIT |
+| `@codemirror/lang-json` | 6.0.2 | MIT |
 | `@codemirror/lang-markdown` | 6.5.2 | MIT |
 | `@codemirror/language` | 6.13.1 | MIT |
 | `@codemirror/lint` | 6.9.7 | MIT |
@@ -32,6 +33,7 @@ This inventory records the installed browser-facing dependencies and their trans
 | `@lezer/highlight` | 1.2.5 | MIT |
 | `@lezer/html` | 1.3.13 | MIT |
 | `@lezer/javascript` | 1.5.6 | MIT |
+| `@lezer/json` | 1.0.3 | MIT |
 | `@lezer/lr` | 1.4.11 | MIT |
 | `@lezer/markdown` | 1.8.1 | MIT |
 | `@marijn/find-cluster-break` | 1.0.4 | MIT |
@@ -45,12 +47,15 @@ This inventory records the installed browser-facing dependencies and their trans
 | `commander` | 15.0.0 | MIT |
 | `crelt` | 1.0.7 | MIT |
 | `entities` | 8.1.0 | BSD-2-Clause |
+| `entities` | 9.0.0 | BSD-2-Clause |
+| `esbuild-wasm` | 0.28.2 | MIT |
 | `fflate` | 0.8.3 | MIT |
 | `highlight.js` | 11.12.0 | BSD-3-Clause |
 | `katex` | 0.19.1 | MIT |
 | `linkify-it` | 6.1.0 | MIT |
 | `markdown-it` | 15.0.3 | MIT |
 | `mdurl` | 2.1.0 | MIT |
+| `parse5` | 8.1.1 | MIT |
 | `punycode.js` | 2.3.1 | MIT |
 | `reveal.js` | 6.0.2 | MIT |
 | `style-mod` | 4.1.4 | MIT |
@@ -200,6 +205,36 @@ THE SOFTWARE.
 ### @codemirror/lang-javascript 6.2.5
 
 Source: [https://github.com/codemirror/lang-javascript](https://github.com/codemirror/lang-javascript)
+
+`LICENSE`
+
+```text
+MIT License
+
+Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @codemirror/lang-json 6.0.2
+
+Source: [https://github.com/codemirror/lang-json](https://github.com/codemirror/lang-json)
 
 `LICENSE`
 
@@ -893,6 +928,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+### @lezer/json 1.0.3
+
+Source: [https://github.com/lezer-parser/json](https://github.com/lezer-parser/json)
+
+`LICENSE`
+
+```text
+MIT License
+
+Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin>, Arun Srinivasan <rulfzid@gmail.com>, and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ### @lezer/lr 1.4.11
 
 Source: [https://code.haverbeke.berlin/lezer/lr](https://code.haverbeke.berlin/lezer/lr)
@@ -1300,6 +1365,56 @@ THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRE
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### entities 9.0.0
+
+Source: [https://github.com/fb55/entities](https://github.com/fb55/entities)
+
+`LICENSE`
+
+```text
+Copyright (c) Felix Böhm
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### esbuild-wasm 0.28.2
+
+Source: [https://github.com/evanw/esbuild](https://github.com/evanw/esbuild)
+
+`LICENSE.md`
+
+```text
+MIT License
+
+Copyright (c) 2020 Evan Wallace
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### highlight.js 11.12.0
 
 Source: [https://github.com/highlightjs/highlight.js](https://github.com/highlightjs/highlight.js)
@@ -1480,6 +1595,34 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
+```
+
+### parse5 8.1.1
+
+Source: [https://github.com/inikulin/parse5](https://github.com/inikulin/parse5)
+
+`LICENSE`
+
+```text
+Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 ### punycode.js 2.3.1
