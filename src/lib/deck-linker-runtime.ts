@@ -8,7 +8,7 @@
 export const LINKER_MARKER = 'data-qft-linker';
 
 /** Names of the inserted scripts, as the values of data-qft-linker. */
-export type LinkerScript = 'math' | 'dependencies' | 'media' | 'handlers';
+export type LinkerScript = 'math' | 'dependencies' | 'media' | 'handlers' | 'plugins';
 
 /**
  * The HTML tokenizer ends a script at "</script" and, after "<!--" followed
@@ -66,8 +66,23 @@ export function mathStandInSource(): string {
       return Array.isArray(pair) && typeof pair[0] === 'string' && typeof pair[1] === 'string' && pair[0];
     }).map(function (pair) { return { left: pair[0], right: pair[1], display: display }; });
   }
+  // MathJax-only commands that KaTeX does not know: \\label and \\require
+  // produce nothing, \\eqref and \\ref a placeholder (KaTeX numbers nothing).
+  // The deck's own macros of the same names win.
+  function defaultMacros() {
+    return {
+      '\\\\label': { tokens: [], numArgs: 1 },
+      '\\\\require': { tokens: [], numArgs: 1 },
+      '\\\\eqref': '(\\\\text{?})\\\\label{#1}',
+      '\\\\ref': '\\\\text{?}\\\\label{#1}'
+    };
+  }
+  // eqnarray is MathJax's; align lays out the same rows.
+  function preProcess(math) {
+    return math.replace(/\\\\(begin|end)\\{eqnarray(\\*?)\\}/g, '\\\\$1{align$2}');
+  }
   function macros(source) {
-    var result = {};
+    var result = defaultMacros();
     if (source && typeof source === 'object') Object.keys(source).forEach(function (name) {
       var value = Array.isArray(source[name]) ? source[name][0] : source[name];
       if (typeof value === 'string') result[name.charAt(0) === '\\\\' ? name : '\\\\' + name] = value;
@@ -87,6 +102,8 @@ export function mathStandInSource(): string {
       });
       result.delimiters = Array.isArray(result.delimiters) ? result.delimiters : katexDelimiters;
       result.ignoredTags = Array.isArray(result.ignoredTags) ? result.ignoredTags : ignored;
+      result.macros = Object.assign(defaultMacros(), result.macros && typeof result.macros === 'object' ? result.macros : {});
+      if (typeof result.preProcess !== 'function') result.preProcess = preProcess;
       return result;
     }
     var settings = (id === 'mathjax2' ? (config.mathjax2 || config.math) : config[id]) || {};
@@ -96,7 +113,8 @@ export function mathStandInSource(): string {
       throwOnError: false,
       delimiters: longestFirst(pairs(tex.displayMath || mathjaxDisplay, true).concat(pairs(tex.inlineMath || mathjaxInline, false))),
       ignoredTags: Array.isArray(skip) ? skip : ignored,
-      macros: macros(id === 'mathjax2' ? settings.TeX && settings.TeX.Macros : tex.macros)
+      macros: macros(id === 'mathjax2' ? settings.TeX && settings.TeX.Macros : tex.macros),
+      preProcess: preProcess
     };
   }
   function plugin(id) {
@@ -125,6 +143,25 @@ export function mathStandInSource(): string {
   math.MathJax4 = plugin('mathjax4');
   math.qftStandIn = true;
   window.RevealMath = math;
+})();`;
+}
+
+/**
+ * Reveal.js plugins that the deck lists in `plugins: [ … ]` but whose script
+ * was left out. Each name that is still undefined when this runs becomes a
+ * plugin that does nothing, as a function returning `{ id, init }`, which
+ * Reveal.js accepts both as a plugin and as a plugin factory. `typeof` on a
+ * name declared later with let or const throws (temporal dead zone), hence
+ * one try per name. `names` must be plain identifiers.
+ */
+export function pluginStubSource(names: readonly string[]): string {
+  const valid = names.filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
+  const lines = valid.map((name) => `  try { if (typeof ${name} === 'undefined') window[${JSON.stringify(name)}] = unavailable(${JSON.stringify(`${name}-unavailable`)}); } catch (error) {}`);
+  return `(function () {
+  function unavailable(id) {
+    return function () { return { id: id, init: function () {} }; };
+  }
+${lines.join('\n')}
 })();`;
 }
 

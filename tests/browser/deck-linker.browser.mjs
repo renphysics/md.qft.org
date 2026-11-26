@@ -6,7 +6,9 @@
  * bundled libraries read from node_modules.
  */
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tsImport } from 'tsx/esm/api';
 import { until } from './harness.mjs';
 import { deckFrame, openHost } from './player-host.mjs';
@@ -14,6 +16,21 @@ import { deckFrame, openHost } from './player-host.mjs';
 export const title = 'Linked Reveal.js decks';
 
 const load = (path) => tsImport(path, import.meta.url);
+
+/** A deck from tests/fixtures/review-decks (copies of the review's evidence) as deck files. */
+function reviewDeck(name) {
+  const root = fileURLToPath(new URL(`../fixtures/review-decks/${name}/`, import.meta.url));
+  const files = new Map();
+  const walk = (folder) => {
+    for (const item of readdirSync(folder, { withFileTypes: true })) {
+      const path = join(folder, item.name);
+      if (item.isDirectory()) walk(path);
+      else files.set(relative(root, path).split(sep).join('/'), new Uint8Array(readFileSync(path)));
+    }
+  };
+  walk(root);
+  return files;
+}
 
 /**
  * Plays linked HTML in the real player under the tolerant profile, as linked
@@ -156,6 +173,59 @@ export default async function run(t) {
     await frame.locator('#angle').press('Home');
     await until(async () => (await frame.locator('#range').textContent()) === '7.1', 'the range readout');
     assert.equal(await frame.evaluate(() => getComputedStyle(document.body).marginTop), '32px');
+  });
+
+  await step('A deck that lists plugins whose scripts were left out (RevealMenu, RevealChalkboard) still starts', async () => {
+    const files = reviewDeck('misc');
+    // Chart.js is left out as well; drop the deck's call to it, which would fail after the start.
+    const index = new TextDecoder().decode(files.get('index.html')).replace(/\.then\(function\(\)\{ new Chart[^\n]*\}\);/, ';');
+    assert.doesNotMatch(index, /new Chart/);
+    files.set('index.html', new TextEncoder().encode(index));
+    const frame = await play(page, await linked(files, 'misc'), 'misc');
+    const state = await revealState(frame);
+    assert.equal(state.slides, 7, 'title, two Markdown slides and four HTML slides');
+    assert.ok(await frame.locator('.reveal .slides h2', { hasText: 'External two' }).count() === 1, 'the Markdown slides render');
+    await frame.locator('.reveal').press('ArrowRight');
+    await until(() => frame.evaluate(() => Reveal.getIndices().h === 1), 'the arrow key to change slides');
+  });
+
+  await step('MathJax-only commands (\\label, \\require, \\eqref, eqnarray) show no raw TeX in the KaTeX stand-in', async () => {
+    const frame = await play(page, await linked(reviewDeck('math3'), 'math3'), 'math3');
+    await revealState(frame);
+    const math = await frame.evaluate(() => Object.fromEntries(['m2', 'm3', 'm4'].map((id) => [id,
+      [...document.querySelectorAll(`#${id} .katex`)].map((element) => element.querySelector('.katex-html')?.textContent ?? '').join(' | ')])));
+    assert.ok(math.m2, 'the align environment is typeset');
+    assert.doesNotMatch(math.m2, /label|eq:emc/, `align: ${math.m2}`);
+    assert.doesNotMatch(math.m3, /require/, `require: ${math.m3}`);
+    assert.doesNotMatch(math.m4, /eqnarray|No such environment/, `eqnarray: ${math.m4}`);
+    assert.equal(await frame.locator('#m4 .katex-error').filter({ hasText: 'eqnarray' }).count(), 0);
+  });
+
+  await step('A raw "<" inside a formula (the AI-made deck p2) no longer cuts the formula and the text after it', async () => {
+    const html = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@6.0.2/dist/reveal.css"></head><body>
+<div class="reveal"><div class="slides">
+<section><p id="square">方波 \\(f(x)=\\begin{cases}-1,&-\\pi<x<0\\\\ \\;\\;1,&0<x<\\pi\\end{cases}\\)，周期 \\(2\\pi\\)。它在 \\(x=0,\\pm\\pi\\) 处有跳变。</p></section>
+<section><p id="range">在 \\(0<x<\\pi\\) 内 \\(\\sin x>0\\)，所以。</p></section>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@6.0.2/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@6.0.2/dist/plugin/math.js"></script>
+<script>Reveal.initialize({ plugins: [RevealMath.KaTeX] });</script></body></html>`;
+    const frame = await play(page, await linked(new Map([['index.html', new TextEncoder().encode(html)]]), 'p2 formulas'), 'p2 formulas');
+    await revealState(frame);
+    await until(() => frame.evaluate(() => document.querySelectorAll('#square .katex').length === 3), 'the three formulas of the first paragraph');
+    const text = await frame.evaluate(() => {
+      // What shows: the typeset formulas without their hidden MathML copy of the TeX.
+      const shown = (selector) => {
+        const copy = document.querySelector(selector).cloneNode(true);
+        for (const hidden of copy.querySelectorAll('.katex-mathml')) hidden.remove();
+        return copy.textContent;
+      };
+      return { square: shown('#square'), range: shown('#range'), rangeFormulas: document.querySelectorAll('#range .katex').length };
+    });
+    assert.match(text.square, /处有跳变。$/, 'the text after the formula is there');
+    assert.doesNotMatch(text.square, /\\begin|\\\(/, 'no raw TeX');
+    assert.equal(text.rangeFormulas, 2);
+    assert.match(text.range, /内[\s\S]*所以。$/);
   });
 
   for (const name of Object.keys(RESEARCH_DECKS)) {

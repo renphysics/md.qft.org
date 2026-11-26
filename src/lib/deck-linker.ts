@@ -6,7 +6,7 @@ import {
 } from './deck-vendor';
 import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
-  mathStandInSource, mediaHelperSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
+  mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
 import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
@@ -22,6 +22,14 @@ import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
  * The deck is only parsed and rewritten as text. Nothing in it is executed
  * or fetched; the output is deterministic, and linking a linked deck again
  * returns it unchanged.
+ *
+ * Two differences from a browser are kept on purpose (review F2a.10, F2a.12):
+ * - A `<script defer src>` becomes an inline script at the end of <body>. It
+ *   still runs after the slides' markup, but while the page is parsing
+ *   (readyState "loading"), before module scripts that come earlier in the
+ *   page, and with an empty document.currentScript.src.
+ * - Of a `<picture>`, only its `<img>` plays: `<source media srcset>` for
+ *   other screen sizes (art direction) is dropped without a note.
  */
 
 type Node = DefaultTreeAdapterTypes.Node;
@@ -440,6 +448,57 @@ const CSS_SCAN = String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:[^"\\\n]|\\[\s\S])*["\n]?
 
 type CssOrigin = { kind: 'deck'; dir: string } | { kind: 'vendor'; library: VendorLibrary; dir: string };
 
+/** The last sentence of a note about something left out that the AI can fix. */
+const NEXT_STEP = 'Copy the report for your AI assistant to get a version that works here.';
+
+/**
+ * Libraries that presentations commonly load from the internet, recognised by
+ * package or file name, with what goes missing when they are left out.
+ * Checked in order: the first match names the library.
+ */
+const KNOWN_LIBRARIES: readonly { name: string; pattern: RegExp; effect: string; plugin?: true }[] = [
+  // reveal.js-menu, reveal.js-plugins (chalkboard), reveal-pointer and the like: see stubMissingPlugins.
+  { name: 'a Reveal.js plugin', pattern: /(?:^|[/@.])reveal(?:\.?js)?-[a-z]/, effect: 'what it adds to the slides (such as a menu or a chalkboard) will be missing', plugin: true },
+  { name: 'Font Awesome', pattern: /font-?awesome|@fortawesome|kit\.fontawesome\.com/, effect: 'its icons will not show' },
+  { name: 'Bootstrap Icons', pattern: /bootstrap-icons/, effect: 'its icons will not show' },
+  { name: 'Material Icons', pattern: /material[-+_ ]?(?:icons|symbols)/, effect: 'its icons will not show (their names may show as words instead)' },
+  { name: 'Mermaid', pattern: /mermaid/, effect: 'diagrams drawn with it will be missing' },
+  { name: 'Chart.js', pattern: /chart\.js|chart\.umd|chartjs/, effect: 'charts drawn with it will be missing' },
+  { name: 'Plotly', pattern: /plotly/, effect: 'charts drawn with it will be missing' },
+  { name: 'ECharts', pattern: /echarts/, effect: 'charts drawn with it will be missing' },
+  { name: 'D3', pattern: /(?:^|[/@])d3(?:@|[.-]v?\d|\.min\.js|\.js|\/|$)/, effect: 'charts and diagrams drawn with it will be missing' },
+  { name: 'Three.js', pattern: /(?:^|[/@])three(?:@|\.min\.js|\.module|\.js|\/|$)/, effect: '3D scenes drawn with it will be missing' },
+  { name: 'Tailwind', pattern: /tailwind/, effect: 'the layout and styling it provides will be missing' },
+  { name: 'Bootstrap', pattern: /bootstrap/, effect: 'the layout and styling it provides will be missing' },
+  { name: 'animate.css', pattern: /animate(?:\.min)?\.css/, effect: 'its animations will not play' },
+  { name: 'GSAP', pattern: /gsap|greensock|tweenmax|tweenlite/, effect: 'its animations will not play' },
+  { name: 'jQuery', pattern: /jquery/, effect: 'the parts of the scripts that use it will not work' },
+  { name: 'p5.js', pattern: /(?:^|[/@])p5(?:@|\.min\.js|\.js|\/|$)/, effect: 'sketches drawn with it will be missing' },
+  { name: 'Leaflet', pattern: /leaflet/, effect: 'maps drawn with it will be missing' },
+  { name: 'highlight.js', pattern: /highlight\.js|highlightjs|highlight(?:\.min)?\.js/, effect: 'code will not be coloured by it' },
+];
+
+function knownLibrary(url: string): { name: string; effect: string; plugin?: true } | undefined {
+  let text: string;
+  try {
+    const parsed = new URL(url);
+    text = `${parsed.hostname}${safeDecode(parsed.pathname)}?${safeDecode(parsed.search.replace(/\+/g, ' '))}`.toLowerCase();
+  } catch { return undefined; }
+  return KNOWN_LIBRARIES.find((library) => library.pattern.test(text));
+}
+
+/**
+ * Class names that reveal.css styles as Reveal.js's own parts wherever they
+ * appear under .reveal (see node_modules/reveal.js/dist/reveal.css). An
+ * element inside a slide with one of them is hidden or moved.
+ */
+const REVEAL_OWN_CLASSES = new Set(['controls', 'progress', 'slide-number', 'backgrounds', 'slide-background', 'speaker-notes',
+  'pause-overlay', 'playback', 'jump-to-slide', 'slides']);
+/** Plugins the bundled Reveal.js supplies, never stubbed. */
+const MAX_PLUGIN_LISTS = 5;
+const MAX_PLUGIN_NAMES = 20;
+const BUNDLED_PLUGINS = new Set(['RevealMarkdown', 'RevealHighlight', 'RevealNotes', 'RevealMath', 'RevealSearch', 'RevealZoom']);
+
 /* ----------------------------------------------------------------- linker */
 
 class DeckLinker {
@@ -474,6 +533,8 @@ class DeckLinker {
   /** Files of the deck that links (a and area elements) point to. */
   private readonly fileLinks = new Set<string>();
   private readonly skippedLower = new Map<string, string>();
+  /** Script elements that hold a bundled library, not the deck's own code. */
+  private readonly vendorElements = new WeakSet<Element>();
 
   constructor(
     private readonly files: DeckFiles,
@@ -502,12 +563,20 @@ class DeckLinker {
 
   private reportRemote(target: Extract<Target, { kind: 'remote' }>, kind: 'image' | 'media' | 'script' | 'style' | 'font' | 'page' | 'markdown'): void {
     this.removedReferences += 1;
-    if (kind === 'font' || (kind === 'style' && FONT_HOSTS.test(target.host))) {
+    const library = kind === 'script' || kind === 'style' || kind === 'font' ? knownLibrary(target.url) : undefined;
+    // The full address, as it is written in the presentation's files.
+    const address = cleanReportedText(target.url, 200);
+    if (library && kind !== 'font') {
+      // A plugin listed in Reveal's plugins gets a stand-in, so the slides still start.
+      const startUp = kind === 'script' && !library.plugin ? ' If the presentation depends on it, the slides may not start.' : '';
+      this.report(kind === 'script' ? 'external-library' : 'external-style', 'warning',
+        `The ${kind === 'script' ? 'script' : 'stylesheet'} ${target.where} (${library.name}) would have to come from the internet, so it is left out: ${library.effect}.${startUp} ${NEXT_STEP}`, address);
+    } else if (kind === 'font' || (kind === 'style' && FONT_HOSTS.test(target.host))) {
       this.report('external-font', 'info', `Web fonts from ${target.host} need the internet, so they are left out; the slides use fonts installed on this device instead.`, target.host);
     } else if (kind === 'script') {
-      this.report('external-library', 'warning', `The script ${target.where} would have to come from the internet, so it is left out. Anything that needs it will not work here.`, target.where);
+      this.report('external-library', 'warning', `The script ${target.where} would have to come from the internet, so it is left out. Anything that needs it will not work here, and if the presentation depends on it, the slides may not start. ${NEXT_STEP}`, address);
     } else if (kind === 'style') {
-      this.report('external-style', 'warning', `The stylesheet ${target.where} would have to come from the internet, so it is left out.`, target.where);
+      this.report('external-style', 'warning', `The stylesheet ${target.where} would have to come from the internet, so it is left out, and the slides may look different. ${NEXT_STEP}`, address);
     } else if (kind === 'image') {
       this.report('external-image', 'warning', `The picture ${target.where} is on the internet rather than in the deck, so it is left out.`, target.where);
     } else if (kind === 'media') {
@@ -873,7 +942,9 @@ class DeckLinker {
       const code = await this.vendor.text(file);
       if (code === undefined) { this.reportMissing(path); continue; }
       this.includedVendor.add(key);
-      elements.push(scriptElement(stripSourceMapComment(code), { ...attributes, 'data-qft-from': cleanReportedText(from, 300) }));
+      const element = scriptElement(stripSourceMapComment(code), { ...attributes, 'data-qft-from': cleanReportedText(from, 300) });
+      this.vendorElements.add(element);
+      elements.push(element);
     }
     return elements;
   }
@@ -1576,7 +1647,15 @@ class DeckLinker {
     return undefined;
   }
 
-  async link(text: string): Promise<string | undefined> {
+  async link(source: string): Promise<string | undefined> {
+    let text = source;
+    const formulas = repairFormulaTags(text);
+    if (formulas.repaired) {
+      text = formulas.html;
+      this.report('formula-less-than', 'info',
+        'A “<” inside a formula would have started an HTML tag and hidden the rest of the formula, so it is read as text and the formula shows. Writing \\lt instead of “<” (and \\gt instead of “>”) avoids the problem.',
+        this.entry || undefined);
+    }
     this.document = parse(text);
     if (treeDepth(this.document) > MAX_DEPTH) {
       this.report('deck-unreadable', 'error', 'This page is nested too deeply to prepare for playback.');
@@ -1595,6 +1674,7 @@ class DeckLinker {
     const elements = elementsOf(this.document);
     for (const element of elements) if (isTemplate(element)) templateOwners.set(element.content, element);
     this.survey(elements);
+    if (this.detection.engine === 'reveal' || this.detection.kind === 'reveal') this.classNameNote();
     for (const element of elements) {
       if (!isAttached(element)) continue;
       const name = localName(element);
@@ -1627,6 +1707,7 @@ class DeckLinker {
         await this.adaptDependencies(element);
       }
     }
+    await this.stubMissingPlugins();
     this.finish();
     return serialize(this.document);
   }
@@ -1643,6 +1724,63 @@ class DeckLinker {
     this.moduleNote();
     this.linkNote();
     this.runtimeFilesNote();
+  }
+
+  /**
+   * An element inside a slide whose class Reveal.js styles as one of its own
+   * parts (class="controls" for a demo's sliders): reveal.css hides or moves it.
+   */
+  private classNameNote(): void {
+    const found: string[] = [];
+    for (const element of elementsInsideSections(this.document)) {
+      for (const name of (getAttribute(element, 'class') ?? '').split(/\s+/)) {
+        if (REVEAL_OWN_CLASSES.has(name) && !found.includes(name)) found.push(name);
+      }
+    }
+    if (!found.length) return;
+    const quoted = found.slice(0, 3).map((name) => `“${name}”`).join(', ');
+    const more = found.length > 3 ? ` and ${found.length - 3} more` : '';
+    this.report('reveal-class-name', 'warning',
+      `Something on the slides uses the class name${found.length > 1 ? 's' : ''} ${quoted}${more}, which Reveal.js uses for its own parts, so it may be hidden or misplaced. Ask your AI assistant to rename ${found.length > 1 ? 'them' : 'it'}, for example to “demo-${found[0]}”.`,
+      found.slice(0, 3).join(', '));
+  }
+
+  /**
+   * Plugins named in `plugins: [ … ]` whose script was left out (a library from
+   * the internet) are undefined when Reveal.initialize runs, so the start-up
+   * script stops with a ReferenceError and no slide shows. Just before the
+   * script that holds the list, define each such name as a plugin that does
+   * nothing, unless something defines it by then.
+   */
+  private async stubMissingPlugins(): Promise<void> {
+    const scripts = elementsOf(this.document).filter((element) => localName(element) === 'script' && !getAttribute(element, LINKER_MARKER)
+      && !this.vendorElements.has(element) && !insideTemplate(element)
+      && (JAVASCRIPT_TYPES.test((getAttribute(element, 'type') ?? '').trim().toLowerCase()) || (getAttribute(element, 'type') ?? '').trim().toLowerCase() === 'module'));
+    const texts = scripts.map((element) => textOf(element));
+    // Bounded: a deck starts Reveal.js once or a few times, with a few plugins.
+    let lists = 0;
+    for (const [index, element] of scripts.entries()) {
+      if (lists >= MAX_PLUGIN_LISTS) break;
+      if (hasAttribute(element, 'data-qft-plugins')) continue;
+      const code = texts[index];
+      if (!/\bplugins\s*:\s*\[/.test(code) || !/\binitialize\s*\(|\bnew\s+Reveal\b/.test(code)) continue;
+      lists += 1;
+      const missing: string[] = [];
+      for (const name of pluginNames(code, MAX_PLUGIN_NAMES)) {
+        if (BUNDLED_PLUGINS.has(name) || missing.includes(name)) continue;
+        const word = new RegExp(`(?<![\\w$])${name.replace(/\$/g, '\\$')}(?![\\w$])`);
+        const defines = new RegExp(`\\b(?:var|let|const|function|class)\\s+${name.replace(/\$/g, '\\$')}(?![\\w$])|(?<![\\w$])${name.replace(/\$/g, '\\$')}\\s*=(?!=)`);
+        if (defines.test(code) || texts.some((other, at) => at !== index && word.test(other))) continue;
+        missing.push(name);
+      }
+      if (!missing.length) continue;
+      insertBefore(element, [scriptElement(pluginStubSource(missing), { [LINKER_MARKER]: 'plugins' satisfies LinkerScript })]);
+      setAttribute(element, 'data-qft-plugins', '');
+      for (const name of missing) {
+        this.report('plugin-unavailable', 'warning',
+          `The Reveal.js plugin ${name} is not available here, because its script was left out, so the slides play without it.`, name);
+      }
+    }
   }
 
   /** A link to another file of the deck (a page, a worksheet): it cannot open in the player. */
@@ -1761,6 +1899,39 @@ class DeckLinker {
 }
 
 /* ---------------------------------------------------------------- helpers */
+
+/** Elements that have a <section> among their ancestors, in document order. */
+function elementsInsideSections(root: ParentNode): Element[] {
+  const result: Element[] = [];
+  const stack: [ChildNode, boolean][] = [...children(root)].reverse().map((node) => [node, false]);
+  while (stack.length) {
+    const [node, inside] = stack.pop()!;
+    if (!isElement(node)) continue;
+    if (inside) result.push(node);
+    const below = inside || (localName(node) === 'section' && node.namespaceURI === NS.HTML);
+    const nested = children(node);
+    for (let index = nested.length - 1; index >= 0; index -= 1) stack.push([nested[index], below]);
+  }
+  return result;
+}
+
+/** The first `limit` bare identifiers listed in the `plugins: [ … ]` of a script. */
+function pluginNames(code: string, limit: number): string[] {
+  const names = new Set<string>();
+  const pattern = /\bplugins\s*:\s*\[/g;
+  for (let match; names.size < limit && (match = pattern.exec(code));) {
+    const open = match.index + match[0].length - 1;
+    const end = listEnd(code, open);
+    const list = code.slice(open + 1, end - 1).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    for (const item of list.split(',')) {
+      if (names.size >= limit) break;
+      const name = item.trim();
+      if (/^[A-Za-z_$][\w$]{0,80}$/.test(name)) names.add(name);
+    }
+    pattern.lastIndex = Math.max(end, pattern.lastIndex);
+  }
+  return [...names];
+}
 
 /** Up to three names, then how many more. */
 function namedList(names: readonly string[]): string {
@@ -1894,6 +2065,108 @@ export function replaceIframes(text: string, replace: (tag: string) => string, m
   if (!parts.length) return text;
   parts.push(text.slice(last));
   return parts.join('');
+}
+
+/** Elements whose content the HTML parser reads as text, up to their end tag. */
+const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes', 'noscript', 'plaintext']);
+/** Inline tags a formula may really contain; "<b>" there is markup, not "less than b". */
+const INLINE_TAGS = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'del', 'dfn', 'em', 'font', 'i', 'img', 'ins', 'kbd',
+  'mark', 'q', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'u', 'var', 'wbr']);
+/** How far a formula's closing delimiter may be from its opening one. */
+const FORMULA_REACH = 4000;
+const FORMULA_DELIMITERS: readonly [string, string][] = [['\\(', '\\)'], ['\\[', '\\]'], ['$$', '$$']];
+
+const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+
+/**
+ * A "<" directly followed by a letter inside \( … \), \[ … \] or $$ … $$ in
+ * the page's text, as in \(0<x<\pi\), starts an HTML tag and swallows the
+ * rest of the formula and the text after it. Writes such a "<" as "&lt;"
+ * when the closing delimiter follows within FORMULA_REACH characters. Text
+ * only: script, style, textarea and the other raw-text elements, comments,
+ * tags and their attribute values are copied unchanged, and so is a "<" that
+ * starts a real inline tag such as <b> or <br>; a span that holds an end tag
+ * ("</") is markup, not a formula, and is left alone. One forward pass: every
+ * search for a closing delimiter is remembered, so the work stays linear.
+ */
+export function repairFormulaTags(html: string): { html: string; repaired: number } {
+  const parts: string[] = [];
+  let last = 0;
+  let repaired = 0;
+  /** Per delimiter: where its next closing text was found (-1: none after that point). */
+  const closers = FORMULA_DELIMITERS.map(() => ({ from: -1, at: -2 }));
+  const nextCloser = (which: number, from: number): number => {
+    const cache = closers[which];
+    if (cache.at === -1 && from >= cache.from) return -1;
+    if (cache.at >= from && from >= cache.from) return cache.at;
+    const at = html.indexOf(FORMULA_DELIMITERS[which][1], from);
+    closers[which] = { from, at };
+    return at;
+  };
+  let index = 0;
+  while (index < html.length) {
+    const character = html[index];
+    if (character === '<') {
+      if (html.startsWith('<!--', index)) {
+        const end = html.indexOf('-->', index + 4);
+        index = end < 0 ? html.length : end + 3;
+        continue;
+      }
+      const next = html.charCodeAt(index + 1);
+      const closing = next === 47 /* / */ && isLetter(html.charCodeAt(index + 2));
+      if (isLetter(next) || closing) {
+        // A tag: skip to its end, over quoted attribute values.
+        let nameEnd = index + (closing ? 2 : 1);
+        while (nameEnd < html.length && !/[\s/>]/.test(html[nameEnd])) nameEnd += 1;
+        const name = html.slice(index + (closing ? 2 : 1), nameEnd).toLowerCase();
+        let end = nameEnd;
+        for (; end < html.length && html[end] !== '>'; end += 1) {
+          const quote = html[end];
+          if ((quote === '"' || quote === "'") && /[=\s]/.test(html[end - 1] ?? '')) {
+            const close = html.indexOf(quote, end + 1);
+            end = close < 0 ? html.length : close;
+          }
+        }
+        index = end + 1;
+        if (!closing && RAW_TEXT_ELEMENTS.has(name)) {
+          if (name === 'plaintext') break;
+          const pattern = new RegExp(`</${name}[\\s/>]`, 'ig');
+          pattern.lastIndex = index;
+          const close = pattern.exec(html);
+          index = close ? close.index : html.length;
+        }
+        continue;
+      }
+      if (next === 33 /* ! */ || next === 63 /* ? */) {
+        const end = html.indexOf('>', index + 2);
+        index = end < 0 ? html.length : end + 1;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    const which = FORMULA_DELIMITERS.findIndex(([open]) => html.startsWith(open, index));
+    if (which < 0) { index += 1; continue; }
+    const start = index + 2;
+    const close = nextCloser(which, start);
+    if (close < 0 || close - start > FORMULA_REACH) { index = start; continue; }
+    const body = html.slice(start, close);
+    // An end tag, a comment or a raw-text element in between: markup, not a formula.
+    if (/<\/|<!--|<(?:script|style|textarea|title|xmp|iframe|noembed|noframes|noscript|plaintext)[\s/>]/i.test(body)) { index = start; continue; }
+    for (let at = body.indexOf('<'); at >= 0; at = body.indexOf('<', at + 1)) {
+      if (!isLetter(body.charCodeAt(at + 1))) continue;
+      const tag = /^<([A-Za-z][A-Za-z0-9]*)/.exec(body.slice(at, at + 12))![1].toLowerCase();
+      const after = body[at + 1 + tag.length] ?? '';
+      if (INLINE_TAGS.has(tag) && /[\s/>]/.test(after)) continue;
+      parts.push(html.slice(last, start + at), '&lt;');
+      last = start + at + 1;
+      repaired += 1;
+    }
+    index = close + 2;
+  }
+  if (!repaired) return { html, repaired };
+  parts.push(html.slice(last));
+  return { html: parts.join(''), repaired };
 }
 
 function escapeHtml(value: string): string {
