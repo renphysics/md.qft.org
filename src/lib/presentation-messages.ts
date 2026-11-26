@@ -22,6 +22,17 @@ export function cleanReportedText(value: unknown, limit = MAX_REPORTED_TEXT): st
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
+/**
+ * A file path from a presentation, as shown on screen: every character that
+ * is invisible or reorders text (bidirectional controls, zero-width and other
+ * formatting characters, line separators, control characters) becomes U+FFFD,
+ * so a name such as "evil\u202Egnp.js" cannot pose as "evilsj.png". Only for
+ * display: the stored path never changes. Insert the result as text.
+ */
+export function visiblePath(path: string): string {
+  return path.replace(/[\p{Cf}\p{Cc}\u2028\u2029]/gu, '\uFFFD');
+}
+
 /** A bounded record of what went wrong during one playback. */
 export class PresentationProblemLog {
   private items: PresentationProblem[] = [];

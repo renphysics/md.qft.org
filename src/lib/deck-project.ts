@@ -406,6 +406,31 @@ export function originalArchiveName(project: DeckProject): string {
   return `${project.fileName.replace(/\.zip$/i, '') || 'presentation'}-original.zip`;
 }
 
+/**
+ * The original upload of an edited deck, to download beside the edited ZIP.
+ * A deck imported as one HTML file is kept as a site-made ZIP holding only
+ * index.html (deckFromHtmlFile); it comes back as that HTML file, under the
+ * name it was imported with (".htm" files come back as ".html"). Any other
+ * deck comes back as the ZIP that was imported.
+ */
+export async function originalDownload(project: DeckProject): Promise<{ blob: Blob; name: string }> {
+  const page = project.files.size === 1 && !project.folder ? project.files.get('index.html') : undefined;
+  if (page && isEditableDeckKind(project.kind) && /\.zip$/i.test(project.fileName)) {
+    // Only the site's own wrapping is unwrapped: the same bytes, rebuilt, must give the stored ZIP.
+    const rebuilt = zipDeckFiles(new Map([['index.html', page]]));
+    if (rebuilt.length === project.original.size && sameBytes(rebuilt, new Uint8Array(await project.original.arrayBuffer()))) {
+      return { blob: new Blob([page.slice().buffer], { type: 'text/html' }), name: `${project.fileName.replace(/\.zip$/i, '') || 'presentation'}.html` };
+    }
+  }
+  return { blob: project.original, name: originalArchiveName(project) };
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) if (left[index] !== right[index]) return false;
+  return true;
+}
+
 /** What the Source files view says about changing this deck. */
 export function deckSourceNote(project: DeckProject): string {
   switch (project.kind) {
