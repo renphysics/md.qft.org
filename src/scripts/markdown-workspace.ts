@@ -793,6 +793,14 @@ class MarkdownWorkspace extends HTMLElement {
     this.q('[data-save-label]').textContent = label;
   }
 
+  /** Hide the toast if it still shows this message. */
+  private clearNotice(message: string): void {
+    const toast = this.q('[data-toast]');
+    if (toast.textContent !== message) return;
+    clearTimeout(this.toastTimer);
+    toast.hidden = true;
+  }
+
   private notify(message: string, duration = 5500): void {
     const toast = this.q('[data-toast]');
     clearTimeout(this.toastTimer);
@@ -1374,9 +1382,15 @@ class MarkdownWorkspace extends HTMLElement {
     // Presentations first: an HTML page or ZIP that is a deck opens in the
     // library. A ZIP that is not one continues to the Markdown importer.
     if (/\.(?:zip|html?)$/i.test(file.name)) {
+      // Reading a large file takes a moment before anything else appears: say so at once.
+      const large = file.size >= 2 * 1024 * 1024;
+      const opening = `Opening ${file.name.replace(/[\p{Cf}\p{Cc}\u2028\u2029]/gu, '\uFFFD').slice(0, 120)}…`;
+      if (large) this.notify(opening, 30_000);
       await this.flush();
       await customElements.whenDefined('qft-presentation-library');
-      if (await this.q<PresentationLibrary>('qft-presentation-library').tryOpenFile(file)) return;
+      const handled = await this.q<PresentationLibrary>('qft-presentation-library').tryOpenFile(file)
+        .finally(() => { if (large) this.clearNotice(opening); });
+      if (handled) return;
     }
     if (/\.html?$/i.test(file.name)) throw new Error('This HTML file could not be opened as a presentation.');
     if (/\.zip$/i.test(file.name)) {

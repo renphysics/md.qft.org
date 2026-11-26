@@ -203,8 +203,12 @@ export default async function run(t) {
     await confirm.waitFor({ state: 'hidden' });
     assert.equal(await dialog.isVisible(), true);
     assert.match(await editorText(page), /letter-spacing/);
-    // Escape asks too.
+    // Escape in the editor only leaves the editor; Escape again asks too.
     await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Escape');
+    await until(() => page.evaluate(() => document.activeElement?.hasAttribute('data-pres-apply')), 'the keyboard to move to Apply changes');
+    assert.equal(await confirm.isVisible(), false);
+    assert.equal(await dialog.isVisible(), true);
     await page.keyboard.press('Escape');
     await confirm.waitFor({ state: 'visible' });
     await page.locator('[data-pres-confirm-accept]').click();

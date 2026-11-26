@@ -4,7 +4,7 @@ import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
 import { formatDeckReport, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
 import {
-  PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts,
+  PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath,
 } from '../lib/presentation-messages';
 import {
   createPresentationPlayer, exportPresentationHtml, preparePresentationDocument,
@@ -58,10 +58,22 @@ interface ActiveDeck {
   temporaryKey?: string;
   /** True when applied edits could not be saved, so closing would lose them. */
   editsUnsaved?: boolean;
+  /**
+   * The `updatedAt` of the saved record this deck's edits are based on. A
+   * save is refused when the stored record is newer (another tab saved since).
+   */
+  savedAt?: number;
+}
+
+/** What persistEdits says about where applied edits are kept. */
+interface EditStorage {
+  storage: string;
+  /** Why they could not be saved, for the edit problem area. */
+  problem?: string;
 }
 
 /** Every saved record and kept-in-memory deck opens through openStoredDeck. */
-type LibraryRecord = StoredDeckSource & { editsUnreadable?: boolean };
+type LibraryRecord = StoredDeckSource & { editsUnreadable?: boolean; updatedAt?: number };
 
 export class PresentationLibrary extends HTMLElement {
   /** What the library can truthfully promise about local playback. */
@@ -164,6 +176,13 @@ export class PresentationLibrary extends HTMLElement {
     dialog.addEventListener('close', () => { if (!dialog.open) this.afterClose(); }, { signal });
     dialog.addEventListener('cancel', (event) => {
       if (this.isFullscreen()) { event.preventDefault(); this.exitFullscreen(); return; }
+      // Escape in the code editor only leaves the editor, as people press it
+      // there out of habit: the keyboard moves to Apply changes, or to the file list.
+      if (document.activeElement instanceof Element && document.activeElement.closest('[data-pres-code]')) {
+        event.preventDefault();
+        this.focusOutOfEditor();
+        return;
+      }
       // Escape with changes not yet applied asks first, like Close does.
       if (this.mustConfirmLeaving()) {
         event.preventDefault();
@@ -192,6 +211,15 @@ export class PresentationLibrary extends HTMLElement {
       history.replaceState(null, '', `${query.pathname}${query.search}${query.hash}`);
       void this.openExample().catch((error) => this.notice(error));
     }
+  }
+
+  /** Move the keyboard from the code editor to Apply changes when it can apply, else to the selected file. */
+  private focusOutOfEditor(): void {
+    const apply = this.querySelector<HTMLButtonElement>('[data-pres-apply]');
+    const files = this.querySelector('[data-pres-files]');
+    const target = apply && !apply.hidden && !apply.disabled ? apply
+      : files?.querySelector<HTMLElement>('.presentation-file[aria-current="true"]') ?? files?.querySelector<HTMLElement>('.presentation-file');
+    target?.focus();
   }
 
   disconnectedCallback(): void {
@@ -229,8 +257,24 @@ export class PresentationLibrary extends HTMLElement {
     this.sources?.clear();
     const confirm = this.q<HTMLDialogElement>('[data-pres-confirm]');
     if (confirm.open) confirm.close();
-    this.returnFocus?.focus();
+    this.restoreFocus();
     this.dispatchEvent(new CustomEvent('presentation-close', { bubbles: true }));
+  }
+
+  /**
+   * Give the keyboard back to the control that opened the library. When that
+   * control is gone or hidden (on a narrow screen, the sidebar that held it
+   * has closed), the sidebar toggle takes it, or else the editor.
+   */
+  private restoreFocus(): void {
+    const shown = (element: HTMLElement | null | undefined): element is HTMLElement => !!element && element.isConnected
+      && (typeof element.checkVisibility === 'function' ? element.checkVisibility() : element.getClientRects().length > 0);
+    const opener = this.returnFocus;
+    this.returnFocus = undefined;
+    if (shown(opener)) { opener.focus(); return; }
+    const toggle = document.querySelector<HTMLElement>('[data-toggle-sidebar]');
+    if (shown(toggle)) { toggle.focus(); return; }
+    document.querySelector<HTMLElement>('.cm-editor .cm-content')?.focus();
   }
 
   /** Application messages only. Text supplied by a presentation goes to reportProblem. */
@@ -384,16 +428,21 @@ export class PresentationLibrary extends HTMLElement {
   private renderLibrary(): void {
     const list = this.q('[data-pres-list]');
     const imported = (time: number) => new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const entries = [
+    const all = [
       ...this.records.map((record) => ({
-        id: record.id, title: record.title,
+        id: record.id, title: record.title, file: record.fileName,
         detail: `${engineLabel(record.engine)} · ${bytesLabel(record.archiveSize)} · Imported ${imported(record.createdAt)}${record.edited ? ' · Edited' : ''}`,
       })),
       ...[...this.temporary].map(([id, deck]) => ({
-        id, title: deck.title,
+        id, title: deck.title, file: deck.fileName,
         detail: `${engineLabel(deck.engine)} · ${bytesLabel(deck.archive.size)} · Not saved — keep your file${Object.keys(deck.edits ?? {}).length ? ' · Edited' : ''}`,
       })),
     ];
+    // Rows with the same title also name their file, so they can be told apart.
+    const titles = new Map<string, number>();
+    for (const entry of all) titles.set(entry.title, (titles.get(entry.title) ?? 0) + 1);
+    const entries = all.map((entry) => (titles.get(entry.title)! > 1 && entry.file
+      ? { ...entry, detail: `${visiblePath(entry.file)} · ${entry.detail}` } : entry));
     this.q('[data-pres-count]').textContent = String(entries.length);
     const rows = entries.map((entry) => {
       const row = document.createElement('div');
@@ -481,6 +530,7 @@ export class PresentationLibrary extends HTMLElement {
     const playable = await deckProject.buildPlayable(project, this.buildDeps(operation));
     if (operation !== this.operation) return;
     this.showDeck(project, playable, saved ? 'saved' : 'unsaved', temporaryKey);
+    if (saved && this.active?.project === project && record.updatedAt !== undefined) this.active.savedAt = record.updatedAt;
     if (record.editsUnreadable) this.notice('Your edits to this presentation could not be read, so the original is shown. The stored edits are kept unchanged.');
   }
 
@@ -496,6 +546,8 @@ export class PresentationLibrary extends HTMLElement {
     this.busy = true;
     const operation = this.nextOperation();
     try {
+      // Chosen from the open library: say at once that the file is being read.
+      if (this.q<HTMLDialogElement>('[data-pres-dialog]').open) this.notice(`Opening ${visiblePath(file.name).slice(0, 120)}…`);
       const deckProject = await import('../lib/deck-project');
       const project = await deckProject.openDeck(file);
       if (!project) return false;
@@ -504,12 +556,25 @@ export class PresentationLibrary extends HTMLElement {
       this.notice('Checking the presentation…');
       const playable = await deckProject.buildPlayable(project, this.buildDeps(operation));
       if (operation !== this.operation) return true;
-      this.showDeck(project, playable, 'new');
+      const input = deckProject.deckSaveInput(project);
       if (!deckProject.isPlayable(playable)) {
+        // A copy in the library may play thanks to edits made here: open it
+        // rather than the file that cannot play.
+        const saved = input ? await this.findSaved(input.archive) : undefined;
+        if (operation !== this.operation) return true;
+        if (saved) {
+          await this.openRecordById(saved.id, operation);
+          if (operation === this.operation) {
+            this.notice(saved.edited ? 'This presentation is already in your library, with your edits, so it opened from there.'
+              : 'This presentation is already in your library, so it opened from there.');
+          }
+          return true;
+        }
+        this.showDeck(project, playable, 'new');
         this.storage('Not saved. This file cannot be played here yet; see the notes from the check.');
         return true;
       }
-      const input = deckProject.deckSaveInput(project);
+      this.showDeck(project, playable, 'new');
       if (!input) return true;
       this.storage('Saving this presentation in your browser…');
       let edited: string | undefined;
@@ -519,6 +584,7 @@ export class PresentationLibrary extends HTMLElement {
         this.records = [info, ...this.records.filter((entry) => entry.id !== info.id)];
         if (operation !== this.operation) return true;
         project.id = info.id;
+        if (this.active?.project === project) this.active.savedAt = info.updatedAt;
         if (existing && info.edited) {
           edited = info.id;
         } else if (existing) {
@@ -554,6 +620,14 @@ export class PresentationLibrary extends HTMLElement {
       }
       return true;
     } finally { if (operation === this.operation) this.busy = false; }
+  }
+
+  /** The saved record with the same original bytes, if storage can be read. */
+  private async findSaved(archive: Blob): Promise<StoredPresentationInfo | undefined> {
+    try {
+      const { findSavedDeck } = await import('../lib/presentation-store');
+      return await findSavedDeck(archive);
+    } catch { return undefined; }
   }
 
   private async openRecordById(id: string, operation: number): Promise<void> {
@@ -841,12 +915,17 @@ export class PresentationLibrary extends HTMLElement {
     }
     this.renderEditState();
     this.renderNotes();
-    const storage = await this.persistEdits(active);
-    return { applied: true, ...(replay ? { replay } : {}), storage };
+    const { storage, problem } = await this.persistEdits(active);
+    return { applied: true, ...(replay ? { replay } : {}), storage, ...(problem ? { storageProblem: problem } : {}) };
   }
 
-  /** Keep the active deck's overlay where the deck is kept. Returns one sentence saying where. */
-  private async persistEdits(active: ActiveDeck): Promise<string> {
+  /**
+   * Keep the active deck's overlay where the deck is kept. Says where, and
+   * why not when it could not be saved. A saved overlay is only replaced when
+   * the stored record is still the one this deck's edits are based on, so
+   * edits saved in another tab or window are never overwritten silently.
+   */
+  private async persistEdits(active: ActiveDeck): Promise<EditStorage> {
     const { project } = active;
     const edits = new Map(project.edits);
     const shown = (text: string) => { if (active === this.active) this.storage(text); };
@@ -857,33 +936,42 @@ export class PresentationLibrary extends HTMLElement {
           if (edits.size) record.edits = Object.fromEntries(edits);
           else delete record.edits;
         }
-        return 'This presentation is not saved in this browser, so download the ZIP to keep your edits.';
+        return { storage: 'This presentation is not saved in this browser, so download the ZIP to keep your edits.' };
       }
       const store = await import('../lib/presentation-store');
       if (!project.id) {
         // A deck that could not play when it was opened is saved once it can.
-        if (!canPlay(active.playable)) return '';
+        if (!canPlay(active.playable)) return { storage: '' };
         const { deckSaveInput } = await import('../lib/deck-project');
         const input = deckSaveInput(project);
-        if (!input) return '';
+        if (!input) return { storage: '' };
         const { info, existing } = await store.saveDeck(input);
-        project.id = info.id;
         if (!existing) {
+          project.id = info.id;
+          active.savedAt = info.updatedAt;
           this.records = [info, ...this.records.filter((entry) => entry.id !== info.id)];
           active.editsUnsaved = false;
           shown('Saved in this browser with your edits. Your original file is unchanged.');
-          return 'The presentation is now saved in this browser, with your edits.';
+          return { storage: 'The presentation is now saved in this browser, with your edits.' };
         }
+        // Saved meanwhile, elsewhere: its own edits are never replaced from here.
+        if (info.edited) throw new store.PresentationStorageError(store.EDITS_CHANGED_ELSEWHERE_TEXT);
+        project.id = info.id;
+        active.savedAt = info.updatedAt;
       }
-      const info = await store.updateDeckEdits(project.id!, edits);
+      const info = await store.updateDeckEdits(project.id!, edits, active.savedAt !== undefined ? { basedOn: active.savedAt } : {});
+      active.savedAt = info.updatedAt;
       this.records = [info, ...this.records.filter((entry) => entry.id !== info.id)];
       active.editsUnsaved = false;
       shown(edits.size ? 'Saved in this browser with your edits. Your original file is unchanged.' : 'Saved in this browser. Keep the original file as your backup.');
-      return edits.size ? 'Your edits are saved in this browser.' : 'The copy saved in this browser is the original again.';
+      return { storage: edits.size ? 'Your edits are saved in this browser.' : 'The copy saved in this browser is the original again.' };
     } catch (error) {
       active.editsUnsaved = edits.size > 0;
       shown('Your edits are not saved in this browser. Download ZIP to keep them.');
-      return `${error instanceof Error ? error.message : String(error)} Your edits play here until you close the presentation; download the ZIP to keep them.`;
+      return {
+        storage: 'Your edits play here until you close the presentation; download the ZIP to keep them.',
+        problem: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
@@ -1007,8 +1095,11 @@ export class PresentationLibrary extends HTMLElement {
   private async downloadOriginal(): Promise<void> {
     const project = this.active?.project;
     if (!project) return;
-    const { originalArchiveName } = await import('../lib/deck-project');
-    download(project.original, project.edits.size ? originalArchiveName(project) : project.fileName || `${fileName(project.title)}.zip`);
+    if (!project.edits.size) { download(project.original, project.fileName || `${fileName(project.title)}.zip`); return; }
+    // A presentation imported as one HTML file comes back as that file.
+    const { originalDownload } = await import('../lib/deck-project');
+    const original = await originalDownload(project);
+    download(original.blob, original.name);
   }
 
   private downloadHtml(): void {

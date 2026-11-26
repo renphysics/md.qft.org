@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts } from '../src/lib/presentation-messages';
+import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath } from '../src/lib/presentation-messages';
+import { EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError } from '../src/lib/presentation-store';
 import { formatDeckReport } from '../src/lib/deck-report';
 
 function deferred<T>() {
@@ -17,7 +18,11 @@ interface Dependencies {
   open?: (file: File) => Promise<unknown>;
   build?: (project: any, deps: any) => Promise<unknown>;
   save?: (input: any) => Promise<unknown>;
-  updateEdits?: (id: string, edits: Map<string, string>) => Promise<unknown>;
+  updateEdits?: (id: string, edits: Map<string, string>, options?: { basedOn?: number }) => Promise<unknown>;
+  /** The saved copy of an archive (findSavedDeck). */
+  find?: (archive: Blob) => Promise<unknown>;
+  /** A stored record by id (getPresentation). */
+  get?: (id: string) => Promise<unknown>;
   clipboard?: (text: string) => Promise<void>;
 }
 
@@ -48,16 +53,21 @@ function library(dependencies: Dependencies = {}) {
     return controls.get(selector);
   };
   const isPlayable = (result: any) => !!result.html && !result.issues.some((issue: any) => issue.severity === 'error');
-  vm.runInNewContext(javascript, {
-    exports, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts,
+  const sandbox: Record<string, any> = {
+    // The host realm's Error, so errors from the real store module are recognised.
+    exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
     STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT,
     formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
     Date: class extends Date { static now() { return clock.now; } },
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },
+    Element: FakeElement,
     document: {
+      activeElement: null as unknown,
+      focusTargets: new Map<string, any>(),
+      querySelector(selector: string) { return this.focusTargets.get(selector) ?? null; },
       addEventListener() {},
       body: { append(anchor: any) { calls.names.push(anchor.download); } },
-      createElement(tag: string) { return { tag, textContent: '', dataset: {} as Record<string, string>, children: [] as any[], append(...children: any[]) { this.children.push(...children); }, click() {}, remove() {} }; },
+      createElement(tag: string) { return { tag, textContent: '', dataset: {} as Record<string, string>, children: [] as any[], append(...children: any[]) { this.children.push(...children); }, click() {}, remove() {}, setAttribute() {}, addEventListener() {} }; },
     },
     navigator: { clipboard: { writeText: (text: string) => { calls.copied.push(text); return dependencies.clipboard?.(text) ?? Promise.resolve(); } } },
     window: {
@@ -89,22 +99,25 @@ function library(dependencies: Dependencies = {}) {
           isPlayable,
           deckSaveInput: (project: any) => ({ title: project.title, engine: project.engine, kind: project.kind, fileName: project.fileName, archive: project.original }),
           deckArchive: (project: any) => Object.assign(new Blob(['edited']), { edited: project }),
-          originalArchiveName: (project: any) => project.fileName.replace(/\.zip$/, '-original.zip'),
+          originalDownload: async (project: any) => ({ blob: project.original, name: project.fileName.replace(/\.zip$/, '-original.zip') }),
         };
       }
       if (name === '../lib/presentation-store') {
         return {
           saveDeck(input: any) { calls.save++; return dependencies.save?.(input) ?? Promise.resolve({ info: { id: 'saved', title: input.title, engine: input.engine }, existing: false }); },
-          getPresentation: async () => undefined,
-          updateDeckEdits(id: string, edits: Map<string, string>) {
-            calls.savedEdits.push({ id, edits: new Map(edits) });
-            return dependencies.updateEdits?.(id, edits) ?? Promise.resolve({ id, title: 'Damped oscillator', engine: 'reveal', edited: edits.size > 0 });
+          getPresentation: async (id: string) => dependencies.get?.(id),
+          findSavedDeck: async (archive: Blob) => dependencies.find?.(archive),
+          EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError,
+          updateDeckEdits(id: string, edits: Map<string, string>, options?: { basedOn?: number }) {
+            calls.savedEdits.push({ id, edits: new Map(edits), ...(options?.basedOn !== undefined ? { basedOn: options.basedOn } : {}) });
+            return dependencies.updateEdits?.(id, edits, options) ?? Promise.resolve({ id, title: 'Damped oscillator', engine: 'reveal', edited: edits.size > 0 });
           },
         };
       }
       throw new Error(`Unexpected dependency: ${name}`);
     },
-  });
+  };
+  vm.runInNewContext(javascript, sandbox);
   const instance = new exports.PresentationLibrary();
   instance.q = control;
   instance.notice = (message: unknown) => calls.notices.push(message);
@@ -114,7 +127,17 @@ function library(dependencies: Dependencies = {}) {
   instance.setView = () => {};
   /** Show a deck with the real method, as the library does after building it. */
   const show = (project = fixtureProject(), playable = fixturePlayable(), state = 'saved') => realShowDeck.call(instance, project, playable, state);
-  return { instance, calls, controls, control, show, clock };
+  return { instance, calls, controls, control, show, clock, doc: sandbox.document };
+}
+
+/** An element for focus checks: inside the code editor or not, shown or hidden. */
+class FakeElement {
+  focused = 0;
+  constructor(public name: string, private options: { inCode?: boolean; shown?: boolean } = {}) {}
+  get isConnected() { return true; }
+  closest(selector: string) { return selector === '[data-pres-code]' && this.options.inCode ? {} : null; }
+  checkVisibility() { return this.options.shown !== false; }
+  focus() { this.focused++; }
 }
 
 function fixtureProject(overrides: Record<string, unknown> = {}): any {
@@ -373,7 +396,7 @@ test('a linked deck plays under the tolerant profile, with its engine, notes, wa
   assert.equal(issue.children[1].textContent, 'Web fonts are left out.');
   assert.equal(issue.children[2].textContent, 'fonts.googleapis.com');
 
-  options.onWarning('A picture in the presentation could not be shown.‮');
+  options.onWarning('A picture in the presentation could not be shown.\u202e');
   const runtime = f.control('[data-pres-runtime-list]').children;
   assert.equal(f.control('[data-pres-runtime]').hidden, false);
   assert.equal(runtime[0].children[0].textContent, 'The presentation reported: ');
@@ -712,4 +735,136 @@ test('a link to a website shows a strip; only its button opens the address, in a
   assert.equal(strip.hidden, true);
   f.control('[data-pres-link-open]').listeners.get('click')();
   assert.equal(f.calls.opened.length, 1, 'a dismissed link cannot be opened');
+});
+
+const unplayable = () => fixturePlayable({ html: '', profile: 'tolerant', issues: [{ code: 'deck-too-large', severity: 'error', message: 'The presentation is larger than 24 MB once prepared.' }] });
+
+test('reopening the original of a deck that only plays with its saved edits opens the library copy', async () => {
+  const stored = { id: 'deck-7', title: 'Big deck', kind: 'reveal', engine: 'reveal', archive: new Blob(['zip']), fileName: 'big-20.zip', updatedAt: 4242, edits: { 'index.html': 'fixed' } };
+  const looked: Blob[] = [];
+  const f = library({
+    open: async () => revealProject(),
+    build: async (project) => (project.id ? revealPlayable() : unplayable()),
+    find: async (archive) => { looked.push(archive); return { id: 'deck-7', edited: true, updatedAt: 4242 }; },
+    get: async (id) => (id === 'deck-7' ? stored : undefined),
+  });
+  assert.equal(await f.instance.tryOpenFile(new File(['zip'], 'big-20.zip')), true);
+  assert.equal(looked.length, 1, 'the saved copy is looked up by the archive');
+  assert.equal(f.calls.save, 0, 'nothing new is saved');
+  assert.equal(f.calls.shown.length, 1, 'the file that cannot play is not shown first');
+  assert.equal(f.calls.shown[0].state, 'saved');
+  assert.equal(f.calls.shown[0].project.id, 'deck-7');
+  assert.equal(f.instance.active.savedAt, 4242, 'later edits are checked against this saved copy');
+  assert.match(String(f.calls.notices.at(-1)), /already in your library, with your edits/);
+});
+
+test('a deck that cannot play and is not in the library is shown with its notes and not saved', async () => {
+  const f = library({ open: async () => revealProject(), build: async () => unplayable(), find: async () => undefined });
+  assert.equal(await f.instance.tryOpenFile(new File(['zip'], 'big-20.zip')), true);
+  assert.equal(f.calls.shown.length, 1);
+  assert.equal(f.calls.shown[0].state, 'new');
+  assert.equal(f.calls.save, 0);
+  assert.match(f.control('[data-pres-storage]').textContent, /Not saved/);
+});
+
+test('saved edits are based on the copy that was opened; newer edits from another tab are never replaced', async () => {
+  const conflict = () => Promise.reject(new PresentationStorageError(EDITS_CHANGED_ELSEWHERE_TEXT));
+  let answer: () => Promise<unknown> = async () => ({ id: 'deck-1', title: 'Damped oscillator', engine: 'reveal', edited: true, updatedAt: 6000 });
+  const edited = fixturePlayable({ html: '<!doctype html><div class="reveal">Edited</div>', profile: 'tolerant', issues: [] });
+  const f = library({ build: async () => edited, updateEdits: () => answer() });
+  const project = revealProject();
+  project.id = 'deck-1';
+  f.show(project, revealPlayable(), 'saved');
+  f.instance.active.savedAt = 5000;
+  const first = await f.instance.applyEdits(new Map([['index.html', '<p>One</p>']]));
+  assert.equal(f.calls.savedEdits.at(-1).basedOn, 5000);
+  assert.equal(first.storageProblem, undefined);
+  assert.equal(f.instance.active.savedAt, 6000, 'the next save is based on this one');
+  answer = conflict;
+  const second = await f.instance.applyEdits(new Map([['index.html', '<p>Two</p>']]));
+  assert.equal(f.calls.savedEdits.at(-1).basedOn, 6000);
+  assert.equal(second.applied, true, 'the edit still plays here');
+  assert.equal(second.storageProblem, EDITS_CHANGED_ELSEWHERE_TEXT, 'the edit problem area says why');
+  assert.match(second.storage, /play here until you close the presentation/);
+  assert.equal(f.instance.active.editsUnsaved, true, 'leaving asks first');
+  assert.equal(f.instance.active.playable, edited);
+  assert.match(f.control('[data-pres-storage]').textContent, /not saved in this browser/);
+});
+
+test('a deck saved meanwhile with its own edits is not overwritten by edits from an unsaved session', async () => {
+  const fixed = fixturePlayable({ html: '<!doctype html><div class="reveal">Fixed</div>', profile: 'tolerant', issues: [] });
+  const f = library({ build: async () => fixed, save: async (input) => ({ info: { id: 'deck-3', title: input.title, engine: 'reveal', edited: true, updatedAt: 10 }, existing: true }) });
+  const project = revealProject();
+  f.show(project, unplayable(), 'new');
+  const outcome = await f.instance.applyEdits(new Map([['index.html', '<p>Mine</p>']]));
+  assert.equal(outcome.applied, true);
+  assert.deepEqual(f.calls.savedEdits, [], 'the stored edits stay');
+  assert.equal(outcome.storageProblem, EDITS_CHANGED_ELSEWHERE_TEXT);
+  assert.equal(project.id, undefined);
+  // Saved meanwhile without edits: the edits go onto that copy, checked against it.
+  const g = library({ build: async () => fixed, save: async (input) => ({ info: { id: 'deck-4', title: input.title, engine: 'reveal', updatedAt: 20 }, existing: true }) });
+  const other = revealProject();
+  g.show(other, unplayable(), 'new');
+  await g.instance.applyEdits(new Map([['index.html', '<p>Mine</p>']]));
+  assert.deepEqual(g.calls.savedEdits.map((entry: any) => [entry.id, entry.basedOn]), [['deck-4', 20]]);
+});
+
+test('Escape in the code editor moves the keyboard out of the editor and keeps the dialog open', () => {
+  const f = library();
+  f.instance.connectedCallback();
+  f.show(revealProject(), revealPlayable(), 'saved');
+  const apply = new FakeElement('apply');
+  const file = new FakeElement('file');
+  let applyEnabled = true;
+  f.instance.querySelector = (selector: string) => (selector === '[data-pres-apply]' ? Object.assign(apply, { hidden: false, disabled: !applyEnabled })
+    : selector === '[data-pres-files]' ? { querySelector: () => file } : null);
+  f.doc.activeElement = new FakeElement('code', { inCode: true });
+  let prevented = 0;
+  const cancel = f.control('[data-pres-dialog]').listeners.get('cancel');
+  cancel({ preventDefault() { prevented++; } });
+  assert.equal(prevented, 1, 'the dialog stays open');
+  assert.equal(apply.focused, 1, 'Apply changes takes the keyboard when it can apply');
+  applyEnabled = false;
+  cancel({ preventDefault() { prevented++; } });
+  assert.equal(file.focused, 1, 'else the file list');
+  // Outside the editor, Escape closes as before (nothing to lose).
+  f.doc.activeElement = new FakeElement('button');
+  cancel({ preventDefault() { prevented++; } });
+  assert.equal(prevented, 2);
+});
+
+test('closing gives the keyboard to the sidebar toggle when the control that opened the library is hidden', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable(), 'saved');
+  const toggle = new FakeElement('toggle');
+  const editor = new FakeElement('editor');
+  f.doc.focusTargets.set('[data-toggle-sidebar]', toggle);
+  f.doc.focusTargets.set('.cm-editor .cm-content', editor);
+  const opener = new FakeElement('opener', { shown: false });
+  f.instance.closed = false;
+  f.instance.returnFocus = opener;
+  f.instance.afterClose();
+  assert.equal(opener.focused, 0);
+  assert.equal(toggle.focused, 1);
+  const shownOpener = new FakeElement('opener');
+  f.instance.closed = false;
+  f.instance.returnFocus = shownOpener;
+  f.instance.afterClose();
+  assert.equal(shownOpener.focused, 1, 'a visible opener gets it back');
+  f.doc.focusTargets.set('[data-toggle-sidebar]', new FakeElement('toggle', { shown: false }));
+  f.instance.closed = false;
+  f.instance.returnFocus = undefined;
+  f.instance.afterClose();
+  assert.equal(editor.focused, 1, 'else the editor');
+});
+
+test('library rows with the same title also name their file', () => {
+  const f = library();
+  const row = (id: string, fileName: string, title = 'Small Reveal') => ({ id, title, engine: 'reveal', kind: 'reveal', fileName, archiveSize: 2048, createdAt: 0, updatedAt: 0 });
+  f.instance.records = [row('a', 'small-reveal.zip'), row('b', 'small\u202egnp.zip'), row('c', 'other.zip', 'Other')];
+  f.instance.renderLibrary();
+  const details = f.control('[data-pres-list]').children.map((entry: any) => entry.children[0].children[1].children[1].textContent);
+  assert.match(details[0], /^small-reveal\.zip · Reveal\.js · 2 KB/);
+  assert.match(details[1], /^small\ufffdgnp\.zip · /, 'invisible characters in the name are shown');
+  assert.match(details[2], /^Reveal\.js · 2 KB/, 'a unique title needs no file name');
 });

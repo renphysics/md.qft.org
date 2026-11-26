@@ -3,6 +3,7 @@ import {
   deckFileList, deckFileText, deckOriginalText, deckSourceNote, isEditableDeck, nextDeckEdits,
   type DeckFileInfo, type DeckProject,
 } from '../lib/deck-project';
+import { visiblePath } from '../lib/presentation-messages';
 import type { DeckEditor } from './deck-editor';
 
 /**
@@ -24,6 +25,12 @@ export interface DeckApplyOutcome {
   replay?: 'now' | 'on-return' | 'on-start';
   /** One sentence about where the edits are kept, written by the site. */
   storage?: string;
+  /**
+   * Why the applied edits could not be saved in this browser (for example,
+   * another tab saved newer edits), written by the site. Shown as a problem;
+   * the edits still play.
+   */
+  storageProblem?: string;
   /** Why nothing changed: the build's errors, as cleaned plain text. */
   problems?: string[];
 }
@@ -202,7 +209,7 @@ export class DeckSourceView {
     button.dataset.presFilePath = file.path;
     const name = document.createElement('span');
     name.className = 'presentation-file-name';
-    name.textContent = file.path;
+    name.textContent = visiblePath(file.path);
     const meta = document.createElement('span');
     meta.className = 'presentation-file-meta';
     const role = file.group === 'entry' ? (this.project?.kind === 'qft-presentation' ? 'Main source' : 'Start page') : '';
@@ -243,7 +250,8 @@ export class DeckSourceView {
     const file = this.list.find((entry) => entry.path === this.selected);
     const discard = this.q<HTMLButtonElement>('[data-pres-discard]');
     discard.disabled = this.busy || !file?.editable || (!pending.has(file.path) && !project.edits.has(file.path));
-    this.q<HTMLButtonElement>('[data-pres-apply]').disabled = this.busy;
+    // Apply waits until a file differs from what plays, as Discard and Restore do.
+    this.q<HTMLButtonElement>('[data-pres-apply]').disabled = this.busy || !pending.size;
     this.q<HTMLButtonElement>('[data-pres-restore]').disabled = this.busy || (!project.edits.size && !pending.size);
     this.renderInfo(file, pending.has(file?.path ?? ''));
   }
@@ -254,7 +262,7 @@ export class DeckSourceView {
   }
 
   private renderInfo(file: DeckFileInfo | undefined, pending: boolean): void {
-    this.q('[data-pres-file-name]').textContent = file?.path ?? 'Files';
+    this.q('[data-pres-file-name]').textContent = file ? visiblePath(file.path) : 'Files';
     const project = this.project;
     const parts: string[] = [];
     if (file && project) {
@@ -368,6 +376,7 @@ export class DeckSourceView {
         : outcome.replay === 'on-return' ? (reveal ? 'Choose Presentation to see them on the same slide.' : 'Choose Presentation to see them. The presentation starts again from the beginning.')
           : outcome.replay === 'on-start' ? 'Start the presentation to see them.' : '';
       this.status([done, replay, outcome.storage ?? ''].filter(Boolean).join(' '));
+      if (outcome.storageProblem) this.problems([outcome.storageProblem]);
       return true;
     } finally {
       if (project === this.project) this.setBusy(false);
@@ -386,10 +395,10 @@ export class DeckSourceView {
     const applied = project.edits.has(path);
     editor.replace(path, original);
     this.touched.add(path);
-    if (applied) await this.apply([path], `Changes to ${path} discarded.`);
+    if (applied) await this.apply([path], `Changes to ${visiblePath(path)} discarded.`);
     else {
       this.touched.delete(path);
-      this.status(`Changes to ${path} discarded.`);
+      this.status(`Changes to ${visiblePath(path)} discarded.`);
       this.refreshStates();
     }
     editor.focus();
@@ -418,11 +427,14 @@ export class DeckSourceView {
         if (project !== this.project) return;
         if (!outcome.applied) { this.problems(outcome.problems ?? []); this.status('The original could not be restored.'); return; }
         this.status(['The original presentation is restored.', outcome.storage ?? ''].filter(Boolean).join(' '));
+        this.problems(outcome.storageProblem ? [outcome.storageProblem] : []);
       } finally {
         if (project === this.project) this.setBusy(false);
       }
-    } else this.status('Your changes were discarded. The presentation is as imported.');
-    this.problems([]);
+    } else {
+      this.status('Your changes were discarded. The presentation is as imported.');
+      this.problems([]);
+    }
     this.touched.clear();
     editor.clear();
     if (this.selected) this.open(this.selected, editor);
@@ -437,7 +449,7 @@ export class DeckSourceView {
     if (text === undefined) return;
     try {
       await navigator.clipboard.writeText(text);
-      this.status(`Copied ${path}.`);
+      this.status(`Copied ${visiblePath(path)}.`);
     } catch {
       this.status('Copying is not available here. Select the text in the editor, then use your browser’s Copy command.');
     }
