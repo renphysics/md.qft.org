@@ -25,7 +25,7 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Does the website upload my text or load external images?',
-    answer: 'The application processes document text and imported pictures in your browser and does not upload them to a rendering or AI service. The site host still receives ordinary requests needed to load the website. Remote images are off by default; enabling them contacts their image hosts, and opening an external link visits that website. HTML export embeds enabled remote images only when they can be downloaded successfully.',
+    answer: 'The application processes document text, imported pictures, and presentations in your browser and does not upload them to a rendering or AI service. The site host still receives ordinary requests needed to load the website. Remote images are off by default; enabling them contacts their image hosts, and opening an external link visits that website. HTML export embeds enabled remote images only when they can be downloaded successfully.',
   },
   {
     question: 'How do I insert a picture into Markdown?',
@@ -33,15 +33,15 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Can I make and present Markdown slides with mathematical equations?',
-    answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. This Reveal.js format does not interpret Marp directives or Slidev components; prepared Slidev ZIPs use a separate player.',
+    answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. This Reveal.js format does not interpret Marp directives or Slidev components; Reveal.js decks and Slidev builds made elsewhere open in a separate presentation library.',
   },
   {
-    question: 'Can I open an interactive Slidev presentation ZIP?',
-    answer: 'Yes. Use Open file for a Slidev ZIP prepared with the supplied portable packager, or choose Slidev presentations in the sidebar to try the quantum interference example. The ZIP contains a compiled presentation with embedded libraries, images, and fonts, plus optional editable source. Start runs it locally in an isolated player that cannot read your documents and blocks ordinary network requests; Present opens fullscreen. Packages can be saved in this browser, downloaded unchanged, or exported to a standalone HTML player. No server upload or runtime CDN is required. A source-only Slidev project or an ordinary dist ZIP must be built and packaged first.',
+    question: 'Can I open a Reveal.js or Slidev presentation that an AI made?',
+    answer: 'Yes. Use Open file, or Presentations in the sidebar, for a Reveal.js deck saved as one HTML file or as a ZIP with index.html at the top, another web page, a ZIP of the dist folder that npx slidev build makes, or a portable Slidev package. The file is prepared in your browser so it plays offline: Reveal.js and KaTeX from a CDN are replaced by copies served with this site, MathJax formulas are typeset with KaTeX, and Google Fonts, remote pictures, and embedded web pages are left out. Notes from the check list every change, and Copy report for AI gives the AI tool a short report to fix the deck. It plays in an isolated player that cannot read your documents and blocks ordinary network requests. An unbuilt Slidev project must be built first.',
   },
   {
-    question: 'How do I revise a Slidev presentation made by AI?',
-    answer: 'Choose Create with AI and select Slidev. Copy the instructions and attach the matching starter ZIP to a coding tool such as Codex. Ask it to revise the source, build the presentation, and return a new portable ZIP. Source files can be viewed and copied here; they are not compiled in the browser. Updating slides.md or a Vue component requires rebuilding before the playable presentation changes. Keep the ZIP as your editable backup. Network services, workers, nested frames, and arbitrary dynamic code evaluation are outside the portable playback profile.',
+    question: 'Can I edit a presentation in the browser?',
+    answer: 'Reveal.js decks and other web pages, yes. Open Source files, change a text file, and choose Apply changes: the deck replays on the same slide. Edits are saved in this browser beside the original file, which is never changed; ZIP downloads the edited deck, and Original the file as imported. Text files up to 2 MiB can be edited, with 8 MiB of edited text in total. Slidev builds and portable Slidev packages are read-only: change the Slidev project, build it again, and open the new ZIP. Choose Create with AI and then Reveal.js or Slidev for instructions to give your AI tool.',
   },
   {
     question: 'Can a slide contain a working JavaScript demonstration?',

@@ -8,6 +8,7 @@ Built with Astro, CodeMirror, markdown-it, KaTeX, and reveal.js. The application
 
 - Start with a blank document, paste plain text or Markdown, open a file, or choose an example. Returning visitors resume their saved draft.
 - Choose **Create with AI** for a copyable lesson brief and working starter ZIP. Open the AI's project, run **Check lesson**, and copy a compatibility report back to the AI when needed. The website does not require an AI account or API key.
+- Open a Reveal.js deck or a Slidev build that an AI tool made, as an HTML file or a ZIP. It plays offline in an isolated player, with notes on anything that was replaced or left out and a report to copy back to the AI. Edit a Reveal.js deck's source files and replay it on the same slide.
 - Keep editable slide source, separate demo HTML files, pictures, and notes together in a **Project ZIP**. Reopen an AI revision, review the changes, and update the existing lesson with a recovery copy or import a new copy.
 - Paste into a new document or append text to the current one, with an optional section title.
 - Review formatting changes in **Clean up**, choose **General Markdown** or **HackMD**, and copy the result or create a formatted draft. Changed lines and compatibility notes help you review the output; the original draft is retained.
@@ -92,62 +93,133 @@ $$
 
 Slides reuse the document Markdown/KaTeX renderer, including all four math delimiters and the same image permissions. Choose **Paper**, **Midnight**, or **Academic**, and **16:9** or **4:3**. **Present** opens fullscreen playback; use arrows to navigate. Keep content short enough to fit each slide.
 
-In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, images, and supported interactive demonstrations in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This Reveal.js Markdown format does not implement Marp directives or Slidev components. Prepared Slidev ZIPs use the separate presentation player described below. Ordinary HTML and script fences remain displayed source; executable demos use the explicit syntax below.
+In Slides mode, **Save PDF** prepares one PDF page per slide through the browser print dialog; check the preview, preferably in a Chromium-based browser. **Download HTML** includes presentation playback, fonts, images, and supported interactive demonstrations in a standalone file. **Slide bundle** keeps editable source plus slide mode, theme, and proportions in a ZIP, including when there are no pictures; **Markdown + images** also carries these settings for decks with local pictures. The five-slide **Quantum phase** example demonstrates equations, lists, and code. This Reveal.js Markdown format does not implement Marp directives or Slidev components. Reveal.js decks and Slidev builds made elsewhere open in the separate presentation library described below. Ordinary HTML and script fences remain displayed source; executable demos use the explicit syntax below.
 
-## Portable Slidev presentations
+## Presentations from AI tools: Reveal.js, web pages, and Slidev
 
-Reveal.js remains the directly editable Markdown slide engine. Slidev is an
-additional imported presentation type with its own isolated player.
+Ask an AI tool for slides made with Reveal.js or Slidev, then open what it
+gives you here. The file is read and prepared in this browser; nothing is
+uploaded. Use **Open file** in the workspace (or drag the file onto it), or
+**Presentations** in the sidebar and then **Open presentation**.
 
-- Use **Open file** for a prepared Slidev ZIP, or **Slidev presentations** in
-  the sidebar to browse saved packages and try the real quantum interference
-  example.
-- **Start presentation** runs the deck locally; **Present** opens fullscreen.
-  Imported code is inert until a playback action. Stop destroys the running
-  application, and Restart begins again.
-- **Source files** displays inert source text for copying. **ZIP** returns the
-  original archive unchanged, while **HTML** exports an isolated standalone
-  player that can open offline.
-- **Create with AI → Slidev** supplies a teaching brief and the correct build
-  instructions. Give the downloadable starter to Codex; ask for the rebuilt
-  presentation and source together after every revision.
+| What you open | What happens |
+| --- | --- |
+| A Reveal.js deck: one `.html` file, or a ZIP with `index.html` at the top | Linked into one self-contained page and played. Its source can be edited here |
+| Another web page (`.html` or a ZIP) | Played the same way, and editable |
+| An ordinary `slidev build` output: a ZIP of the `dist` folder | Converted in the browser and played. Read-only |
+| A portable package with `qft-presentation.json` (made with [the Slidev starter and packager](tools/slidev/README.md)) | Played as before. Read-only |
+| An unbuilt Slidev project (`slides.md` and `package.json`) | Explained: it has to be built first, with `npx slidev build` |
+| A Markdown file, Markdown bundle, or lesson ZIP | Opened by the Markdown importer, as before |
 
-The supported package contains `qft-presentation.json` (format
-`qft-presentation`, version 1, engine `slidev`), a self-contained compiled HTML
-entry, and optional source files. See [the reusable starter and packager](tools/slidev/README.md)
-and [the manifest schema](public/presentation.schema.json). The checked-in
-[interactive example](public/slidev/interactive-physics.zip) includes its source,
-lockfile, MIT license, and dependency notices.
+**Create with AI → Reveal.js** copies a short prompt that asks for one
+`index.html` that loads Reveal.js 6.0.2 from jsDelivr (the site substitutes
+its own copy), with KaTeX math, speaker notes, and demos written as inline
+scripts. No starter file is needed.
 
-A source-only Slidev project or an ordinary multi-file `dist` ZIP is identified
-with a packaging message. The browser does not install npm dependencies or
-compile Vue. Source changes require a rebuild; browser playback is independent
-of the source editor. A package is not converted into Reveal.js.
+### What is changed so a deck plays offline
 
-Package limits: 60 MiB ZIP, 120 MiB actual expanded data, 1,000 entries, 24 MiB
-HTML entry, and 40 MiB per other file. All entries are checked for path
-ambiguity, expansion limits, CRC integrity, and unsupported archive features.
-Source previews are limited to 2 MiB per file / 8 MiB combined; complete source
-is retained in the original archive. Packages and metadata are saved atomically
-in a separate deployment-scoped IndexedDB database. Storage failures leave the
-current imported package usable and explain keeping the original ZIP.
+The player has no network access, so the site prepares each deck first. It
+only reads and rewrites text; nothing in the deck runs until you choose
+**Start**.
 
-The player gives scripts an opaque origin, with no access to editor drafts or
-other saved packages, and blocks ordinary network requests, workers, nested
-frames, persistent storage, and dynamic code evaluation. Package all
-libraries, images, data, and fonts before import. Blocking network requests is
-a privacy default rather than a guarantee: a package written to get around it
-can still make limited outbound connections (in current browsers, for example,
-a prerender or preconnect link, or WebRTC STUN traffic), which can reveal your
-IP address and what the package itself contains. It still cannot read your
-documents. Open packages from sources you trust. A
-runtime error stops the failed player and reports the problem. Source and
-package parsing never execute imported code. This boundary does not make
-unbounded computations well behaved.
+- Reveal.js and KaTeX loaded from a CDN (jsDelivr, unpkg, cdnjs, esm.sh,
+  Skypack, jspm), or expected next to `index.html` but missing, are replaced
+  by the copies bundled with this site: Reveal.js 6.0.2 with its 14 themes and
+  the markdown, highlight, notes, math, search, and zoom plugins, and KaTeX
+  0.19.1 with auto-render, mhchem, copy-tex, and its fonts. Decks made for
+  Reveal.js 3, 4, or 5 play with Reveal.js 6; some old plugins may not work.
+- Decks that typeset formulas with MathJax are typeset with KaTeX instead,
+  using the deck's delimiters and macros. A few MathJax-only commands may show
+  as errors.
+- The deck's own scripts, stylesheets, pictures, media, fonts, and external
+  Markdown slides are embedded. Inline handlers such as `onclick` become
+  ordinary event listeners.
+- Google Fonts and other web fonts are left out; the slides use fonts
+  installed on the device. Other files on the internet (scripts, stylesheets,
+  pictures, video) are left out too. Embedded pages (`iframe`) and remote
+  pictures stay blank or show a placeholder.
+- Module scripts that import only Reveal.js or KaTeX use the bundled copies.
+  Other module imports cannot be played yet and are reported.
+- A Slidev build's modules are bundled into one script with esbuild, running
+  in a Web Worker. Its router keeps its history in memory, its styles and
+  assets are embedded, and remote fonts and embeds are left out. Builds that
+  use the Monaco editor or Web Workers are refused with a note that says why.
+  Conversion was checked on builds from Slidev 53.1.0 and 52.11.5; older
+  builds may not play.
 
-Reopening the md.qft.org application itself offline remains a separate feature;
-keep the standalone HTML player for classroom use without the website. A
-Slidev PDF should be exported from its source project before packaging.
+### Notes from the check and the report for an AI
+
+Every file is checked and prepared before it is saved, so a deck that cannot
+play is reported rather than stored. **Notes from the check** lists what was
+replaced, left out, or needs a fix (marked **Needs a fix**, **Check**, or
+**Note**), and, under **While playing**, up to 20 warnings the deck reported
+while it ran. Text from a deck is always labelled as the presentation's own
+words and shown as plain text. A deck keeps playing when one of its scripts
+fails or a file is missing; portable packages still stop at their first
+error. **Copy report for AI** copies a short
+plain-text report (`qft-deck-check/1`) that ends with what to send back, so
+you can paste it into the AI tool that made the deck.
+
+The player bar shows the slide count a deck reports. **Present** opens
+fullscreen, and so does a deck's own fullscreen key, such as **F** in
+Reveal.js.
+
+### Edit the source and replay
+
+For Reveal.js decks and other web pages, **Source files** is an editor. Edit a
+text file, then choose **Apply changes** (or press Ctrl/⌘+S in the editor):
+the deck is prepared again and replays on the same slide and fragment. If the
+changed deck cannot be prepared, nothing is applied and the last version that
+worked keeps playing. **Discard changes to this file** returns one file to its
+imported text, and **Restore original** returns the whole deck.
+
+Edits are saved in this browser beside the original file, which is never
+rewritten. **ZIP** downloads the deck with your edits applied; **Original**
+downloads it as you imported it (a single HTML file comes back inside a
+ZIP). **HTML** downloads a standalone player that opens offline.
+
+Copies of libraries inside a deck (such as `dist/reveal.js` or `*.min.js`),
+pictures, fonts, and media are shown but not edited. Portable packages and
+Slidev builds are read-only: change the Slidev project, build it again, and
+open the new ZIP. Slidev source is not compiled in the browser.
+
+### Limits
+
+- ZIP: 60 MiB, 120 MiB expanded, 1,000 files, 40 MiB per file. A single HTML
+  file: 24 MiB.
+- The prepared, self-contained deck: 24 MiB. A Slidev build's scripts: 24 MiB.
+- Editing: text files up to 2 MiB each, 8 MiB of edited text in total. Source
+  previews: 2 MiB per file, 8 MiB in total; larger files stay in the ZIP.
+- ZIPs are checked for path traversal, ambiguous or duplicate paths, expansion
+  limits, CRC integrity, encryption, and other unsupported archive features.
+
+Presentations are saved in a separate IndexedDB database for this site and
+path, with their original files, and a deck already in the library is not
+added twice. Opening a saved Slidev build converts it again, which takes a
+few seconds. If a deck cannot be saved, it stays in the library until you
+leave the page; keep your original file. Reopening the website itself offline is a separate
+feature; use the standalone HTML download in a classroom without internet.
+
+### Isolation and privacy
+
+Imported code runs only inside an opaque-origin sandbox (an iframe with
+`sandbox="allow-scripts"`) under a restrictive Content Security Policy. A
+presentation cannot read your documents or other saved presentations, and
+its ordinary network requests are blocked. Opening, checking, linking, and
+converting a deck never runs it.
+
+Blocking network requests is a privacy default rather than a guarantee: a
+deck written to get around it can still make limited outbound connections (in
+current browsers, for example, a prerender or preconnect link, or WebRTC STUN
+traffic), which can reveal your IP address and what the deck itself contains.
+Open presentations from sources you trust. The sandbox also does not make
+code well behaved; in Firefox, a deck with an endless loop can freeze the
+tab.
+
+The bundled Reveal.js and KaTeX files, the KaTeX fonts, the Slidev converter,
+and its `esbuild.wasm` (about 14 MB, under 4 MB compressed) are served by this
+site, loaded only when a deck needs them. No third-party server is contacted
+to prepare or play a deck.
 
 ## From an AI brief to a classroom lesson
 
@@ -200,7 +272,7 @@ In the insertion dialog, expand **Use your own HTML & JavaScript**, then paste t
 ```
 ````
 
-Use inline `<style>` and `<script>` elements and attach handlers with `addEventListener`. External scripts, module imports, network calls, inline event attributes such as `onclick`, `eval`, nested frames, forms, and popup windows are outside this supported format. Include code and styles directly; use embedded raster data images for assets. A complete Slidev application belongs in the separate presentation player; this small-demo format does not compile React or Vue source. A document supports **20 demo blocks**, each custom block up to **100,000 source characters**, within the editor's overall 400,000-character source limit.
+Use inline `<style>` and `<script>` elements and attach handlers with `addEventListener`. External scripts, module imports, network calls, inline event attributes such as `onclick`, `eval`, nested frames, forms, and popup windows are outside this supported format. Include code and styles directly; use embedded raster data images for assets. A complete Reveal.js deck or Slidev build belongs in the separate presentation library; this small-demo format does not compile React or Vue source. A document supports **20 demo blocks**, each custom block up to **100,000 source characters**, within the editor's overall 400,000-character source limit.
 
 Demos run only after an explicit **Run demo** action. The workspace uses a same-site runner inside an iframe with `sandbox="allow-scripts"` and an opaque origin; it does not grant `allow-same-origin`. Portable exports use a nonce-bearing sandboxed `srcdoc` document. The demo's DOM and storage origin remain separate from the editor's drafts. A restrictive child Content Security Policy blocks external dependencies and ordinary network requests; as for presentations, it is not a complete network firewall against code written to get around it. This isolation does not make arbitrary code well behaved: a custom demo should avoid unbounded loops and excessive computation.
 
@@ -269,7 +341,7 @@ Use backticks or fenced code blocks when demonstrating syntax literally. A backs
 
 Local saving is convenient, but it is not a backup. Clearing site data, private-browsing policies, or changing browser/profile can remove or hide local drafts. A custom domain, a different Pages hostname, and localhost have separate browser storage; project paths on the same host use separate application storage names. **Download Markdown + images for drafts whose editable source and pictures you want to keep independently.** Markdown alone is sufficient when there are no local image attachments to preserve.
 
-The application does not send document text to a server. The host still receives ordinary website requests, including the static sandbox runner when a demo starts in the workspace. Demo source is passed to that frame locally in the browser. Running demos and presentations cannot read your documents, and their ordinary network requests are blocked; deliberately hostile code can still make limited outbound connections, so run code from sources you trust. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
+The application does not send document text, imported pictures, or presentations to a server. The host still receives ordinary website requests, including the static sandbox runners when a demo or presentation starts and the bundled Reveal.js, KaTeX, and Slidev-converter files when a deck needs them. Demo source is passed to that frame locally in the browser. Running demos and presentations cannot read your documents, and their ordinary network requests are blocked; deliberately hostile code can still make limited outbound connections, so run code from sources you trust. If you enable remote images, your browser contacts the image hosts. Portable HTML export embeds the math fonts and downloads enabled remote images for embedding; that image download requires the host to allow cross-origin access. If an image cannot be embedded, export reports the problem rather than silently leaving a network-dependent image in the file. You can turn off remote images and export the document with image placeholders instead. There is no link sharing, collaboration, synchronization, or service worker in this release. An open editor continues working without server processing, but reopening the website offline is not guaranteed.
 
 ## License
 

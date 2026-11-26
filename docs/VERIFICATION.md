@@ -1,5 +1,36 @@
 # Verification history
 
+## Presentations from AI tools — 2026-11-26
+
+This iteration lets the presentation library open Reveal.js decks (a single HTML file or a ZIP), other web pages, and ordinary Slidev builds, play them offline in the existing sandbox, edit the source of Reveal.js decks and web pages, and report what the check found to the AI that made the deck. It also repairs the defects confirmed by the research in [docs/research/presentation-platform](research/presentation-platform/README.md), section 9: keyboard focus after Start and Present, attribution of deck error text, the privacy wording, the page query in the slide preview, Save PDF on the site's own example, the lesson prompt's placeholder `projectId`, and the Slidev Node version.
+
+### Automated checks on the final tree
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 127 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 520 tests in 51 suites, 0 failures |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 7 of 7 suites, 69 checks, in full Chromium |
+
+The browser suites run against the production preview in full Chromium (`QFT_BROWSER_EXECUTABLE=/opt/pw-browsers/chromium`), press keys without clicking into the deck first, and fail if any request leaves the local server. They cover: the Markdown slide preview and its PDF checks (`slides`); the portable Slidev package, its standalone export with networking disabled, and attribution of deck errors (`presentations`); both player profiles, History guards, fullscreen requests, warnings, and replay at a slide (`player`); linked test decks (`deck-linker`); opening every kind of deck from each entry point, the two AI-made research decks with their simulations, duplicates, Slidev source, Markdown and lesson ZIPs, and a library saved by the previous version (`decks`); editing, Apply, Discard, Restore original, the edited and original downloads, and leaving with unapplied changes (`deck-editing`); and converting, saving, replaying, and exporting an ordinary Slidev 53.1.0 build, refusing a Monaco build, and loading the converter only when needed (`slidev-builds`).
+
+Unit tests also run, when the research files are on the machine, ten research Slidev builds (router and base-path variants, a Mermaid deck, a Slidev 52.11.5 build) and the official template build with Monaco. The naive-AI corpus from the research was rechecked in Node through `openDeck` and `buildPlayable`: both complete Reveal.js decks link with no errors or warnings (one note: Reveal.js 5.2.1 from jsDelivr is replaced by the bundled 6.0.2); the third agent's output has no HTML page and is correctly not treated as a deck; the fourth is empty.
+
+### First load
+
+The workspace (`/`) loads, before any action: JavaScript 1,296.3 KiB before this iteration (commit 974fa5e) and 1,321.3 KiB after (425.6 and 432.3 KiB gzip, +1.6%); CSS 171.8 and 181.3 KiB (35.4 and 37.0 KiB gzip); HTML 135.4 and 139.3 KiB. Almost all of the JavaScript growth is the presentation library's own script (8.8 to 15.1 KiB gzip), which carries the tolerant player bootstrap and the new library controls. The guide, FAQ, and About pages load the same 0.8 KiB of JavaScript as before; the About page's HTML grows from 85.0 to 114.9 KiB because it embeds the longer third-party notices.
+
+Everything new is a separate lazy chunk: deck reading, detection, linking, and storage; each bundled Reveal.js and KaTeX file; the source editor; and the Slidev converter Worker with `esbuild.wasm` (13.3 MiB, 3.6 MiB gzip), which is requested only when a Slidev build is opened. The built `dist/_astro` grows from 3.3 MiB to 21.4 MiB on disk, mostly `esbuild.wasm` and the Reveal.js themes.
+
+### Not verified in this iteration
+
+- **Browsers.** Only full Chromium ran the automated suites. Firefox was used only during the research, in Playwright's headless build ([Appendix C](research/presentation-platform/README.md#appendix-c--firefox-pass)); in that pass a deck with an endless loop froze the Firefox tab. Safari and WebKit were not run. Whether Firefox gives the page user activation after a key press inside a sandboxed deck (needed for a deck's own fullscreen key) was not checked.
+- **Devices and input.** Phones, tablets, and touch input were not tested beyond the existing narrow-layout screenshot.
+- **Assistive technology.** Keyboard reachability, focus order, and `aria-live` announcements were checked in code and in the browser suites; no screen reader was used.
+- **Decks.** Results rest on the test fixtures, two AI-made research decks, and the research Slidev builds. Rendering MathJax decks with KaTeX is covered by unit tests, not by a sample of real MathJax decks. Slidev conversion depends on minified build output and was checked on Slidev 53.1.0 and 52.11.5 only.
+- **Deployment.** These changes were not deployed; GitHub Pages compression of `esbuild.wasm` and the Worker's policy on the live host follow from the research, not from a check of the deployed site.
+
 ## Header exports and removal of the title row — 2026-10-31
 
 Download and Save PDF now live in the workspace's site header. The document title row is removed; the sidebar toggle precedes Paste, and Settings sits immediately before the Editor/Split/Preview group. The current document's rename control and autosave status are in the sidebar.

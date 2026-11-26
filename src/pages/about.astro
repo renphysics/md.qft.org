@@ -19,11 +19,12 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
       <p>Clean, Study Notes, and Academic styles give the same source a different presentation for HTML or PDF. Formatting and organization happen locally; they do not call an AI service, rewrite your ideas, or check the claims and references in a pasted answer.</p>
       <p>Choose Slides to make a presentation, with a choice of themes and proportions. Equations, figures, lists, and code use the same Markdown rendering as documents. Present fullscreen or save a slide PDF and a standalone interactive HTML deck.</p>
       <p>Interactive demos let a class explore a wave packet, rotate a Bloch sphere, adjust a black-hole potential, or compare wave and envelope motion. Insert a built-in demo or a self-contained HTML and JavaScript example, then choose Run demo in the preview or presentation.</p>
+      <p>Presentations made elsewhere have a library of their own. Open a Reveal.js deck or a Slidev build from your AI tool, read what the check found, copy a report back to the AI, and present. You can edit a Reveal.js deck’s source files and replay it on the same slide.</p>
     </section>
 
     <section class="about-callout">
       <h2>Your words stay with you</h2>
-      <p>The editor processes your Markdown and imported pictures in your browser. Drafts, local image attachments, and slide settings are stored with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Editor preferences and document print styles are saved locally too.</p>
+      <p>The editor processes your Markdown and imported pictures in your browser. Drafts, local image attachments, slide settings, and imported presentations with your edits are stored with IndexedDB; there are no accounts, server copies of your documents, or automatic synchronization between devices. Editor preferences and document print styles are saved locally too.</p>
       <p>Browser storage is convenient, but it is not a backup. Clearing site data, private browsing, or a browser’s storage cleanup can remove drafts and pictures. Download Markdown + images for work with local pictures, or Slide bundle to preserve a deck’s settings, and keep the ZIP somewhere you trust. Open that bundle here to continue editing. Markdown alone keeps an editable text copy.</p>
     </section>
 
@@ -31,7 +32,7 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
       <h2 id="small-details">The small details matter</h2>
       <p>The editor, mathematical fonts, and interface fonts are served with the site. Writing and previewing a document does not send its source to a rendering service. The site host still receives ordinary requests needed to load the website.</p>
       <p>External links connect to another website when you follow them. Remote images are disabled by default; enabling them in Settings lets the browser request those images from their hosts. Those hosts can then receive normal connection information such as your IP address. Imported pictures and embedded raster images do not need a separate image host.</p>
-      <p>Ordinary HTML and JavaScript code blocks are shown as text. Only an explicitly marked interactive demo can run, after you choose Run demo. It runs in an isolated frame without access to the editor’s saved drafts. Demos are designed to be self-contained; external libraries, network requests, and inline event attributes are not supported. Imported Slidev presentations run the same way. Ordinary network requests from a demo or presentation are blocked, but code written to get around that can still make limited outbound connections, which can reveal your IP address to a server it chooses. It still cannot read your documents, so run demos and presentations from sources you trust. Local saving does not promise that the website itself will load offline; keep exported files for access independent of this site.</p>
+      <p>Ordinary HTML and JavaScript code blocks are shown as text. Only an explicitly marked interactive demo can run, after you choose Run demo. It runs in an isolated frame without access to the editor’s saved drafts. Demos are designed to be self-contained; external libraries, network requests, and inline event attributes are not supported. Imported presentations run the same way. Before one plays, the site prepares it in your browser: Reveal.js and KaTeX that it loads from a CDN come from copies served with this site, and other internet resources such as web fonts and remote pictures are left out. Ordinary network requests from a demo or presentation are blocked, but code written to get around that can still make limited outbound connections, which can reveal your IP address to a server it chooses. It still cannot read your documents, so run demos and presentations from sources you trust. Local saving does not promise that the website itself will load offline; keep exported files for access independent of this site.</p>
     </section>
 
     <section aria-labelledby="take-your-work">
@@ -44,7 +45,7 @@ import notices from '../../THIRD_PARTY_NOTICES.md?raw';
 
     <section aria-labelledby="built-with">
       <h2 id="built-with">Built on good foundations</h2>
-      <p>Astro provides the website, CodeMirror powers the editor, markdown-it parses the text, and KaTeX typesets the mathematics. reveal.js handles slide playback, and fflate packages portable drafts.</p>
+      <p>Astro provides the website, CodeMirror powers the editor, markdown-it parses the text, and KaTeX typesets the mathematics. reveal.js handles slide playback, and fflate packages portable drafts. parse5 reads imported presentations without running them, and esbuild-wasm converts Slidev builds in a background worker.</p>
       <p>For syntax and workflow instructions, see the <a href={withBase('guide/')}>Markdown, math, and slides guide</a>. The <a href={withBase('faq/')}>FAQ</a> answers common questions about pictures, presentations, PDFs, saved drafts, and hosting your own version.</p>
     </section>
 

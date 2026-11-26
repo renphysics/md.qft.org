@@ -14,5 +14,6 @@ Codex or another coding tool. Follow `source/README.md` to revise, build, and
 package it again. Source-only Slidev ZIPs need a build step before playback.
 
 The player supports the portable build profile documented in the source. It
-keeps imported code isolated and does not permit runtime network calls,
-external scripts, workers, nested frames, or dynamic code evaluation.
+keeps imported code isolated and blocks ordinary network requests, external
+scripts, workers, nested frames, and dynamic code evaluation. An ordinary
+Slidev `dist` ZIP also opens: the site converts it in the browser.

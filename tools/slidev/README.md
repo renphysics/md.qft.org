@@ -6,6 +6,21 @@ licensed. The included example explains coherent-wave interference with a
 Vue component whose phase slider, animation, and intensity readout run in the
 browser.
 
+## Packager or an ordinary build?
+
+md.qft.org also opens an ordinary `npx slidev build` output: a ZIP of the
+`dist` folder. It converts the build in the browser each time it is opened,
+leaves out remote resources such as Google Fonts, and plays it with a player
+profile that reports script errors as notes instead of stopping. Builds that
+use Monaco or Web Workers are refused, and conversion depends on the build
+output of recent Slidev releases (checked with 52 and 53).
+
+Use this starter and packager when you want more than that: a package that
+carries its editable source, plays exactly the compiled HTML you checked
+(nothing is converted when it opens), and stops at the first error so a
+broken build is noticed before class. Both kinds are read-only on the site;
+edit the project, build again, and open the new ZIP.
+
 ## Make a presentation
 
 Use Node.js 22.22 or newer (Slidev 53.1.0 requires it). In this directory:
