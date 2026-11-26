@@ -1,13 +1,15 @@
-import { decodeText, deckFromHtmlFile, isTextPath, readDeckArchive, type DeckArchive } from './deck-archive';
+import { decodeText, deckFromHtmlFile, isTextPath, readDeckArchive, zipDeckFiles, type DeckArchive } from './deck-archive';
 import { detectDeck } from './deck-detect';
 import { cleanReportedText } from './presentation-messages';
 import {
   inspectDirectory, inspectPresentationArchive, PRESENTATION_LIMITS, PRESENTATION_MANIFEST, PresentationPackageError,
   type PresentationPackage,
 } from './presentation-package';
-import { isStoredDeckKind, type DeckEdits, type SaveDeckInput, type StoredDeckKind } from './presentation-store';
+import {
+  DECK_EDIT_LIMITS, isEditableDeckKind, isStoredDeckKind, type DeckEdits, type SaveDeckInput, type StoredDeckKind,
+} from './presentation-store';
 import type { PresentationProfile } from './presentation-runtime';
-import type { VendorProvider } from './deck-vendor';
+import { mapLibraryPath, type VendorProvider } from './deck-vendor';
 import type { DeckDetection, DeckEngine, DeckFiles, DeckIssue, DeckKind } from './deck-types';
 
 /**
@@ -43,7 +45,12 @@ export interface DeckProject {
   original: Blob;
   /** Name for the stored archive; ends in .zip. */
   fileName: string;
-  /** Text edits over the original files, by path. Only 'reveal' and 'html' decks are editable. */
+  /** The wrapping folder the upload had around every file, restored in downloads; absent when there was none. */
+  folder?: string;
+  /**
+   * Text edits over the original files, by path. Only 'reveal' and 'html'
+   * decks are editable, and only their existing text files.
+   */
   edits: Map<string, string>;
   /** Notes from reading and detection; building adds the linker's. */
   issues: DeckIssue[];
@@ -143,6 +150,15 @@ function fromPackage(pkg: PresentationPackage, id?: string, title?: string): Dec
   };
 }
 
+/**
+ * A stored overlay replaces existing text files only. Entries for files the
+ * deck does not have, or for binary files, are not applied: an overlay can
+ * change what a deck says, never add files to it.
+ */
+function storedEdits(files: DeckFiles, edits: DeckEdits | undefined): Map<string, string> {
+  return new Map(Object.entries(edits ?? {}).filter(([path, text]) => typeof text === 'string' && files.has(path) && isTextPath(path)));
+}
+
 function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: StoredDeckSource): DeckProject {
   const kind: DeckKind = stored?.kind ?? detection.kind;
   const entry = stored?.entry && deck.files.has(stored.entry) ? stored.entry : detection.entry ?? '';
@@ -155,7 +171,8 @@ function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: Store
     files: deck.files,
     original: deck.archive,
     fileName: stored?.fileName ?? deck.fileName,
-    edits: new Map(Object.entries(stored?.edits ?? {})),
+    ...(deck.folder ? { folder: deck.folder } : {}),
+    edits: isEditableDeckKind(kind) ? storedEdits(deck.files, stored?.edits) : new Map(),
     issues: [...deck.issues, ...detection.issues],
     detection: { ...detection, kind, ...(entry ? { entry } : {}) },
     sources: listSources(deck.files),
@@ -219,12 +236,180 @@ export async function openStoredDeck(record: StoredDeckSource): Promise<DeckProj
   return fromArchive(deck, detectDeck(deck.files), record);
 }
 
-/** The files to play: the originals with the text edits applied. */
+/** The files to play: the originals with the text edits applied. Edits never add a file. */
 export function filesWithEdits(project: DeckProject): DeckFiles {
   if (!project.edits.size) return project.files;
   const files: DeckFiles = new Map(project.files);
-  for (const [path, text] of project.edits) files.set(path, encoder.encode(text));
+  for (const [path, text] of project.edits) if (files.has(path)) files.set(path, encoder.encode(text));
   return files;
+}
+
+/** Where the Source files view lists a file. */
+export type DeckFileGroup = 'entry' | 'deck' | 'library';
+
+/** A file as the Source files view lists it. */
+export interface DeckFileInfo {
+  path: string;
+  /** Size of the imported file in bytes. */
+  size: number;
+  group: DeckFileGroup;
+  /** Readable as text here; false for binary files and text too large to show. */
+  text: boolean;
+  /** True for text files of an editable deck within the size limit, other than library copies. */
+  editable: boolean;
+  /** Why a file of an editable deck cannot be edited, in plain words. */
+  note?: string;
+}
+
+/** True when the deck's own source is what plays, so editing it here changes the presentation. */
+export function isEditableDeck(project: DeckProject): boolean {
+  return isEditableDeckKind(project.kind) && project.files.size > 0;
+}
+
+/**
+ * Copies of libraries that decks ship with: Reveal.js and KaTeX files in
+ * their usual layouts, installed packages, and minified files. They are shown
+ * for reference and not edited; a deck is changed through its own files.
+ */
+export function isLibraryFile(path: string): boolean {
+  return /(?:^|\/)(?:node_modules|bower_components)\//i.test(path)
+    || /\.min\.(?:[cm]?js|css)$/i.test(path)
+    || mapLibraryPath(path) !== undefined;
+}
+
+/** The imported text of a file; undefined for binary files and text too large to show. */
+export function deckOriginalText(project: DeckProject, path: string): string | undefined {
+  const bytes = project.files.get(path);
+  const listed = project.sources.find((file) => file.path === path);
+  if (!bytes) return listed?.text;
+  if (!isTextPath(path) || bytes.length > PRESENTATION_LIMITS.sourcePreviewBytes) return undefined;
+  return listed?.text ?? decodeText(bytes, path);
+}
+
+/** The text a file has now: its edit, or else the imported text. */
+export function deckFileText(project: DeckProject, path: string): string | undefined {
+  return project.edits.get(path) ?? deckOriginalText(project, path);
+}
+
+/**
+ * Every file for the Source files view: the entry page (or a package's main
+ * source) first, then the deck's own text files, then its other files, then
+ * library copies, each group in path order.
+ */
+export function deckFileList(project: DeckProject): DeckFileInfo[] {
+  const editableDeck = isEditableDeck(project);
+  const first = project.source ?? project.entry;
+  const order: Record<DeckFileGroup, number> = { entry: 0, deck: 1, library: 2 };
+  const items = project.sources.map(({ path, size, text }): DeckFileInfo => {
+    const group: DeckFileGroup = path === first ? 'entry' : isLibraryFile(path) ? 'library' : 'deck';
+    const readable = project.files.has(path)
+      ? isTextPath(path) && size <= PRESENTATION_LIMITS.sourcePreviewBytes
+      : typeof text === 'string';
+    const editable = editableDeck && readable && group !== 'library' && size <= DECK_EDIT_LIMITS.fileBytes;
+    const item: DeckFileInfo = { path, size, group, text: readable, editable };
+    if (editableDeck && !editable) {
+      item.note = group === 'library' ? 'A copy of a library the presentation uses. It is shown for reference and not edited here.'
+        : !isTextPath(path) ? 'Kept in the ZIP exactly as imported. Pictures, fonts and media cannot be edited here.'
+          : 'Larger than 2 MB, so it cannot be edited here. Edit it outside the browser.';
+    }
+    return item;
+  });
+  return items.sort((left, right) => order[left.group] - order[right.group]
+    || Number(right.text) - Number(left.text)
+    || left.path.localeCompare(right.path));
+}
+
+/** Bytes of a string in UTF-8, as storage counts them, without encoding it. */
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length
+      && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) { bytes += 4; index += 1; }
+    else bytes += 3;
+  }
+  return bytes;
+}
+
+/** Why an overlay cannot be kept, in plain words, or undefined when it is within the limits. */
+export function deckEditsProblem(edits: ReadonlyMap<string, string>): string | undefined {
+  if (edits.size > DECK_EDIT_LIMITS.files) return 'Too many files are edited to keep in this browser.';
+  let total = 0;
+  for (const [path, text] of edits) {
+    const size = utf8Length(text);
+    if (size > DECK_EDIT_LIMITS.fileBytes) {
+      return `“${cleanReportedText(path, 200)}” is larger than 2 MB with your changes, so it cannot be kept in this browser. Shorten it, or edit it outside the browser.`;
+    }
+    total += size;
+  }
+  return total > DECK_EDIT_LIMITS.totalBytes
+    ? 'Your edited files are larger than 8 MB together, so they cannot be kept in this browser. Discard the changes to some files, or edit them outside the browser.'
+    : undefined;
+}
+
+export interface DeckEditsResult {
+  /** The overlay with the changes made: what to build and save. */
+  edits: Map<string, string>;
+  /** Why the changes cannot be applied, in plain words; undefined when they can. */
+  problem?: string;
+}
+
+/**
+ * The overlay after changing some files. A file changed back to its imported
+ * text loses its edit. Only editable files may change, and the result must be
+ * within the overlay limits. The project itself is not changed.
+ */
+export function nextDeckEdits(project: DeckProject, changes: ReadonlyMap<string, string>): DeckEditsResult {
+  const edits = new Map(project.edits);
+  if (!isEditableDeck(project)) return { edits, problem: 'This presentation cannot be edited in the browser.' };
+  const editable = new Set(deckFileList(project).filter((file) => file.editable).map((file) => file.path));
+  for (const [path, text] of changes) {
+    if (text === deckOriginalText(project, path)) { edits.delete(path); continue; }
+    if (!editable.has(path)) return { edits, problem: `“${cleanReportedText(path, 200)}” cannot be edited here.` };
+    edits.set(path, text);
+  }
+  const problem = deckEditsProblem(edits);
+  return problem ? { edits, problem } : { edits };
+}
+
+/**
+ * The deck to download as a ZIP. Unedited, it is the original upload,
+ * unchanged. Edited, it holds the deck's files with the edits applied, under
+ * their original names and wrapping folder; operating-system clutter and
+ * files whose names could not be used are left out.
+ */
+export function deckArchive(project: DeckProject): Blob {
+  if (!project.edits.size || !project.files.size) return project.original;
+  const prefix = project.folder ? `${project.folder}/` : '';
+  const files: DeckFiles = new Map();
+  for (const [path, bytes] of filesWithEdits(project)) files.set(prefix + path, bytes);
+  return new Blob([new Uint8Array(zipDeckFiles(files)).buffer], { type: 'application/zip' });
+}
+
+/** The download name for the original upload of an edited deck, beside the edited ZIP. */
+export function originalArchiveName(project: DeckProject): string {
+  return `${project.fileName.replace(/\.zip$/i, '') || 'presentation'}-original.zip`;
+}
+
+/** What the Source files view says about changing this deck. */
+export function deckSourceNote(project: DeckProject): string {
+  switch (project.kind) {
+    case 'reveal':
+    case 'html':
+      return 'Edit a file, then choose Apply changes to replay the presentation on the same slide. Edits are kept in this browser beside your original file, which stays unchanged.';
+    case 'qft-presentation':
+      return project.source
+        ? 'This package plays its compiled slides, so it is read-only here. To change it, revise the source with your editor or AI assistant, rebuild the package with the QFT Slidev tool, then open the new ZIP.'
+        : 'This package holds compiled slides only, so it is read-only here. To change it, rebuild it from its Slidev project, then open the new ZIP.';
+    case 'slidev-build':
+      return 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a ZIP of the new dist folder.';
+    case 'slidev-source':
+      return 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, then open a ZIP of the dist folder.';
+    default:
+      return 'These files are shown as they were imported.';
+  }
 }
 
 /** True when the result can be handed to the player. */

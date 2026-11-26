@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, unzipSync, zipSync } from 'fflate';
 import {
-  buildPlayable, deckSaveInput, filesWithEdits, isPlayable, openDeck, openStoredDeck,
-  type BuildDeps, type DeckProject,
+  buildPlayable, deckArchive, deckEditsProblem, deckFileList, deckFileText, deckOriginalText, deckSaveInput,
+  deckSourceNote, filesWithEdits, isEditableDeck, isLibraryFile, isPlayable, nextDeckEdits, openDeck, openStoredDeck,
+  originalArchiveName, type BuildDeps, type DeckProject,
 } from '../src/lib/deck-project.ts';
 import { deckFromHtmlFile } from '../src/lib/deck-archive.ts';
 import { PresentationPackageError } from '../src/lib/presentation-package.ts';
-import { htmlFixture, zipFixture } from './helpers/deck-fixtures.ts';
+import { DECK_EDIT_LIMITS } from '../src/lib/presentation-store.ts';
+import { htmlFixture, loadFixtureDeck, zipFixture } from './helpers/deck-fixtures.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
 
 const deps = (extra: Partial<BuildDeps> = {}): BuildDeps => ({ vendor: () => nodeVendorProvider(), ...extra });
@@ -229,5 +231,141 @@ describe('saving and reopening decks', () => {
     const first = await deckFromHtmlFile(htmlFixture('plain-html'));
     const second = await opened(htmlFixture('plain-html'));
     assert.deepEqual(new Uint8Array(await second.original.arrayBuffer()), new Uint8Array(await first.archive.arrayBuffer()));
+  });
+});
+
+describe('editing decks', () => {
+  const text = (bytes: Uint8Array | undefined) => new TextDecoder().decode(bytes);
+  const localProject = () => opened(zipFixture('local-project', {
+    wrap: 'optics-workshop',
+    extra: {
+      'optics-workshop/dist/reveal.js': strToU8('/* a copy of Reveal.js */'),
+      'optics-workshop/plugin/markdown/markdown.js': strToU8('/* a copy of the Markdown plugin */'),
+      'optics-workshop/js/vendor/chart.min.js': strToU8('/* minified */'),
+      '__MACOSX/optics-workshop/._index.html': strToU8('clutter'),
+    },
+  }));
+
+  it('lists the entry page first, then the deck’s own text files, its other files, and library copies', async () => {
+    const project = await localProject();
+    assert.equal(isEditableDeck(project), true);
+    const list = deckFileList(project);
+    assert.deepEqual(list.map((file) => [file.path, file.group, file.editable]), [
+      ['index.html', 'entry', true],
+      ['css/custom.css', 'deck', true],
+      ['css/theme-extra.css', 'deck', true],
+      ['js/demo.js', 'deck', true],
+      ['slides.md', 'deck', true],
+      ['assets/pic.png', 'deck', false],
+      ['dist/reveal.js', 'library', false],
+      ['js/vendor/chart.min.js', 'library', false],
+      ['plugin/markdown/markdown.js', 'library', false],
+    ]);
+    const picture = list.find((file) => file.path === 'assets/pic.png')!;
+    assert.equal(picture.text, false);
+    assert.equal(picture.size, loadFixtureDeck('local-project').get('assets/pic.png')!.length);
+    assert.match(picture.note!, /cannot be edited here/);
+    const library = list.find((file) => file.path === 'dist/reveal.js')!;
+    assert.equal(library.text, true, 'library copies can still be read');
+    assert.match(library.note!, /library/);
+    assert.equal(list.find((file) => file.path === 'slides.md')!.note, undefined);
+    assert.equal(isLibraryFile('node_modules/reveal.js/dist/reveal.js'), true);
+    assert.equal(isLibraryFile('css/custom.css'), false);
+  });
+
+  it('keeps packages and Slidev decks read-only, with an explanation of how to change them', async () => {
+    const pkg = await opened(portablePackage());
+    assert.equal(isEditableDeck(pkg), false);
+    const list = deckFileList(pkg);
+    assert.equal(list[0].path, 'source/slides.md', 'the package’s main source comes first');
+    assert.ok(list.every((file) => !file.editable && file.note === undefined));
+    assert.equal(deckFileText(pkg, 'source/slides.md'), '# Quantum lesson');
+    assert.match(deckSourceNote(pkg), /read-only here.*rebuild the package/);
+    assert.equal(nextDeckEdits(pkg, new Map([['source/slides.md', '# Changed']])).problem, 'This presentation cannot be edited in the browser.');
+    const source = await opened(zipFixture('slidev-source'));
+    assert.equal(isEditableDeck(source), false);
+    assert.match(deckSourceNote(source), /npx slidev build/);
+    assert.match(deckSourceNote(await localProject()), /Apply changes/);
+  });
+
+  it('computes the next overlay without changing the project, and drops edits that match the original', async () => {
+    const project = await localProject();
+    const original = deckOriginalText(project, 'slides.md')!;
+    assert.match(original, /## Next: the picture slide/);
+    const edited = original.replace('Next: the picture slide', 'Next: an edited picture slide');
+    const first = nextDeckEdits(project, new Map([['slides.md', edited]]));
+    assert.equal(first.problem, undefined);
+    assert.deepEqual([...first.edits], [['slides.md', edited]]);
+    assert.equal(project.edits.size, 0, 'the project is unchanged until the caller applies the result');
+    project.edits = first.edits;
+    assert.equal(deckFileText(project, 'slides.md'), edited);
+    assert.equal(deckOriginalText(project, 'slides.md'), original);
+    const back = nextDeckEdits(project, new Map([['slides.md', original], ['css/custom.css', 'h2 { color: teal }']]));
+    assert.deepEqual([...back.edits], [['css/custom.css', 'h2 { color: teal }']]);
+  });
+
+  it('refuses edits to files that cannot be edited and edits over the 2 MB and 8 MB limits', async () => {
+    const project = await localProject();
+    for (const path of ['assets/pic.png', 'dist/reveal.js', 'new-file.js']) {
+      const result = nextDeckEdits(project, new Map([[path, 'changed']]));
+      assert.match(result.problem!, /cannot be edited here/, path);
+    }
+    const large = nextDeckEdits(project, new Map([['slides.md', 'é'.repeat(DECK_EDIT_LIMITS.fileBytes / 2 + 1)]]));
+    assert.match(large.problem!, /“slides\.md” is larger than 2 MB/);
+    assert.equal(nextDeckEdits(project, new Map([['slides.md', 'x'.repeat(DECK_EDIT_LIMITS.fileBytes)]])).problem, undefined, 'exactly 2 MB is allowed');
+    const nearly = 'x'.repeat(DECK_EDIT_LIMITS.fileBytes - 16);
+    const total = new Map(['index.html', 'css/custom.css', 'css/theme-extra.css', 'js/demo.js', 'slides.md'].map((path) => [path, nearly]));
+    assert.match(nextDeckEdits(project, total).problem!, /larger than 8 MB together/);
+    assert.match(deckEditsProblem(new Map([['a.md', '😀'.repeat(DECK_EDIT_LIMITS.fileBytes / 4 + 1)]]))!, /larger than 2 MB/, 'astral characters count four bytes');
+    assert.equal(deckEditsProblem(new Map()), undefined);
+  });
+
+  it('downloads the original unchanged, or the current files under their original names when edited', async () => {
+    const project = await localProject();
+    assert.equal(deckArchive(project), project.original, 'unedited decks download the upload itself');
+    assert.equal(project.folder, 'optics-workshop');
+    project.edits = new Map([['slides.md', '## Edited in the browser\n']]);
+    const archive = deckArchive(project);
+    assert.equal(archive.type, 'application/zip');
+    const entries = unzipSync(new Uint8Array(await archive.arrayBuffer()));
+    assert.ok(Object.keys(entries).every((name) => name.startsWith('optics-workshop/')), 'the wrapping folder is kept');
+    assert.equal(text(entries['optics-workshop/slides.md']), '## Edited in the browser\n');
+    assert.deepEqual(entries['optics-workshop/assets/pic.png'], loadFixtureDeck('local-project').get('assets/pic.png'));
+    assert.equal(text(entries['optics-workshop/index.html']), text(loadFixtureDeck('local-project').get('index.html')));
+    assert.equal(Object.keys(entries).some((name) => name.includes('__MACOSX')), false, 'operating-system clutter is left out');
+    assert.equal(originalArchiveName(project), 'local-project-original.zip');
+    // The download opens again as the same deck, now with the edit in its files.
+    const again = await opened(new File([archive], 'optics-workshop.zip'));
+    assert.equal(again.kind, 'reveal');
+    assert.equal(text(again.files.get('slides.md')), '## Edited in the browser\n');
+    assert.deepEqual([...again.files.keys()], [...project.files.keys()]);
+    const single = await opened(htmlFixture('plain-html', 'index.html', 'page.html'));
+    single.edits = new Map([['index.html', '<!doctype html><title>Edited</title><p>Edited</p>']]);
+    assert.deepEqual(Object.keys(unzipSync(new Uint8Array(await deckArchive(single).arrayBuffer()))), ['index.html']);
+  });
+
+  it('restores a saved overlay on reopening, but never lets it add or replace binary files', async () => {
+    const project = await localProject();
+    const again = await openStoredDeck({
+      id: 'saved-2', title: 'Optics workshop', kind: 'reveal', engine: 'reveal', archive: project.original, fileName: project.fileName,
+      entry: 'index.html', edits: { 'slides.md': '## Restored edit\n', 'new-file.js': 'alert(1)', 'assets/pic.png': 'not a picture' },
+    });
+    assert.deepEqual([...again.edits], [['slides.md', '## Restored edit\n']]);
+    assert.equal(again.folder, 'optics-workshop');
+    const files = filesWithEdits({ ...again, edits: new Map([...again.edits, ['new-file.js', 'alert(1)']]) });
+    assert.equal(files.has('new-file.js'), false, 'filesWithEdits never adds a file');
+    const packageRecord = await openStoredDeck({ title: 'Lesson', kind: 'qft-presentation', engine: 'slidev', archive: (await opened(portablePackage())).original, fileName: 'lesson.zip', edits: { 'source/slides.md': '# Changed' } });
+    assert.equal(packageRecord.edits.size, 0, 'read-only kinds carry no edits');
+  });
+
+  it('plays an edited external Markdown slide after rebuilding', async () => {
+    const project = await localProject();
+    const original = deckOriginalText(project, 'slides.md')!;
+    project.edits = nextDeckEdits(project, new Map([['slides.md', original.replace('Next: the picture slide', 'Next: an edited picture slide')]])).edits;
+    const result = await buildPlayable(project, deps());
+    assert.equal(isPlayable(result), true);
+    assert.match(result.html, /Next: an edited picture slide/);
+    assert.doesNotMatch(result.html, /Next: the picture slide/);
+    assert.deepEqual(deckSaveInput(project)!.edits, project.edits);
   });
 });

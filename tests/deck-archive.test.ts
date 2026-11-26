@@ -45,14 +45,17 @@ describe('deck archive reading', () => {
       },
     }));
     assert.deepEqual([...deck.files.keys()], ['app.js', 'index.html', 'style.css']);
+    assert.equal(deck.folder, 'explorer', 'the removed folder is kept for downloads');
     assert.deepEqual(deck.issues, []);
   });
 
   it('strips only one level, and nothing when files sit at the top', async () => {
     const nested = await readDeckArchive(zipFile({ 'outer/inner/index.html': '<p>1</p>', 'outer/inner/a.css': '' }));
     assert.deepEqual([...nested.files.keys()], ['inner/a.css', 'inner/index.html']);
+    assert.equal(nested.folder, 'outer');
     const flat = await readDeckArchive(zipFile({ 'index.html': '<p>1</p>', 'css/a.css': '' }));
     assert.deepEqual([...flat.files.keys()], ['css/a.css', 'index.html']);
+    assert.equal(flat.folder, '');
   });
 
   it('keeps each stored file independent of the archive buffer', async () => {

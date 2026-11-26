@@ -20,6 +20,8 @@ export interface DeckArchive {
   fileName: string;
   /** The name of the file the person chose, as shown to them. */
   sourceName: string;
+  /** The one wrapping top-level folder removed from every path, or '' when there was none. */
+  folder: string;
   expandedBytes: number;
   issues: DeckIssue[];
 }
@@ -134,6 +136,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     archive: file.slice(0, file.size, 'application/zip'),
     fileName: zipName(sourceName),
     sourceName,
+    folder: wrapped ? first : '',
     expandedBytes: directory.reduce((sum, entry) => sum + entry.size, 0),
     issues,
   };
@@ -157,6 +160,7 @@ export async function deckFromHtmlFile(file: File): Promise<DeckArchive> {
     archive: new Blob([new Uint8Array(zip).buffer], { type: 'application/zip' }),
     fileName: zipName(sourceName),
     sourceName,
+    folder: '',
     expandedBytes: bytes.length,
     issues: [],
   };
