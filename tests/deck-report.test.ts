@@ -129,4 +129,16 @@ describe('deck check report', () => {
     assert.match(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], edited: false }), /^edited: no$/m);
     assert.doesNotMatch(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [] }), /^edited:/m);
   });
+
+  it('says when the slides did not start, or started with basic settings', () => {
+    const blank = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], stalled: 'blank' });
+    assert.match(blank, /^result: does not start \(/m);
+    assert.match(blank, /Rules for this player/, 'a deck that does not start needs changes');
+    assert.match(blank.split('\n').at(-1)!, /^Reply: send back the complete corrected deck/);
+    const rescued = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], stalled: 'rescued' });
+    assert.match(rescued, /^result: starts with basic settings \(/m);
+    assert.match(rescued.split('\n').at(-1)!, /^Reply: send back the complete corrected deck/);
+    const failed = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [{ code: 'x', severity: 'error', message: 'm' }], stalled: 'blank' });
+    assert.match(failed, /^result: cannot play here$/m, 'an error from the check still wins');
+  });
 });

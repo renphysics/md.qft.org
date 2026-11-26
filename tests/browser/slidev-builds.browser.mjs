@@ -162,7 +162,7 @@ export default async function run(t) {
     const downloading = page.waitForEvent('download');
     await page.locator('[data-pres-html]').click();
     const download = await downloading;
-    assert.equal(download.suggestedFilename(), 'Quantum-interference---Slidev.html');
+    assert.equal(download.suggestedFilename(), 'Quantum-interference-Slidev.html');
     const file = resolve(t.artifacts, 'slidev-build-standalone.html');
     await download.saveAs(file);
     const text = readFileSync(file, 'utf8');

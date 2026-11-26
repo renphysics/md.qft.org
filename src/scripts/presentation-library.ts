@@ -28,7 +28,7 @@ function download(blob: Blob, name: string): void {
 }
 
 function fileName(title: string): string {
-  return title.normalize('NFKC').replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 90) || 'presentation';
+  return title.normalize('NFKC').replace(/[^\p{L}\p{N}_]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 90).replace(/-+$/, '') || 'presentation';
 }
 
 /** What plays a deck, as people know it. */
@@ -1014,10 +1014,9 @@ export class PresentationLibrary extends HTMLElement {
     const active = this.active;
     if (!active) return;
     const { project, playable } = active;
-    // `stalled` is for the report's result line; the formatter reads it once
-    // the merge wires it ('does not start' or 'starts with basic settings').
-    const input: DeckReportInput & { stalled?: PresentationStall } = {
-      kind: project.kind, engine: project.engine,
+    // `stalled` sets the report's result line ('does not start' or 'starts with basic settings').
+    const input: DeckReportInput = {
+      kind: project.kind, engine: project.engine, edited: project.edits.size > 0,
       ...(project.detection.engineVersion ? { engineVersion: project.detection.engineVersion } : {}),
       ...(project.entry ? { entry: project.entry } : {}),
       ...(this.slides !== undefined ? { slides: this.slides } : {}),
