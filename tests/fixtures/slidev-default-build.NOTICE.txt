@@ -1,0 +1,27 @@
+slidev-default-build.zip
+
+An ordinary `slidev build` output, used by the tests of the in-browser
+Slidev build conversion (src/lib/slidev-convert.ts). It was made with
+@slidev/cli 53.1.0 and @slidev/theme-default 0.25.0 and default settings:
+base path "/", the history router, and Slidev's Google Fonts and favicon
+links. The ZIP holds the dist folder unchanged, including every KaTeX font
+file (woff2, woff and ttf), so the archive is about 1.2 MB.
+
+The deck (five slides and the QuantumInterference Vue component) is adapted
+from this repository's Slidev example in tools/slidev and is covered by the
+repository's MIT license.
+
+The compiled scripts, styles and fonts contain third-party software, each
+under its own license, which continues to apply:
+
+- Slidev (@slidev/client, @slidev/cli, @slidev/theme-default): MIT License,
+  Copyright (c) 2020 Anthony Fu.
+- Vue 3.5 and vue-router: MIT License, Copyright (c) 2018-present Evan You
+  and Vue contributors.
+- KaTeX 0.19.1 and its fonts (assets/KaTeX_*): MIT License, Copyright (c)
+  2013-2020 Khan Academy and other contributors (the font files: katex-fonts,
+  MIT License, Copyright (c) 2018 Khan Academy). The fonts are generated from
+  the Computer Modern and AMS fonts; the AMS fonts are published under the
+  SIL Open Font License 1.1.
+- Shiki, VueUse, floating-vue, file-saver and the other libraries Slidev
+  bundles: MIT License, from their respective authors.

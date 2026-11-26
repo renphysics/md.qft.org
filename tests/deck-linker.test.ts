@@ -6,7 +6,7 @@ import { readDeckArchive } from '../src/lib/deck-archive.ts';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import { linkDeck, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
 import { dependencyAdapterSource, escapeScriptText, handlerScriptSource, mathStandInSource } from '../src/lib/deck-linker-runtime.ts';
-import { defaultImportBindings, scanModuleImports } from '../src/lib/deck-linker-modules.ts';
+import { defaultImportBindings, scanModuleImports, scanStringLiterals } from '../src/lib/deck-linker-modules.ts';
 import type { DeckDetection, DeckFiles } from '../src/lib/deck-types.ts';
 import { FIXTURE_DECKS, loadFixtureDeck, type FixtureDeckName } from './helpers/deck-fixtures.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
@@ -692,6 +692,22 @@ describe('module import scanning', () => {
     assert.equal(code.slice(imports[2].start, imports[2].end), "import def, { a as b } from './mixed.js' with { type: 'json' };");
     assert.equal(scanModuleImports('const a = "unterminated').complete, false);
     assert.equal(scanModuleImports('`${`').complete, false);
+  });
+
+  it('finds where each import() call ends, whatever its argument', () => {
+    const code = 'a=()=>import(`./slide-1.js`);b=import(name+("x")).then(f);c=import("./c.js");d=import(';
+    const dynamic = scanModuleImports(code).imports.filter((item) => item.kind === 'dynamic');
+    assert.deepEqual(dynamic.map((item) => item.callEnd === undefined ? undefined : code.slice(item.start, item.callEnd)),
+      ['import(`./slide-1.js`)', 'import(name+("x"))', 'import("./c.js")', undefined]);
+  });
+
+  it('lists string literals and plain templates, but not tagged or substituted templates', () => {
+    const code = 'a="/assets/x.png";b=\'it\\\'s\';c=`./y.svg`;d=html`<p>`;e=`${z}.png`;f=/"q"/;g=typeof`t`;// "comment"';
+    const literals = scanStringLiterals(code)!;
+    assert.deepEqual(literals.map((item) => [code.slice(item.start, item.end), item.value]), [
+      ['"/assets/x.png"', '/assets/x.png'], ["'it\\'s'", "it's"], ['`./y.svg`', './y.svg'], ['`t`', 't'],
+    ]);
+    assert.equal(scanStringLiterals('a="unterminated'), undefined);
   });
 
   it('accepts only default and namespace bindings', () => {

@@ -18,6 +18,11 @@ export interface ModuleImport {
   specifier?: string;
   /** For kind 'import': the text between `import` and `from`. */
   clause?: string;
+  /**
+   * For kind 'dynamic': the offset just after the call's closing parenthesis,
+   * whatever its argument; undefined when the call is never closed.
+   */
+  callEnd?: number;
 }
 
 export interface ModuleScan {
@@ -170,6 +175,18 @@ function statementEnd(tokens: Token[], index: number): { end: number; next: numb
   return { end, next };
 }
 
+/** The end offset of the parenthesis that closes the one at tokens[open], or undefined. */
+function closingParenthesis(tokens: Token[], open: number): number | undefined {
+  let depth = 0;
+  for (let index = open; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type !== 'punct') continue;
+    if (token.value === '(') depth += 1;
+    else if (token.value === ')' && --depth === 0) return token.end;
+  }
+  return undefined;
+}
+
 /** Every import of a module script, in source order. */
 export function scanModuleImports(code: string): ModuleScan {
   const { tokens, complete } = tokenize(code);
@@ -193,8 +210,11 @@ export function scanModuleImports(code: string): ModuleScan {
         const argument = tokens[index + 2];
         const close = tokens[index + 3];
         if (argument?.type === 'string' && close?.value === ')') {
-          imports.push({ kind: 'dynamic', start: token.start, end: close.end, specifier: unquote(argument.value) });
-        } else imports.push({ kind: 'dynamic', start: token.start, end: next.end });
+          imports.push({ kind: 'dynamic', start: token.start, end: close.end, specifier: unquote(argument.value), callEnd: close.end });
+        } else {
+          const callEnd = closingParenthesis(tokens, index + 1);
+          imports.push({ kind: 'dynamic', start: token.start, end: next.end, ...(callEnd === undefined ? {} : { callEnd }) });
+        }
         continue;
       }
       if (depth !== 0) continue;
@@ -233,6 +253,41 @@ export function scanModuleImports(code: string): ModuleScan {
     }
   }
   return { imports, complete };
+}
+
+export interface StringLiteral {
+  /** Offsets of the literal including its quotes (end exclusive). */
+  start: number;
+  end: number;
+  /** The text it stands for, escapes resolved. */
+  value: string;
+}
+
+/**
+ * Every quoted string and every template literal without substitutions,
+ * other than tagged templates, in source order: the places where replacing
+ * the whole literal with another string literal keeps the code valid.
+ * Undefined when the source could not be read to its end.
+ */
+export function scanStringLiterals(code: string): StringLiteral[] | undefined {
+  const { tokens, complete } = tokenize(code);
+  if (!complete) return undefined;
+  const literals: StringLiteral[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type === 'string') {
+      literals.push({ start: token.start, end: token.end, value: unquote(token.value) });
+      continue;
+    }
+    // A whole template is one token that starts and ends with a backtick; a
+    // template with substitutions is split at each ${ and is skipped.
+    if (token.type !== 'template' || token.value !== '`' || token.end - token.start < 2 || code[token.end - 1] !== '`') continue;
+    const previous = tokens[index - 1];
+    const tagged = previous && ((previous.type === 'name' && !KEYWORDS_BEFORE_EXPRESSION.has(previous.value))
+      || previous.type === 'template' || previous.value === ')' || previous.value === ']');
+    if (!tagged) literals.push({ start: token.start, end: token.end, value: unquote(code.slice(token.start, token.end)) });
+  }
+  return literals;
 }
 
 export interface ImportBinding {
