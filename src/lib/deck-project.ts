@@ -534,6 +534,15 @@ async function convertSlidevBuildForPlayback(project: DeckProject, deps: BuildDe
     if (deps.signal?.aborted) {
       return { html: '', issues: [{ code: 'cancelled', severity: 'error', message: 'Stopped before the presentation was ready.' }] };
     }
+    const detail = (error as { detail?: unknown } | null)?.detail;
+    if (error instanceof Error && typeof detail === 'string') {
+      // The converter itself is unavailable (SlidevConverterUnavailableError): a fixed message with what to do, the reason as detail.
+      const where = cleanReportedText(detail, 200);
+      return {
+        html: '',
+        issues: [{ code: 'slidev-converter-unavailable', severity: 'error', message: cleanReportedText(error.message, 300), ...(where ? { where } : {}) }],
+      };
+    }
     const reason = cleanReportedText(error instanceof Error ? error.message : String(error), 300);
     return {
       html: '',

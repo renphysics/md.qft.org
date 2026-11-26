@@ -10,7 +10,10 @@
  * Protocol (one conversion per Worker; the page terminates it afterwards, or
  * to cancel):
  *   page -> worker  { type: 'convert', files: [path, ArrayBuffer][], detection, maxHtmlLength? }
- *   worker -> page  { type: 'progress', step } … then { type: 'done', html, issues } or { type: 'failed', message }
+ *   worker -> page  { type: 'ready' } once esbuild has started, { type: 'progress', step } …,
+ *                   then { type: 'done', html, issues } or { type: 'failed', message, stage? }
+ * stage 'start' means esbuild.wasm could not be downloaded or compiled; the
+ * page then shows its own fixed message and keeps `message` only as detail.
  */
 import * as esbuild from 'esbuild-wasm/esm/browser.js';
 import wasmUrl from 'esbuild-wasm/esbuild.wasm?url';
@@ -25,9 +28,10 @@ interface ConvertRequest {
 }
 
 export type SlidevWorkerReply =
+  | { type: 'ready' }
   | { type: 'progress'; step: SlidevConvertStep }
   | { type: 'done'; html: string; issues: DeckIssue[] }
-  | { type: 'failed'; message: string };
+  | { type: 'failed'; message: string; stage?: 'start' };
 
 const reply = (message: SlidevWorkerReply) => self.postMessage(message);
 
@@ -48,6 +52,12 @@ function isRequest(value: unknown): value is ConvertRequest {
 async function convert(request: ConvertRequest): Promise<void> {
   try {
     await initialise();
+  } catch (error) {
+    reply({ type: 'failed', stage: 'start', message: String(error instanceof Error ? error.message : error).slice(0, 600) });
+    return;
+  }
+  reply({ type: 'ready' });
+  try {
     const files: DeckFiles = new Map();
     for (const [path, buffer] of request.files) {
       if (typeof path === 'string' && buffer instanceof ArrayBuffer) files.set(path, new Uint8Array(buffer));

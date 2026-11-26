@@ -207,6 +207,15 @@ describe('building playable decks', () => {
     assert.equal(failing.issues[0].code, 'slidev-convert-failed');
     assert.match(failing.issues[0].message, /could not be converted: The Slidev converter could not start\./);
 
+    // The converter could not be downloaded: a fixed message with what to do; the raw reason only as detail.
+    const offline = await buildPlayable(project, deps({
+      convertSlidev: async () => { throw Object.assign(new Error('The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.'), { detail: 'Failed to fetch' }); },
+    }));
+    assert.equal(offline.html, '');
+    assert.deepEqual(offline.issues.map((issue) => [issue.code, issue.severity, issue.where]), [['slidev-converter-unavailable', 'error', 'Failed to fetch']]);
+    assert.doesNotMatch(offline.issues[0].message, /Failed to fetch|could not be converted/);
+    assert.match(offline.issues[0].message, /reload the page, and open the ZIP again\.$/);
+
     const controller = new AbortController();
     const stopped = await buildPlayable(project, deps({
       signal: controller.signal,

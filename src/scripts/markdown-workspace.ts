@@ -1434,8 +1434,10 @@ class MarkdownWorkspace extends HTMLElement {
     this.q('[data-ai-status]').textContent = !copied
       ? 'Select and copy the instructions below, then paste them into your AI assistant.'
       : format === 'reveal'
-        ? 'Copied. Paste it into your AI, download the HTML file or ZIP it returns, and open it here.'
-        : 'Copied. Paste into your AI assistant, attach your source material, and ask for the lesson ZIP.';
+        ? 'Copied. Paste it into your AI assistant, download the HTML file or ZIP it returns, and open it here.'
+        : format === 'slidev'
+          ? 'Copied. Paste it into an AI assistant that can run commands, and open the project ZIP it returns here.'
+          : 'Copied. Paste into your AI assistant, attach your source material, and ask for the lesson ZIP.';
   }
 
   private async starterLesson(download: boolean): Promise<void> {
@@ -1447,7 +1449,7 @@ class MarkdownWorkspace extends HTMLElement {
         link.href = withBase('slidev/interactive-physics.zip');
         link.download = 'slidev-starter.zip';
         document.body.append(link); link.click(); link.remove();
-        this.q('[data-ai-status]').textContent = 'Slidev starter download started. Give the ZIP and instructions to your coding assistant.';
+        this.q('[data-ai-status]').textContent = 'Slidev starter download started. It is an optional working example: you can give it to your AI assistant with the instructions.';
       } else {
         this.q<HTMLDialogElement>('[data-ai-dialog]').close();
         await customElements.whenDefined('qft-presentation-library');
@@ -1730,17 +1732,19 @@ class MarkdownWorkspace extends HTMLElement {
     click('[data-ai-open]', () => { this.q<HTMLDialogElement>('[data-ai-dialog]').close(); this.q<HTMLInputElement>('[data-file-input]').click(); });
     this.q<HTMLSelectElement>('[data-ai-format]').addEventListener('change', () => {
       const format = this.aiFormat();
-      this.q('[data-ai-format-help]').textContent = format === 'slidev' ? 'Your coding assistant builds the Slidev package. Open it here to present; revise its source and rebuild for changes.'
-        : format === 'reveal' ? 'Paste the prompt into your AI, download the HTML file or ZIP it returns, and open it here.'
+      this.q('[data-ai-format-help]').textContent = format === 'slidev' ? 'Slidev needs an AI assistant that can run commands, or a computer with Node.js. Ask for the Slidev project with its built dist folder in one ZIP, and open that ZIP here.'
+        : format === 'reveal' ? 'Paste the prompt into your AI assistant, download the HTML file or ZIP it returns, and open it here.'
           : 'Markdown lessons can be revised directly in the editor.';
-      this.q('[data-ai-workflow-help]').textContent = format === 'slidev' ? 'Ask for the built Slidev ZIP with source included. Open it here, test each interaction, and present.'
-        : format === 'reveal' ? 'Download the HTML file or ZIP your AI returns. Open it here, read the notes from the check, and present.'
+      this.q('[data-ai-workflow-help]').textContent = format === 'slidev' ? 'Open the project ZIP here, read the notes from the check, and present. For changes, ask your AI assistant to edit the project, build again and send the new ZIP.'
+        : format === 'reveal' ? 'Download the HTML file or ZIP your AI assistant returns. Open it here, read the notes from the check, and present.'
           : 'Ask for a lesson ZIP. Open it here, check it, and make your final edits.';
       // No starter for Reveal.js: the AI writes the whole deck.
       this.q('[data-ai-starter]').hidden = format === 'reveal';
       this.q('[data-ai-example]').hidden = format === 'reveal';
       this.q<HTMLDetailsElement>('[data-ai-prompt-details]').hidden = true;
-      this.q('[data-ai-status]').textContent = format === 'reveal' ? 'Copy the instructions, then paste them into your AI assistant.' : 'Copy the instructions and download the matching starter ZIP.';
+      this.q('[data-ai-status]').textContent = format === 'reveal' ? 'Copy the instructions, then paste them into your AI assistant.'
+        : format === 'slidev' ? 'Copy the instructions for an AI assistant that can run commands. The starter ZIP is an optional example.'
+          : 'Copy the instructions and download the matching starter ZIP.';
     }, { signal });
     click('[data-lesson-check]', () => this.openLessonCheck());
     click('[data-lesson-check-close]', () => this.q<HTMLDialogElement>('[data-lesson-check-dialog]').close());

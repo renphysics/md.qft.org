@@ -44,6 +44,12 @@ const one = (value: unknown, limit: number) => cleanReportedText(value, limit);
 /** What the player supplies, for an AI that changes a Reveal.js or HTML presentation. */
 const PLAYER_RULES = `Rules for this player: it supplies only Reveal.js ${BUNDLED_VERSIONS['reveal.js']} and KaTeX; every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas; nothing may load from the internet while the presentation plays.`;
 
+/** What a Slidev project needs to play here; the same rules as the Slidev prompt (slidev-prompt.ts). */
+const SLIDEV_RULES = 'Rules for this player: no {monaco} code blocks and no Web Workers; pictures and media in public/ or imported in the project; nothing may load from the internet while the presentation plays (no CDN files, web fonts or remote APIs; set fonts: { provider: \'none\' }).';
+
+/** The ZIP that the Slidev prompt asks for. */
+const SLIDEV_ZIP = 'one ZIP of the project folder with the built dist/ folder inside and without node_modules';
+
 /** A fence longer than any run of tildes inside, so the text cannot close it. */
 function fenceFor(lines: readonly string[]): string {
   let longest = 0;
@@ -53,16 +59,16 @@ function fenceFor(lines: readonly string[]): string {
 
 function reply(kind: DeckKind, needsChanges: boolean): string {
   if (kind === 'slidev-source') {
-    return 'Reply: build the presentation with "npx slidev build" and send back a ZIP of the dist folder, fixing the notes above.';
+    return `Reply: build the project with "npx slidev build", fixing the notes above, and send back ${SLIDEV_ZIP}.`;
   }
   if (kind === 'slidev-build') {
     return needsChanges
-      ? 'Reply: fix the notes above in the Slidev project, run "npx slidev build" again, and send back a ZIP of the new dist folder.'
+      ? `Reply: fix the notes above in the Slidev project, run "npx slidev build" again, and send back ${SLIDEV_ZIP}.`
       : 'Reply: no changes are needed for playback.';
   }
   if (kind === 'qft-presentation') {
     return needsChanges
-      ? 'Reply: fix the notes above, rebuild with the QFT Slidev packaging tool, and send back the complete new ZIP.'
+      ? `Reply: fix the notes above in source/, build and package it again with source/pack.mjs as source/README.md says, and send back the complete new ZIP; or send back ${SLIDEV_ZIP}.`
       : 'Reply: no changes are needed for playback.';
   }
   if (kind === 'markdown-bundle' || kind === 'unknown') {
@@ -82,7 +88,7 @@ function reply(kind: DeckKind, needsChanges: boolean): string {
  * and its own run-time words) sits inside fenced blocks labelled as data, not
  * instructions; outside them is only text this site wrote. For a Reveal.js
  * or HTML presentation that needs changes, a line states what the player
- * supplies. Last comes one sentence saying what to send back. Every value is
+ * supplies; for a Slidev one, the rules of the Slidev prompt. Last comes one sentence saying what to send back. Every value is
  * one bounded line of plain text.
  */
 export function formatDeckReport(input: DeckReportInput): string {
@@ -126,6 +132,7 @@ export function formatDeckReport(input: DeckReportInput): string {
   }
   const needsChanges = errors + warnings + runtime.length > 0;
   if (needsChanges && (input.kind === 'reveal' || input.kind === 'html')) lines.push(PLAYER_RULES);
+  if (needsChanges && (input.kind === 'slidev-build' || input.kind === 'slidev-source' || input.kind === 'qft-presentation')) lines.push(SLIDEV_RULES);
   lines.push(reply(input.kind, needsChanges));
   return lines.join('\n');
 }

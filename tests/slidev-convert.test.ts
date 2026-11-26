@@ -137,13 +137,12 @@ describe('Slidev builds from the research', () => {
   });
 
   const monaco = researchMonacoBuild();
-  it('refuses the official template build, naming Monaco, Web Workers and the size', { skip: monaco ? false : 'the research template build is not on this machine' }, async () => {
+  it('refuses the official template build with one error, naming Monaco', { skip: monaco ? false : 'the research template build is not on this machine' }, async () => {
     const result = await convert(filesFromFolder(monaco!));
     assert.equal(result.html, '');
-    assert.deepEqual(codes(result.issues), ['slidev-monaco-unsupported', 'slidev-workers-unsupported', 'slidev-build-too-large']);
+    // Monaco's own Web Workers and size are the same cause: no second or third error.
+    assert.deepEqual(codes(result.issues), ['slidev-monaco-unsupported']);
     assert.match(result.issues[0].message, /Monaco code editor/);
-    assert.match(result.issues[1].message, /Web Workers \(assets\/css\.worker-/);
-    assert.match(result.issues[2].message, /more than the 24\.0 MB/);
   });
 });
 
@@ -220,6 +219,20 @@ describe('each conversion step', () => {
     assert.match(result.issues[0].message, /gone\.png/);
   });
 
+  it('names a picture that the slides show but the build does not contain', async () => {
+    // Slidev writes <img src="/red.png"> and ![](/red.png) of public/ pictures as base-addressed strings.
+    const { bundler, requests } = recorder();
+    const result = await convert(smallBuild({
+      'assets/slide-1.js': 'export default [`/assets/logo-abc.png`,"/red.png",\'/red.png\',"/pictures/blue.svg","icon.png",".ico","https://example.org/x.png"]',
+    }), bundler);
+    assert.deepEqual(codes(result.issues), ['missing-file']);
+    assert.equal(result.issues[0].severity, 'warning');
+    assert.equal(result.issues[0].where, '/pictures/blue.svg');
+    assert.match(result.issues[0].message, /not in the ZIP, so they will not show: \/pictures\/blue\.svg, \/red\.png\. Put them in the Slidev project's public folder/);
+    assert.ok(result.html, 'the rest of the presentation still plays');
+    assert.match(requests[0].modules.get('assets/slide-1.js')!, /^export default \["data:image\/png;base64,[^"]+","\/red\.png"/);
+  });
+
   it('resolves a build made for a sub-path (--base /talk/)', async () => {
     const { bundler, requests } = recorder();
     const result = await convert(deck({
@@ -290,15 +303,33 @@ describe('each conversion step', () => {
     assert.match(result.issues[0].message, /assets\/index-abc\.js/);
     assert.ok(result.html, 'a warning does not stop playback');
 
-    const older = await convert(smallBuild({ 'assets/index-abc.js': 'const r={history:ue(`/`),routes:[]};import("./slide-1.js");' }), recorder().bundler);
-    assert.deepEqual(codes(older.issues), ['slidev-preload-unpatched'], 'dynamic imports without the known preload helper');
+    const older = await convert(smallBuild({ 'assets/index-abc.js': 'const r={history:ue(`/`),routes:[]};P(()=>import("./slide-1.js"),["assets/slide-1.js","assets/slide-1.css"]);' }), recorder().bundler);
+    assert.deepEqual(codes(older.issues), ['slidev-preload-unpatched'], 'a preload list written inline, which an older Vite emits');
     assert.match(older.issues[0].message, /older Slidev/);
+
+    // modulePreload: false (the site's own starter): no dependency lists, so nothing to switch off and no note.
+    for (const call of ['P(()=>import(`./slide-1.js`),[])', 'import("./slide-1.js")', 'P(async()=>{await import(`./slide-1.js`)},[])']) {
+      const current = await convert(smallBuild({ 'assets/index-abc.js': `const r={history:ue(\`/\`),routes:[]};${call};` }), recorder().bundler);
+      assert.deepEqual(codes(current.issues), [], call);
+    }
 
     const unstyled = await convert(deck({
       'index.html': page().replace(/<link rel="stylesheet"[^>]*>/, ''),
       'assets/index-abc.js': 'const r={history:ue(`/`),routes:[]};',
     }), recorder().bundler);
     assert.deepEqual(codes(unstyled.issues), ['slidev-no-styles']);
+  });
+
+  it('refuses a Monaco build with one error, not also for its Web Workers and size', async () => {
+    const result = await convert(smallBuild({
+      'assets/monaco/editor.main-abc.js': 'export default 1',
+      'assets/editor.worker-AbCd1234.js': 'self.onmessage=()=>{}',
+      'assets/slide-1.js': 'export default ()=>new Worker(new URL(`/assets/editor.worker-AbCd1234.js`,``+import.meta.url))',
+      'assets/huge-abc.js': new Uint8Array(SLIDEV_CONVERT_LIMITS.scriptBytes + 1),
+    }), recorder().bundler);
+    assert.equal(result.html, '');
+    assert.deepEqual(codes(result.issues), ['slidev-monaco-unsupported']);
+    assert.match(result.issues[0].message, /Monaco code editor[\s\S]*monaco: false/);
   });
 
   it('refuses builds that use Web Workers, with the files named', async () => {

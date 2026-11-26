@@ -73,6 +73,29 @@ export default async function run(t) {
   await t.openWorkspace(page);
   const dialog = page.locator('[data-pres-dialog]');
 
+  await t.step('Create with AI asks for an ordinary Slidev project and its built dist folder, from an assistant that can run commands', async () => {
+    await page.locator('[data-create-ai]').click();
+    const format = page.locator('[data-ai-format]');
+    assert.equal(await format.locator('option[value="slidev"]').textContent(), 'Slidev — Vue slides built by a coding assistant');
+    await format.selectOption('slidev');
+    const help = `${await page.locator('[data-ai-format-help]').textContent()} ${await page.locator('[data-ai-workflow-help]').textContent()}`;
+    assert.match(help, /can run commands, or a computer with Node\.js/);
+    assert.match(help, /built dist folder in one ZIP, and open that ZIP here/);
+    assert.match(await page.locator('[data-ai-status]').textContent(), /starter ZIP is an optional example/);
+    assert.equal(await page.locator('[data-ai-starter]').isVisible(), true, 'the starter stays as an optional example');
+    assert.doesNotMatch(await page.locator('[data-ai-dialog]').textContent(), /Codex|builds the Slidev package/);
+    await page.locator('[data-ai-topic]').fill('Wave packets');
+    await page.locator('[data-ai-form] button[type="submit"]').click();
+    await until(async () => /^Copied\./.test(await page.locator('[data-ai-status]').textContent()), 'the instructions to be copied');
+    const prompt = await page.evaluate(() => navigator.clipboard.readText());
+    assert.match(prompt, /Wave packets/);
+    assert.match(prompt, /ordinary Slidev project/);
+    assert.match(prompt, /npx slidev build/);
+    assert.doesNotMatch(prompt, /ordinary dist ZIP/);
+    await format.selectOption('qft');
+    await page.locator('[data-ai-close]').click();
+  });
+
   await t.step('The workspace and the library load neither the converter nor esbuild.wasm', async () => {
     await page.locator('[data-open-presentations]').click();
     await page.locator('[data-pres-library]').waitFor({ state: 'visible' });
@@ -221,6 +244,23 @@ export default async function run(t) {
       await dialog.waitFor({ state: 'hidden' });
     });
   }
+
+  await t.step('When the converter cannot be downloaded, the problem says what to do, in plain words', async () => {
+    // A filtered network or a new version of the site: esbuild.wasm is not there.
+    const offline = await t.newPage();
+    t.allowConsoleError(/status of 404/);
+    await offline.context.route(/\.wasm(?:[?#]|$)/, (route) => route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' }));
+    await t.openWorkspace(offline.page);
+    await offline.page.locator('[data-open-presentations]').click();
+    await offline.page.locator('[data-pres-list]:not([aria-busy])').waitFor();
+    await offline.page.locator('[data-pres-input]').setInputFiles({ name: 'offline-dist.zip', mimeType: 'application/zip', buffer: readFileSync(FIXTURE) });
+    await until(async () => /Not saved/.test(await offline.page.locator('[data-pres-storage]').textContent()), 'the not-saved note', 60_000);
+    const problem = await offline.page.locator('[data-pres-problem]').textContent();
+    assert.match(problem, /The Slidev converter could not be downloaded\. Check the internet connection, reload the page, and open the ZIP again\./);
+    assert.doesNotMatch(problem, /Failed to|https?:|\.wasm/, 'no raw reason or address in the message');
+    assert.equal(await offline.page.locator('[data-pres-start-button]').isVisible(), false);
+    await offline.context.close();
+  });
 
   await t.step('Nothing left the site', async () => {
     assert.deepEqual(t.externalRequests, []);

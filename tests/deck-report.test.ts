@@ -57,19 +57,22 @@ describe('deck check report', () => {
     assert.equal(report.split('\n').filter((line) => line.startsWith('- warning')).length, 40);
   });
 
-  it('asks for a built dist folder for Slidev source and a portable ZIP for packages', () => {
+  it('asks Slidev projects for what the Slidev prompt asks for: the project with its built dist folder', () => {
     const source = formatDeckReport({ kind: 'slidev-source', engine: 'slidev', issues: [{ code: 'slidev-source', severity: 'error', message: 'Build it first.' }] });
     assert.match(source, /result: cannot play here/);
-    assert.match(source, /Reply: build the presentation with "npx slidev build" and send back a ZIP of the dist folder/);
+    assert.match(source, /Reply: build the project with "npx slidev build", fixing the notes above, and send back one ZIP of the project folder with the built dist\/ folder inside and without node_modules\.$/);
+    assert.match(source, /^Rules for this player: no \{monaco\} code blocks and no Web Workers; [^\n]*provider: 'none'/m);
+    assert.doesNotMatch(source, /Reveal\.js/, 'the Reveal.js rules are not for Slidev');
     const pkg = formatDeckReport({ kind: 'qft-presentation', engine: 'slidev', issues: [], runtime: [{ origin: 'presentation', text: 'TypeError: x is undefined' }] });
-    assert.match(pkg, /rebuild with the QFT Slidev packaging tool/);
+    assert.match(pkg, /package it again with source\/pack\.mjs as source\/README\.md says[^\n]*; or send back one ZIP of the project folder with the built dist\/ folder inside/);
+    assert.doesNotMatch(pkg, /QFT Slidev packaging tool/);
   });
 
   it('asks for a new dist folder only when a converted Slidev build has notes', () => {
     const refused = formatDeckReport({ kind: 'slidev-build', engine: 'slidev', engineVersion: '53.1.0', issues: [{ code: 'slidev-monaco-unsupported', severity: 'error', message: 'Monaco cannot run.' }] });
     assert.match(refused, /engine: slidev 53\.1\.0/);
     assert.match(refused, /result: cannot play here/);
-    assert.match(refused, /Reply: fix the notes above in the Slidev project, run "npx slidev build" again, and send back a ZIP of the new dist folder\.$/);
+    assert.match(refused, /Reply: fix the notes above in the Slidev project, run "npx slidev build" again, and send back one ZIP of the project folder with the built dist\/ folder inside and without node_modules\.$/);
     const plays = formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: [] });
     assert.match(plays, /result: plays\n/);
     assert.match(plays, /Reply: no changes are needed for playback\.$/);
@@ -118,7 +121,7 @@ describe('deck check report', () => {
       assert.match(lines.at(-1)!, /^Reply: send back the complete corrected deck/);
     }
     assert.doesNotMatch(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [] }), /Rules for this player/, 'nothing to change, no rules');
-    assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /Rules for this player/);
+    assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /supplies only Reveal\.js/, 'Slidev gets its own rules');
   });
 
   it('says whether the presentation was edited when the caller knows', () => {
