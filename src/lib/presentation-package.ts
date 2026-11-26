@@ -83,12 +83,80 @@ function decodeText(bytes: Uint8Array, name: string): string {
   catch { throw new PresentationPackageError('The file "' + name + '" must contain valid UTF-8 text.'); }
 }
 
-function filename(bytes: Uint8Array, utf8: boolean, strict: boolean): string {
-  if (!utf8 && bytes.some((byte) => byte > 127)) {
-    if (strict) return invalidZip('Use UTF-8 filenames when creating the ZIP.');
-    return Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
+function strictUtf8(bytes: Uint8Array): string | undefined {
+  try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { return undefined; }
+}
+
+/**
+ * The name in an Info-ZIP Unicode Path extra field (0x7075), when there is one
+ * whose checksum matches the plain name it stands for.
+ */
+function unicodePathField(extra: Uint8Array, nameBytes: Uint8Array): string | undefined {
+  for (let at = 0; at + 4 <= extra.length;) {
+    const id = extra[at] | (extra[at + 1] << 8);
+    const size = extra[at + 2] | (extra[at + 3] << 8);
+    if (at + 4 + size > extra.length) return undefined;
+    if (id === 0x7075 && size > 5 && extra[at + 4] === 1) {
+      const crc = (extra[at + 5] | (extra[at + 6] << 8) | (extra[at + 7] << 16) | (extra[at + 8] << 24)) >>> 0;
+      if (crc === crc32(nameBytes)) return strictUtf8(extra.subarray(at + 9, at + 4 + size));
+    }
+    at += 4 + size;
   }
-  return decodeText(bytes, 'ZIP filename');
+  return undefined;
+}
+
+/**
+ * A ZIP entry's name. With the UTF-8 flag (bit 11) the bytes must be UTF-8.
+ * Without it, a matching Unicode Path extra field wins; then the bytes are
+ * used as UTF-8 when they are valid UTF-8, which is what Info-ZIP's zip and
+ * most tools on Linux and macOS write without setting the flag. Only bytes
+ * that are not UTF-8 fall back to one character per byte (or, strict, are refused).
+ */
+function filename(bytes: Uint8Array, utf8: boolean, strict: boolean, extra: Uint8Array): string {
+  if (utf8) return decodeText(bytes, 'ZIP filename');
+  const unicode = unicodePathField(extra, bytes);
+  if (unicode) return unicode;
+  if (!bytes.some((byte) => byte > 127)) return decodeText(bytes, 'ZIP filename');
+  const decoded = strictUtf8(bytes);
+  if (decoded !== undefined) return decoded;
+  if (strict) return invalidZip('Use UTF-8 filenames when creating the ZIP.');
+  return Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
+}
+
+/**
+ * Entry names as the decoder above reads them, by the name fflate gives the
+ * same entry (UTF-8 when flagged, one character per byte otherwise). For
+ * readers built on fflate's unzip; an archive this cannot walk gives an empty map.
+ */
+export function zipEntryNames(bytes: Uint8Array): Map<string, string> {
+  const names = new Map<string, string>();
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let eocd = -1;
+    for (let at = bytes.length - 22; at >= Math.max(0, bytes.length - 22 - 65535); at -= 1) {
+      if (view.getUint32(at, true) === 0x06054b50) { eocd = at; break; }
+    }
+    if (eocd < 0) return names;
+    const count = view.getUint16(eocd + 10, true);
+    let position = view.getUint32(eocd + 16, true);
+    for (let index = 0; index < count && position + 46 <= eocd; index += 1) {
+      if (view.getUint32(position, true) !== 0x02014b50) break;
+      const flags = view.getUint16(position + 8, true);
+      const nameSize = view.getUint16(position + 28, true);
+      const extraSize = view.getUint16(position + 30, true);
+      const commentSize = view.getUint16(position + 32, true);
+      const nameBytes = bytes.subarray(position + 46, position + 46 + nameSize);
+      const extra = bytes.subarray(position + 46 + nameSize, position + 46 + nameSize + extraSize);
+      if (!(flags & 0x800)) {
+        const raw = Array.from(nameBytes, (byte) => String.fromCharCode(byte)).join('');
+        const name = filename(nameBytes, false, false, extra);
+        if (name !== raw) names.set(raw, name);
+      }
+      position += 46 + nameSize + extraSize + commentSize;
+    }
+  } catch { names.clear(); }
+  return names;
 }
 
 /**
@@ -144,7 +212,7 @@ export function inspectDirectory(bytes: Uint8Array, strictPaths = true): Archive
     const next = nameStart + nameSize + extraSize + commentSize;
     if (next > eocd || !nameSize) return invalidZip('A filename is missing or incomplete.');
     const nameBytes = bytes.subarray(nameStart, nameStart + nameSize);
-    const name = filename(nameBytes, !!(flags & 0x800), strictPaths);
+    const name = filename(nameBytes, !!(flags & 0x800), strictPaths, bytes.subarray(nameStart + nameSize, nameStart + nameSize + extraSize));
     const directory = name.endsWith('/');
     const path = directory ? name.slice(0, -1) : name;
     if (strictPaths && !safePresentationPath(path)) return invalidZip('An archive path is invalid: ' + name);
@@ -209,6 +277,12 @@ for (let index = 0; index < 256; index += 1) {
   let crc = index;
   for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
   crcTable[index] = crc >>> 0;
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 255];
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 /**

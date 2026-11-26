@@ -92,8 +92,15 @@ describe('opening decks', () => {
     assert.equal(await openDeck(new File(['# Notes'], 'notes.md')), null);
   });
 
-  it('returns null for a ZIP whose pages are not a presentation', async () => {
-    assert.equal(await openDeck(zipFile({ 'a/page.html': '<p>A</p>', 'b/page.html': '<p>B</p>' })), null);
+  it('explains a ZIP with several pages and no clear start page, and does not save it', async () => {
+    const project = await opened(zipFile({ 'a/page.html': '<p>A</p>', 'b/page.html': '<p>B</p>' }));
+    assert.equal(project.kind, 'unknown');
+    assert.equal(deckSaveInput(project), undefined);
+    const result = await buildPlayable(project, deps());
+    assert.equal(isPlayable(result), false);
+    assert.deepEqual(result.issues.map((issue) => [issue.severity, issue.code]), [['error', 'several-pages']]);
+    assert.match(result.issues[0].message, /\(a\/page\.html, b\/page\.html\)/);
+    assert.match(result.issues[0].message, /Rename that page to index\.html/);
   });
 
   it('opens Slidev source as a deck that explains how to build it', async () => {
@@ -132,9 +139,9 @@ describe('building playable decks', () => {
     const codes = reveal4.issues.map((issue) => issue.code);
     assert.ok(!codes.includes('inline-event-handler'), 'the linker converts onclick, so the blocking note goes');
     assert.equal(codes.filter((code) => code === 'external-font').length, 1, 'one note per font host');
-    const unpinned = new File([`<!doctype html><html><head><link rel="stylesheet" href="https://unpkg.com/reveal.js/dist/reveal.css"></head><body><div class="reveal"><div class="slides"><section><h1>A</h1></section></div></div><script src="https://unpkg.com/reveal.js/dist/reveal.js"></script><script>Reveal.initialize();</script></body></html>`], 'unpinned.html');
-    const kept = await buildPlayable(await opened(unpinned), deps());
-    assert.ok(kept.issues.some((issue) => issue.code === 'reveal-unpinned-cdn'), 'detection notes the linker does not repeat are kept');
+    const oldPaths = new File([`<!doctype html><html><head><link rel="stylesheet" href="https://unpkg.com/reveal.js@6.0.2/dist/reveal.css"></head><body><div class="reveal"><div class="slides"><section><h1>A</h1></section></div></div><script src="https://unpkg.com/reveal.js@6.0.2/dist/reveal.js"></script><script src="https://unpkg.com/reveal.js@6.0.2/plugin/notes/notes.js"></script><script>Reveal.initialize({ plugins: [RevealNotes] });</script></body></html>`], 'old-paths.html');
+    const kept = await buildPlayable(await opened(oldPaths), deps());
+    assert.ok(kept.issues.some((issue) => issue.code === 'reveal-4x-plugin-paths-on-6x-files'), 'detection notes the linker does not repeat are kept');
     const local = await buildPlayable(await opened(zipFixture('local-project')), deps());
     assert.ok(!local.issues.some((issue) => issue.code === 'library-file-supplied'));
     assert.ok(local.issues.some((issue) => issue.code === 'bundled-library'));
@@ -199,6 +206,15 @@ describe('building playable decks', () => {
     assert.equal(failing.html, '');
     assert.equal(failing.issues[0].code, 'slidev-convert-failed');
     assert.match(failing.issues[0].message, /could not be converted: The Slidev converter could not start\./);
+
+    // The converter could not be downloaded: a fixed message with what to do; the raw reason only as detail.
+    const offline = await buildPlayable(project, deps({
+      convertSlidev: async () => { throw Object.assign(new Error('The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.'), { detail: 'Failed to fetch' }); },
+    }));
+    assert.equal(offline.html, '');
+    assert.deepEqual(offline.issues.map((issue) => [issue.code, issue.severity, issue.where]), [['slidev-converter-unavailable', 'error', 'Failed to fetch']]);
+    assert.doesNotMatch(offline.issues[0].message, /Failed to fetch|could not be converted/);
+    assert.match(offline.issues[0].message, /reload the page, and open the ZIP again\.$/);
 
     const controller = new AbortController();
     const stopped = await buildPlayable(project, deps({

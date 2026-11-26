@@ -101,6 +101,12 @@ export const SLIDEV_CONVERT_LIMITS = Object.freeze({
  * The list itself names the code-split stylesheets in load order.
  */
 const MAP_DEPS = /__vite__mapDeps\s*=\s*\(\s*i\s*,\s*m\s*=\s*__vite__mapDeps\s*,\s*d\s*=\s*\(\s*m\.f\s*\|\|\s*\(\s*m\.f\s*=\s*\[([^\]]*)\]\s*\)\s*\)\s*\)\s*=>\s*i\.map\(\s*i\s*=>\s*d\[\s*i\s*\]\s*\)/g;
+/**
+ * An older Vite's preload call with its dependency list written inline:
+ * helper(()=>import("./slide.js"),["assets/slide.js","assets/slide.css"]).
+ * A build made with modulePreload: false passes [] (or nothing), which needs no patch.
+ */
+const INLINE_PRELOAD_LIST = /\bimport\(\s*([`'"])[^`'"]{1,400}\1\s*\)\s*,\s*\[\s*[`'"][^`'"]{1,400}\.(?:m?js|css)[`'"]/;
 /** Slidev's createRouter({ history: createWebHistory(base), routes }) after minification. */
 const ROUTER_HISTORY = /\bhistory\s*:\s*([\w$]{1,40})\(\s*([`'"])([^`'"]{0,400})\2\s*\)\s*,\s*routes\s*:/g;
 /** Assets that Vite addresses relative to the module (relative base paths). */
@@ -233,6 +239,8 @@ class Conversion {
     if (!url || isRemote(url) || url.startsWith('#')) return undefined;
     let path = url.split(/[?#]/, 1)[0];
     try { path = decodeURIComponent(path); } catch { /* Keep it as written. */ }
+    // Archive paths are NFC (see deck-archive.ts); a reference may be decomposed.
+    path = path.normalize('NFC');
     let resolved: string | undefined;
     if (this.base.startsWith('/') && this.base !== '/' && path.startsWith(this.base)) resolved = joinPath(this.root.replace(/\/$/, ''), path.slice(this.base.length));
     else if (path.startsWith('/')) resolved = joinPath(this.root.replace(/\/$/, ''), path.slice(1));
@@ -401,7 +409,9 @@ function splitList(value: string): string[] {
   return items;
 }
 
-const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']*?))\s*\)/gi;
+// The bare form excludes "(" and has no white space of its own around it, so
+// that every url( is read once (an earlier pattern was cubic on url( and spaces).
+const CSS_URL = /url\((?:\s*"([^"]*)"\s*|\s*'([^']*)'\s*|([^()"']*))\)/gi;
 
 class StyleSheets {
   private readonly remoteHosts = new Set<string>();
@@ -413,7 +423,7 @@ class StyleSheets {
   process(css: string, path: string, depth = 0): string {
     const folder = dirname(path);
     let text = stripSourceMapComment(css).replace(/\/\*[#@]\s*sourceMappingURL=[^*]*\*\//g, '');
-    text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;]*);/gi, (_rule, _quote: string, url: string) => {
+    text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;@]*);/gi, (_rule, _quote: string, url: string) => {
       if (isRemote(url)) {
         const host = hostOf(url) || 'another site';
         if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the deck plays, so system fonts are used instead.`, url);
@@ -425,7 +435,7 @@ class StyleSheets {
       if (target === undefined || imported === undefined || depth >= 4) { this.missing.add(url); return ''; }
       return this.process(imported, target, depth + 1);
     });
-    text = text.replace(/@font-face\s*\{[^}]*\}/gi, (block) => this.preferWoff2(block, folder));
+    text = text.replace(/@font-face\s*\{[^{}]*\}/gi, (block) => this.preferWoff2(block, folder));
     return text.replace(CSS_URL, (whole, double?: string, single?: string, bare?: string) => {
       const url = (double ?? single ?? bare ?? '').trim();
       if (!url || /^data:/i.test(url) || url.startsWith('#')) return whole;
@@ -444,7 +454,7 @@ class StyleSheets {
    */
   private preferWoff2(block: string, folder: string): string {
     // The value runs to the first ; or } outside url(…) and quotes: data: URIs contain semicolons.
-    const declaration = /(\bsrc\s*:\s*)((?:url\(\s*"[^"]*"\s*\)|url\(\s*'[^']*'\s*\)|url\([^)]*\)|"[^"]*"|'[^']*'|[^;}"'])*)/gi;
+    const declaration = /(\bsrc\s*:\s*)((?:url\(\s*"[^"]*"\s*\)|url\(\s*'[^']*'\s*\)|url\([^()]*\)|"[^"]*"|'[^']*'|[^;}"'])*)/gi;
     return block.replace(declaration, (whole, label: string, value: string) => {
       const entries = splitList(value);
       const woff2 = entries.filter((entry) => {
@@ -483,6 +493,8 @@ interface ModulePatches {
   /** Code-split stylesheets named by the preload lists, in the order they appear. */
   preloadCss: string[];
   unpatchedPreload: string[];
+  /** A module passes a dependency list to the preload helper inline, which no patch handles. */
+  inlinePreload: boolean;
   unwrapped: string[];
   missingAssets: Set<string>;
 }
@@ -492,7 +504,7 @@ interface ModulePatches {
  * for an absolute base path, "./assets/x.png" for a relative one. Only whole
  * string literals that name an existing picture, media or font file change.
  */
-function embedAssetStrings(conversion: Conversion, code: string, path: string): string {
+function embedAssetStrings(conversion: Conversion, code: string, path: string, missing: Set<string>): string {
   if (!ASSET_MENTION.test(code)) return code;
   const literals = scanStringLiterals(code);
   if (!literals) {
@@ -508,7 +520,12 @@ function embedAssetStrings(conversion: Conversion, code: string, path: string): 
     // Strings in the build that name its files are relative to the document, which sits at the build's root.
     const target = conversion.locate(value, conversion.root.replace(/\/$/, ''));
     const uri = target === undefined ? undefined : conversion.dataUri(target);
-    if (!uri) continue;
+    if (!uri) {
+      // Only addresses under the build's base are files the slides expect next to them (public/ pictures);
+      // other strings that end in .png and the like are often not addresses at all.
+      if (!value.startsWith('data:') && (value.startsWith('/') || value.startsWith(conversion.base)) && (target === undefined || !conversion.bytes(target))) missing.add(value);
+      continue;
+    }
     result += code.slice(last, literal.start) + JSON.stringify(uri);
     last = literal.end;
   }
@@ -545,6 +562,7 @@ function patchModule(conversion: Conversion, path: string, source: string, patch
   });
   patches.preload += preloadHere;
   if (!preloadHere && /\b__vite__mapDeps\s*=/.test(code)) patches.unpatchedPreload.push(path);
+  if (!preloadHere && INLINE_PRELOAD_LIST.test(code)) patches.inlinePreload = true;
 
   code = code.replace(ROUTER_HISTORY, (_whole, _factory: string, quote: string, base: string) => {
     patches.router += 1;
@@ -561,7 +579,7 @@ function patchModule(conversion: Conversion, path: string, source: string, patch
     return href ? JSON.stringify(uri) : `new URL(${JSON.stringify(uri)})`;
   });
 
-  code = embedAssetStrings(conversion, code, path);
+  code = embedAssetStrings(conversion, code, path, patches.missingAssets);
   return wrapDynamicImports(code, path, patches);
 }
 
@@ -575,7 +593,8 @@ function refuse(conversion: Conversion, detection: DeckDetection, modules: reado
     conversion.report('slidev-monaco-unsupported', 'error',
       'This Slidev build includes the Monaco code editor, which cannot run in the player. Remove the {monaco} code blocks (or set "monaco: false" in the first slide\'s settings), run "npx slidev build" again, and open a ZIP of the new dist folder.',
       `${conversion.root}assets/monaco/`);
-    refused = true;
+    // Monaco brings its own Web Workers and most of the size: one note names the one cause.
+    return true;
   }
   const workerFiles = conversion.paths.filter((path) => WORKER_NAME.test(path));
   const workerCode = modules.filter((path) => !workerFiles.includes(path) && WORKER_FILE.test(conversion.text(path) ?? ''));
@@ -645,7 +664,7 @@ export async function convertSlidevFiles(
   const entrySrc = page.entryModule.slice(conversion.root.length);
   options.signal?.throwIfAborted();
 
-  const patches: ModulePatches = { preload: 0, router: 0, dynamicImports: 0, preloadCss: [], unpatchedPreload: [], unwrapped: [], missingAssets: new Set() };
+  const patches: ModulePatches = { preload: 0, router: 0, dynamicImports: 0, preloadCss: [], unpatchedPreload: [], inlinePreload: false, unwrapped: [], missingAssets: new Set() };
   const patched = new Map<string, string>();
   // The entry first, so its preload lists order the stylesheets.
   for (const path of [page.entryModule, ...modules.filter((item) => item !== page.entryModule)]) {
@@ -656,7 +675,7 @@ export async function convertSlidevFiles(
     conversion.report('slidev-preload-unpatched', 'warning',
       `Vite's loading of slide files could not be switched off in ${patches.unpatchedPreload.slice(0, NAMED).map((path) => shown(path, 100)).join(', ')}, so some slides may stay blank. Building again with a current Slidev should help.`,
       patches.unpatchedPreload[0]);
-  } else if (!patches.preload && [...patched.values()].some((code) => /\bimport\s*\(/.test(code))) {
+  } else if (!patches.preload && patches.inlinePreload) {
     conversion.report('slidev-preload-unpatched', 'warning',
       'This Slidev build loads its slides in a way the converter does not recognize, probably because an older Slidev made it, so some slides may stay blank. Building again with a current Slidev should help.');
   }
@@ -673,7 +692,7 @@ export async function convertSlidevFiles(
   if (patches.missingAssets.size) {
     const missing = [...patches.missingAssets].sort();
     conversion.report('missing-file', 'warning',
-      `Files that the scripts use are not in the ZIP, so they will not show: ${missing.slice(0, NAMED).map((item) => shown(item, 120)).join(', ')}${missing.length > NAMED ? ` and ${missing.length - NAMED} more` : ''}.`,
+      `Pictures or other files that the slides use are not in the ZIP, so they will not show: ${missing.slice(0, NAMED).map((item) => shown(item, 120)).join(', ')}${missing.length > NAMED ? ` and ${missing.length - NAMED} more` : ''}. Put them in the Slidev project's public folder, run "npx slidev build" again, and open a ZIP of the new dist folder.`,
       missing[0]);
   }
 

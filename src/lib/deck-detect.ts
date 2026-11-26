@@ -1,5 +1,6 @@
 import { parse, type DefaultTreeAdapterTypes } from 'parse5';
 import { decodeText } from './deck-archive';
+import { BUNDLED_VERSIONS, mapLibraryUrl } from './deck-vendor';
 import { cleanReportedText } from './presentation-messages';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
 
@@ -428,7 +429,8 @@ function remoteReference(reference: Reference, cdn: CdnReference, issues: IssueL
 
 const START_CALL = /\bReveal\s*\.\s*initialize\s*\(|\bnew\s+Reveal\s*\(|\.initialize\s*\(\s*\{[\s\S]{0,400}?\b(?:plugins|hash|controls|slideNumber|transition)\s*:/;
 const BANNER = /reveal\.js[\s\S]{0,200}?MIT licensed[\s\S]{0,200}?Hakim El Hattab/;
-const MODULE_IMPORT = /\bimport\s+(?:[\w$*{}\s,]{1,300}?\s+from\s+)?["']([^"'\n]{1,500})["']|\bimport\s*\(\s*["']([^"'\n]{1,500})["']\s*\)/g;
+// `\s+(?=[\w$*{}])` and `\sfrom`, not `\s+from`: overlapping white-space runs made this quadratic.
+const MODULE_IMPORT = /\bimport\s+(?:(?=[\w$*{}])[\w$*{}\s,]{1,300}?\sfrom\s+)?["']([^"'\n]{1,500})["']|\bimport\s*\(\s*["']([^"'\n]{1,500})["']\s*\)/g;
 
 interface RevealCandidate {
   page: PageScan;
@@ -582,8 +584,11 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
       if (range) major = Number(range[1]);
     }
   }
-  const unpinned = report.revealCdn.find(({ cdn }) => !cdn.spec || cdn.spec === 'latest');
-  const ranged = report.revealCdn.find(({ cdn }) => cdn.spec && cdn.spec !== 'latest' && !EXACT_VERSION.test(cdn.spec));
+  // A version matters only for files that are really loaded from the CDN; the
+  // ones the bundled copy replaces need nothing from the person.
+  const loadedFromCdn = report.revealCdn.filter(({ url }) => !mapLibraryUrl(url));
+  const unpinned = loadedFromCdn.find(({ cdn }) => !cdn.spec || cdn.spec === 'latest');
+  const ranged = loadedFromCdn.find(({ cdn }) => cdn.spec && cdn.spec !== 'latest' && !EXACT_VERSION.test(cdn.spec));
   if (unpinned) {
     issues.add('reveal-unpinned-cdn', 'warning',
       `Reveal.js is loaded from ${shown(unpinned.cdn.host, 80)} without a version, so its files can change or disappear. Name an exact version, such as reveal.js@6.0.2.`,
@@ -614,8 +619,8 @@ function detectReveal(files: DeckFiles, candidate: RevealCandidate, others: Reve
     }
   }
   if (major !== undefined && major < 4) {
-    issues.add('reveal-old-version', 'warning',
-      `This deck was made for Reveal.js ${major}. It plays with a newer Reveal.js, and some old plugins may not work. Ask for a deck made with Reveal.js 6.`,
+    issues.add('reveal-old-version', 'info',
+      `This presentation was made for Reveal.js ${major}; it plays with Reveal.js ${BUNDLED_VERSIONS['reveal.js']}. If something looks wrong, ask your AI assistant for a Reveal.js 6 version.`,
       page.path);
   }
 
@@ -651,14 +656,15 @@ function slidevRouter(files: DeckFiles, entryChunk: string): DeckDetection['flag
   if (call) {
     const name = call[1];
     let body: string | undefined;
-    for (const match of code.matchAll(/import\s*\{([^}]{0,6000})\}\s*from\s*["'`]([^"'`]{1,300})["'`]/g)) {
-      const binding = match[1].split(',').map((part) => part.trim().split(/\s+as\s+/))
-        .find((parts) => (parts[1] ?? parts[0]) === name);
+    for (const match of braceLists(code, 'import', 6000, ROUTER_SEARCH_LIMIT)) {
+      const from = /^\s*from\s*["'`]([^"'`]{1,300})["'`]/.exec(code.slice(match.end, match.end + 320));
+      if (!from) continue;
+      const binding = bindingsOf(match.inner).find((parts) => (parts[1] ?? parts[0]) === name);
       if (!binding) continue;
-      const chunk = resolvePath(entryChunk, match[2]);
+      const chunk = resolvePath(entryChunk, from[1]);
       const library = chunk ? readText(files, chunk) : undefined;
-      const exported = library && /export\s*\{([^}]{0,20000})\}/.exec(library)?.[1].split(',')
-        .map((part) => part.trim().split(/\s+as\s+/)).find((parts) => (parts[1] ?? parts[0]) === binding[0]);
+      const list = library ? braceLists(library, 'export', 20000, library.length).next() : undefined;
+      const exported = list && !list.done ? bindingsOf(list.value.inner).find((parts) => (parts[1] ?? parts[0]) === binding[0]) : undefined;
       if (library && exported) body = functionBody(library, exported[0]);
       break;
     }
@@ -671,6 +677,36 @@ function slidevRouter(files: DeckFiles, entryChunk: string): DeckDetection['flag
   }
   const declared = /["']?routerMode["']?\s*:\s*["'`](history|hash|memory)["'`]/.exec(code)?.[1];
   return declared as DeckDetection['flags']['slidevRouter'];
+}
+
+/** Import lists sit at the top of a module; the rest of a large entry chunk is not searched for them. */
+const ROUTER_SEARCH_LIMIT = 200_000;
+
+/**
+ * Each `keyword { … }` in code whose keyword starts before `limit` and whose
+ * list is at most maxInner characters, found in one forward pass. (A pattern
+ * such as /import\s*\{([^}]{0,6000})\}/ re-read up to 6,000 characters for
+ * every `import{` without a closing brace.)
+ */
+function* braceLists(code: string, keyword: string, maxInner: number, limit: number): Generator<{ inner: string; end: number }> {
+  let nextClose = -1;
+  for (let at = code.indexOf(keyword); at >= 0 && at < limit; at = code.indexOf(keyword, at + keyword.length)) {
+    let open = at + keyword.length;
+    while (open < code.length && /\s/.test(code[open]) && open - at < 200) open += 1;
+    if (code[open] !== '{') continue;
+    if (nextClose <= open) nextClose = code.indexOf('}', open);
+    if (nextClose < 0) return;
+    if (nextClose - open - 1 > maxInner) continue;
+    yield { inner: code.slice(open + 1, nextClose), end: nextClose + 1 };
+  }
+}
+
+/** `a, b as c` → [['a'], ['b', 'c']]. */
+function bindingsOf(list: string): string[][] {
+  return list.split(',').map((part) => {
+    const words = part.trim().split(/\s+/);
+    return words.length === 3 && words[1] === 'as' ? [words[0], words[2]] : [words.join(' ')];
+  });
 }
 
 /** The source of a named function, found by matching braces (strings skipped), at most 4,000 characters. */
@@ -695,12 +731,27 @@ function functionBody(code: string, name: string): string | undefined {
   return code.slice(start, end);
 }
 
+/**
+ * A Vite worker chunk: `name.worker-hash.js`, or a name with "worker" in it and
+ * a hash of six or more characters after a later dash. Checked in code on the
+ * last path segment (the equivalent pattern backtracked heavily on long names).
+ */
+function isWorkerChunk(path: string): boolean {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  if (/\.worker-[\w-]+\.m?js$/i.test(name)) return true;
+  const stem = /^([\w-]+)\.m?js$/i.exec(name)?.[1];
+  if (!stem) return false;
+  const worker = stem.toLowerCase().indexOf('worker');
+  const dash = worker < 0 ? -1 : stem.indexOf('-', worker + 6);
+  return dash >= 0 && stem.length - dash - 1 >= 6;
+}
+
 function detectSlidevBuild(files: DeckFiles, page: PageScan, issues: IssueList): DeckDetection {
   const root = dirOf(page.path);
   const inRoot = [...files.keys()].filter((path) => path.startsWith(root));
   const flags: DeckDetection['flags'] = {
     slidevHasMonaco: inRoot.some((path) => /(?:^|\/)assets\/monaco\//.test(path.slice(root.length))),
-    slidevHasWorkers: inRoot.some((path) => /\.worker-[\w-]+\.m?js$|(?:^|\/)[\w-]*worker[\w-]*-[\w-]{6,}\.m?js$/i.test(path)),
+    slidevHasWorkers: inRoot.some(isWorkerChunk),
   };
   const entryScript = page.scripts.find((script) => script.type === 'module' && script.src && urlKind(script.src) === 'local');
   if (entryScript?.src) {
@@ -866,6 +917,9 @@ function classify(files: DeckFiles, issues: IssueList): DeckDetection {
     }
     checkReferences(files, page, issues, [], { revealDeck: false });
     inlineHandlerIssue(page, issues);
+    if (!page.revealRoot && !looksLikeSlides(page)) {
+      issues.add('no-slides-found', 'info', 'No slides were recognized in this page, so it plays as one ordinary page.', page.path);
+    }
     return { kind: 'html', entry: page.path, engine: 'html', ...titleOf(page), issues: issues.list(), flags: {} };
   }
 
@@ -873,13 +927,27 @@ function classify(files: DeckFiles, issues: IssueList): DeckDetection {
   const markdown = [...files.keys()].filter((path) => /\.(?:md|markdown)$/i.test(path));
   if (markdown.length === 1) return { kind: 'markdown-bundle', entry: markdown[0], issues: issues.list(), flags: {} };
   if (usable.length > 1) {
+    const named = usable.slice(0, 3).map((path) => shown(path, 80)).join(', ');
+    const more = usable.length > 3 ? ` and ${usable.length - 3} more` : '';
     issues.add('several-pages', 'info',
-      'This ZIP holds several HTML pages and none of them is clearly the main one. Name the page to open index.html and put it at the top of the ZIP.');
+      `This ZIP holds several HTML pages (${named}${more}) and none of them is clearly the one that starts the presentation. Rename that page to index.html, put it at the top of the ZIP, and open the new ZIP.`);
   } else {
     issues.add('no-deck-found', 'info',
       'No presentation was found. Expected an HTML page made with Reveal.js, a Slidev build, or a portable presentation package.');
   }
   return { kind: 'unknown', issues: issues.list(), flags: {} };
+}
+
+/**
+ * Some sign that an ordinary page is a slide show: several sections, the word
+ * "slide" (in a class, an id or its code), or keys that turn pages. A page
+ * with no text at all is left to the linker, which reports it as empty.
+ */
+function looksLikeSlides(page: PageScan): boolean {
+  if (!page.text.trim()) return true;
+  const sections = page.text.match(/<section\b/gi);
+  if (sections && sections.length > 1) return true;
+  return /\bslides?\b|\bslide[-_]|keydown|ArrowRight|ArrowLeft|PageDown/i.test(page.text);
 }
 
 function inlineHandlerIssue(page: PageScan, issues: IssueList): void {

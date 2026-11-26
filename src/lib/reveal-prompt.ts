@@ -21,18 +21,19 @@ Interactive demonstrations: ${clean(input.demos, 'One useful demonstration with 
 
 FORMAT
 - Deliver ONE self-contained file, index.html. Only if separate files are unavoidable, deliver a ZIP with index.html at the top and every file it uses.
-- Load exactly these files from jsDelivr, with this exact version, and nothing else from the internet:
+- Load exactly these files (this exact version) and nothing else from the internet:
 ${cdn}/reveal.css
 ${cdn}/theme/white.css
 ${cdn}/reveal.js
 ${cdn}/plugin/notes.js
 ${cdn}/plugin/math.js
-- Call Reveal.initialize({ width: 1280, height: 720, plugins: [RevealMath.KaTeX, RevealNotes] }). Write math as \\( ... \\) and \\[ ... \\].
+- Call Reveal.initialize({ width: 1280, height: 720, plugins: [RevealMath.KaTeX, RevealNotes] }). Write math as \\( ... \\) and \\[ ... \\]; in formulas write \\lt and \\gt for < and >, because a raw < starts an HTML tag.
 - Ground the slides in any chapter I attach; never invent sources.
 - One idea per slide. Use class="fragment" for step-by-step reveals and <aside class="notes"> for what I should say.
 - Build each demo in an inline script with canvas or inline SVG, labeled controls and a Reset button. Attach handlers with addEventListener, never onclick attributes.
+- Avoid Reveal.js's own class names (controls, progress, slides, backgrounds, slide-number, present, past, future, stack); wrap demo inputs in <div class="demo-controls">.
 - No other libraries or CDN files, no web fonts, remote images, iframes, fetch or build step. Draw figures as inline SVG; embed pictures as data: URIs.
 
 HAND-OVER
-Give me index.html as a downloadable file. I will download it and open it on md.qft.org, which plays it locally in my browser. If I paste check notes from md.qft.org, fix what they list and return the whole file.`;
+Give me index.html as a downloadable file. I will download it and open it on md.qft.org, which plays it in my browser. If I paste check notes from md.qft.org, fix them and return the whole file.`;
 }

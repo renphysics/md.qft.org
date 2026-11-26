@@ -24,6 +24,8 @@ export interface DeckArchive {
   folder: string;
   expandedBytes: number;
   issues: DeckIssue[];
+  /** Files left out because their names cannot be used: deck path (wrapping folder removed) and the reason in words. */
+  skipped: Map<string, string>;
 }
 
 /** At most this many skipped files are named individually; the rest are counted. */
@@ -41,6 +43,21 @@ function baseName(name: string, fallback: string): string {
 function zipName(name: string): string {
   const stem = name.replace(/\.(?:zip|html?)$/i, '') || 'presentation';
   return stem.slice(0, 236) + '.zip';
+}
+
+/**
+ * Why a name fails the safe-path rule (safePresentationPath), in words that
+ * complete "… because ___": the first character or form that makes it unusable.
+ */
+export function unusableNameReason(path: string): string {
+  if (!path) return 'it has no name';
+  if (path.length > 1024) return 'its name is longer than 1,024 characters';
+  const character = /[\\:?#%]/.exec(path)?.[0];
+  if (character) return `its name contains “${character}”`;
+  if (/[\u0000-\u001f\u007f]/.test(path)) return 'its name contains an invisible control character';
+  const part = path.split('/').find((segment) => /[. ]$/.test(segment));
+  if (part !== undefined) return `the name “${cleanReportedText(part, 80)}” ends with ${part.endsWith(' ') ? 'a space' : 'a dot'}`;
+  return 'its name cannot be used in a presentation';
 }
 
 /**
@@ -74,6 +91,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   const directory = inspectDirectory(bytes, false);
   const issues: DeckIssue[] = [];
   const kept: { path: string; entry: ArchiveEntry }[] = [];
+  const unusable: string[] = [];
   const unchecked: ArchiveEntry[] = [];
   let skipped = 0;
   for (const entry of directory) {
@@ -82,12 +100,13 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     if (isIgnoredPath(path)) { unchecked.push(entry); continue; }
     if (!usable) {
       unchecked.push(entry);
+      unusable.push(path);
       skipped += 1;
       if (skipped <= NAMED_SKIPS) {
         const shown = cleanReportedText(entry.name, 200);
         issues.push({
           code: 'archive-path-skipped', severity: 'warning', where: shown,
-          message: 'Skipped a file whose name cannot be used in a presentation: ' + shown,
+          message: `Skipped ${shown} because ${unusableNameReason(path)}, which cannot be used in a presentation. Rename it, change the references to the new name, and make the ZIP again.`,
         });
       }
       continue;
@@ -105,6 +124,10 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   const first = kept[0].path.split('/')[0];
   const wrapped = kept.every(({ path }) => path.includes('/') && path.split('/')[0] === first);
   if (wrapped) for (const item of kept) item.path = item.path.slice(first.length + 1);
+  const skippedFiles = new Map<string, string>();
+  for (const path of unusable) {
+    skippedFiles.set(wrapped && path.startsWith(first + '/') ? path.slice(first.length + 1) : path, unusableNameReason(path));
+  }
 
   const seen = new Map<string, boolean>();
   for (const { path } of kept) {
@@ -139,6 +162,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     folder: wrapped ? first : '',
     expandedBytes: directory.reduce((sum, entry) => sum + entry.size, 0),
     issues,
+    skipped: skippedFiles,
   };
 }
 
@@ -148,7 +172,8 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
  * twice gives the same bytes and the same content hash.
  */
 export async function deckFromHtmlFile(file: File): Promise<DeckArchive> {
-  if (!file.size || file.size > PRESENTATION_LIMITS.htmlBytes) {
+  if (!file.size) throw new PresentationPackageError('This HTML file is empty. Export the presentation again.');
+  if (file.size > PRESENTATION_LIMITS.htmlBytes) {
     throw new PresentationPackageError('Choose an HTML file smaller than 24 MB.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -163,6 +188,7 @@ export async function deckFromHtmlFile(file: File): Promise<DeckArchive> {
     folder: '',
     expandedBytes: bytes.length,
     issues: [],
+    skipped: new Map(),
   };
 }
 
@@ -171,16 +197,53 @@ const STORED = /\.(?:png|jpe?g|gif|webp|avif|woff2?|zip|gz|br|mp[34]|m4a|webm|og
 /** DOS timestamps are local time; fixed local fields keep output identical everywhere. */
 const FIXED_TIME = new Date(1980, 0, 1, 0, 0, 0);
 
+/**
+ * fflate collects entries in a plain object, where the key "__proto__" sets
+ * the prototype instead of adding an entry. A root file with that name is
+ * written under a stand-in name of the same length, renamed in the finished
+ * ZIP (names are not covered by the checksums).
+ */
+const PROTO_KEY = '__proto__';
+
+function standInName(files: DeckFiles): string {
+  for (let serial = 0; ; serial += 1) {
+    const name = `__qft${String(serial).padStart(3, '0')}_`;
+    if (!files.has(name)) return name;
+  }
+}
+
+function renameEntry(zip: Uint8Array, from: string, to: string): void {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  const fromBytes = new TextEncoder().encode(from);
+  const toBytes = new TextEncoder().encode(to);
+  const eocd = zip.length - 22;
+  const count = view.getUint16(eocd + 10, true);
+  let position = view.getUint32(eocd + 16, true);
+  for (let index = 0; index < count; index += 1) {
+    const nameSize = view.getUint16(position + 28, true);
+    const name = zip.subarray(position + 46, position + 46 + nameSize);
+    if (nameSize === fromBytes.length && name.every((byte, at) => byte === fromBytes[at])) {
+      const local = view.getUint32(position + 42, true);
+      name.set(toBytes);
+      zip.set(toBytes, local + 30);
+    }
+    position += 46 + nameSize + view.getUint16(position + 30, true) + view.getUint16(position + 32, true);
+  }
+}
+
 /** Pack deck files into an ordinary ZIP with sorted paths and fixed timestamps. */
 export function zipDeckFiles(files: DeckFiles): Uint8Array {
-  const input: Zippable = {};
+  const input: Zippable = Object.create(null);
+  const standIn = files.has(PROTO_KEY) ? standInName(files) : undefined;
   for (const path of [...files.keys()].sort()) {
     if (!safePresentationPath(path)) {
       throw new PresentationPackageError('A file path cannot be stored: ' + cleanReportedText(path, 200));
     }
-    input[path] = [files.get(path)!, { level: STORED.test(path) ? 0 : 6, mtime: FIXED_TIME }];
+    input[path === PROTO_KEY ? standIn! : path] = [files.get(path)!, { level: STORED.test(path) ? 0 : 6, mtime: FIXED_TIME }];
   }
-  return zipSync(input, { mtime: FIXED_TIME });
+  const zip = zipSync(input, { mtime: FIXED_TIME });
+  if (standIn) renameEntry(zip, standIn, PROTO_KEY);
+  return zip;
 }
 
 function decodeWith(label: string, bytes: Uint8Array): string | undefined {

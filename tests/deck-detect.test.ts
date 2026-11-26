@@ -211,16 +211,14 @@ describe('deck detection: Reveal.js versions and CDN references', () => {
     assert.equal(esm.flags.usesEsModules, true);
   });
 
-  it('warns about unpinned and range CDN versions once', () => {
+  it('asks for no version when the bundled Reveal.js replaces the CDN copy anyway', () => {
     const unpinned = detectDeck(deck({ 'index.html': revealPage({ head: `${cdnCore('https://cdn.jsdelivr.net/npm/reveal.js')}<script src="https://cdn.jsdelivr.net/npm/reveal.js/plugin/notes/notes.js"></script>` }) }));
-    assert.deepEqual(codes(unpinned), ['reveal-unpinned-cdn']);
-    assert.equal(unpinned.issues[0].severity, 'warning');
-    assert.equal(unpinned.issues[0].where, 'https://cdn.jsdelivr.net/npm/reveal.js/dist/reveal.css');
-    assert.match(unpinned.issues[0].message, /cdn\.jsdelivr\.net without a version[\s\S]*reveal\.js@6\.0\.2/);
+    assert.deepEqual(codes(unpinned), []);
     assert.equal(unpinned.engineVersion, undefined);
-    assert.equal(detectDeck(deck({ 'index.html': revealPage({ head: cdnCore('https://unpkg.com/reveal.js@latest') }) })).issues[0].code, 'reveal-unpinned-cdn');
+    assert.deepEqual(codes(detectDeck(deck({ 'index.html': revealPage({ head: cdnCore('https://unpkg.com/reveal.js@latest') }) }))), []);
     const range = detectDeck(deck({ 'index.html': revealPage({ head: cdnCore('https://unpkg.com/reveal.js@5') }) }));
-    assert.deepEqual(range.issues.map(({ code, severity }) => [code, severity]), [['reveal-unpinned-cdn', 'info']]);
+    assert.deepEqual(codes(range), []);
+    assert.equal(range.flags.revealMajor, 5);
   });
 
   it('reads the single version literal of a local core file, or its package.json', () => {
@@ -246,7 +244,9 @@ describe('deck detection: Reveal.js versions and CDN references', () => {
     assert.equal(six.flags.revealMajor, 6);
     const three = detectDeck(deck({ 'index.html': revealPage({ head: '<link rel="stylesheet" href="css/reveal.css"><script src="js/reveal.js"></script>' }) }));
     assert.equal(three.flags.revealMajor, 3);
-    assert.ok(codes(three).includes('reveal-old-version'));
+    const old = issue(three, 'reveal-old-version')!;
+    assert.equal(old.severity, 'info', 'it plays; nothing to do unless something looks wrong');
+    assert.match(old.message, /made for Reveal\.js 3.*plays with Reveal\.js 6\.0\.2.*If something looks wrong.*Reveal\.js 6 version/);
     const unknown = detectDeck(deck({ 'index.html': revealPage({ head: '<script src="dist/reveal.js"></script><script src="plugin/notes/notes.js"></script>' }) }));
     assert.equal(unknown.flags.revealMajor, undefined);
   });

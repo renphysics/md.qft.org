@@ -2,7 +2,7 @@ import { decodeText, deckFromHtmlFile, isTextPath, readDeckArchive, zipDeckFiles
 import { detectDeck } from './deck-detect';
 import { cleanReportedText } from './presentation-messages';
 import {
-  inspectDirectory, inspectPresentationArchive, PRESENTATION_LIMITS, PRESENTATION_MANIFEST, PresentationPackageError,
+  inspectDirectory, inspectPresentationArchive, isIgnoredPath, PRESENTATION_LIMITS, PRESENTATION_MANIFEST, PresentationPackageError,
   type PresentationPackage,
 } from './presentation-package';
 import {
@@ -62,6 +62,8 @@ export interface DeckProject {
   /** The main source file to show first, when the deck names one. */
   source?: string;
   aspectRatio?: '16:9' | '4:3';
+  /** Files of the ZIP left out for their names: deck path and the reason in words. */
+  skipped?: ReadonlyMap<string, string>;
 }
 
 /** What playing a deck takes: one self-contained HTML document and the player profile for it. */
@@ -169,7 +171,21 @@ function fromPackage(pkg: PresentationPackage, id?: string, title?: string): Dec
  * change what a deck says, never add files to it.
  */
 function storedEdits(files: DeckFiles, edits: DeckEdits | undefined): Map<string, string> {
-  return new Map(Object.entries(edits ?? {}).filter(([path, text]) => typeof text === 'string' && files.has(path) && isTextPath(path)));
+  return new Map(Object.entries(edits ?? {}).map(([path, text]): [string, unknown] => [files.has(path) ? path : earlierSpelling(path, files) ?? path, text])
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && files.has(entry[0]) && isTextPath(entry[0])));
+}
+
+/**
+ * Earlier versions read UTF-8 names from ZIPs without the UTF-8 flag one
+ * character per byte ("SchrÃ¶dinger.md"), and saved edits under that name.
+ * Returns the file such a name stands for now, if the deck has it.
+ */
+function earlierSpelling(path: string, files: DeckFiles): string | undefined {
+  if (!/[\u0080-\u00ff]/.test(path) || /[^\u0000-\u00ff]/.test(path)) return undefined;
+  try {
+    const name = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(path, (char) => char.charCodeAt(0))).normalize('NFC');
+    return files.has(name) ? name : undefined;
+  } catch { return undefined; }
 }
 
 function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: StoredDeckSource): DeckProject {
@@ -189,6 +205,7 @@ function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: Store
     issues: [...deck.issues, ...detection.issues],
     detection: { ...detection, kind, ...(entry ? { entry } : {}) },
     sources: listSources(deck.files),
+    ...(deck.skipped.size ? { skipped: deck.skipped } : {}),
     ...(stored?.source ? { source: stored.source } : {}),
     ...(stored?.aspectRatio ? { aspectRatio: stored.aspectRatio } : {}),
   };
@@ -201,6 +218,19 @@ async function archiveNames(file: File): Promise<string[]> {
   }
   return inspectDirectory(new Uint8Array(await file.arrayBuffer()), false)
     .filter((entry) => !entry.directory).map((entry) => entry.name);
+}
+
+/** ZIPs that hold nothing to open: an empty one, or one whose only content is other ZIPs. */
+function checkArchiveShape(names: readonly string[]): void {
+  const content = names.filter((name) => !isIgnoredPath(name.replace(/\\/g, '/')));
+  if (!content.length) {
+    throw new PresentationPackageError('This ZIP is empty. Make the ZIP again from the folder that holds the presentation, then open the new ZIP.');
+  }
+  if (content.every((name) => /\.zip$/i.test(name))) {
+    const inner = content.map((name) => cleanReportedText(name.split(/[\\/]/).pop() ?? name, 80));
+    const named = inner.length === 1 ? `another ZIP, “${inner[0]}”` : `other ZIPs (${inner.slice(0, 3).join(', ')}${inner.length > 3 ? ' and more' : ''})`;
+    throw new PresentationPackageError(`This ZIP only holds ${named}. Unzip it first, then open ${inner.length === 1 ? 'that ZIP' : 'one of those ZIPs'} here.`);
+  }
 }
 
 /**
@@ -218,6 +248,7 @@ export async function openDeck(file: File): Promise<DeckProject | null> {
   }
   if (!/\.zip$/i.test(file.name)) return null;
   const names = await archiveNames(file);
+  checkArchiveShape(names);
   // Portable packages keep the strict inspector and its behaviour unchanged.
   if (names.some((name) => name === PRESENTATION_MANIFEST || name.endsWith('/' + PRESENTATION_MANIFEST))) {
     const pkg = await inspectPresentationArchive(file);
@@ -229,6 +260,13 @@ export async function openDeck(file: File): Promise<DeckProject | null> {
   if (!names.some((name) => HTML_FILE.test(name) || /(?:^|\/)(?:slides\.md|package\.json)$/i.test(name))) return null;
   const deck = await readDeckArchive(file);
   const detection = detectDeck(deck.files);
+  // Several pages and no clear start: a deck whose note says which page to rename. It cannot play and is not saved.
+  if (detection.kind === 'unknown' && detection.issues.some((issue) => issue.code === 'several-pages')) {
+    return fromArchive(deck, {
+      ...detection,
+      issues: detection.issues.map((issue) => issue.code === 'several-pages' ? { ...issue, severity: 'error' as const } : issue),
+    });
+  }
   if (detection.kind === 'markdown-bundle' || detection.kind === 'unknown') return null;
   if (detection.kind === 'qft-presentation') {
     const pkg = await inspectPresentationArchive(file);
@@ -521,6 +559,15 @@ async function convertSlidevBuildForPlayback(project: DeckProject, deps: BuildDe
     if (deps.signal?.aborted) {
       return { html: '', issues: [{ code: 'cancelled', severity: 'error', message: 'Stopped before the presentation was ready.' }] };
     }
+    const detail = (error as { detail?: unknown } | null)?.detail;
+    if (error instanceof Error && typeof detail === 'string') {
+      // The converter itself is unavailable (SlidevConverterUnavailableError): a fixed message with what to do, the reason as detail.
+      const where = cleanReportedText(detail, 200);
+      return {
+        html: '',
+        issues: [{ code: 'slidev-converter-unavailable', severity: 'error', message: cleanReportedText(error.message, 300), ...(where ? { where } : {}) }],
+      };
+    }
     const reason = cleanReportedText(error instanceof Error ? error.message : String(error), 300);
     return {
       html: '',
@@ -560,7 +607,10 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
     case 'html': {
       deps.onProgress?.('Preparing the presentation to play offline…');
       const [{ linkDeck }, vendor] = await Promise.all([import('./deck-linker'), deps.vendor()]);
-      const linked = await linkDeck(filesWithEdits(project), project.detection, vendor, project.entry ? { entry: project.entry } : {});
+      const linked = await linkDeck(filesWithEdits(project), project.detection, vendor, {
+        ...(project.entry ? { entry: project.entry } : {}),
+        ...(project.skipped ? { skippedFiles: project.skipped } : {}),
+      });
       const kept = project.issues.filter((issue) => !SUPERSEDED_BY_LINKER.has(issue.code));
       const issues = mergeIssues(kept, linked.issues);
       const result: PlayableDeck = { html: issues.some((issue) => issue.severity === 'error') ? '' : linked.html, issues, profile: 'tolerant' };
@@ -586,6 +636,8 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
     }
     default: {
       const issues = project.issues.length ? [...project.issues] : [];
+      // An error from reading or detection already says what is wrong.
+      if (issues.some((issue) => issue.severity === 'error')) return failed(mergeIssues([], issues), 'tolerant');
       return failed(mergeIssues([{
         code: 'not-a-presentation', severity: 'error',
         message: 'No presentation was found in this file. Open a Reveal.js deck or another web page (an HTML file, or a ZIP with index.html at the top), a ZIP of a Slidev build, or a portable presentation package.',

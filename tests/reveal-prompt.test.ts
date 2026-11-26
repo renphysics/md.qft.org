@@ -28,7 +28,7 @@ test('Reveal.js instructions name exact jsDelivr files and nothing else from the
 test('Reveal.js instructions stay short after the lesson brief', () => {
   const prompt = generateRevealPrompt(brief);
   assert.ok(prompt.indexOf('LESSON BRIEF') < prompt.indexOf('\nFORMAT'));
-  assert.ok(words(afterBrief(prompt)) <= 200, `${words(afterBrief(prompt))} words`);
+  assert.ok(words(afterBrief(prompt)) <= 225, `${words(afterBrief(prompt))} words`);
   // The length after the brief does not depend on what the person typed.
   assert.equal(words(afterBrief(generateRevealPrompt({ ...brief, topic: 'x '.repeat(500) }))), words(afterBrief(prompt)));
 });
@@ -45,4 +45,14 @@ test('Reveal.js instructions bound untrusted form values', () => {
   assert.ok(generateRevealPrompt({ ...brief, duration: 1000 }).includes('Class duration: 240 minutes'));
   const wrongTypes = { topic: 42, audience: null, language: undefined, duration: Number.NaN, mathLevel: {}, demos: [] } as unknown as typeof brief;
   assert.ok(generateRevealPrompt(wrongTypes).includes('Topic or chapter: My lesson'));
+});
+
+test('Reveal.js instructions warn about Reveal.js class names and a raw "<" in formulas', () => {
+  const prompt = generateRevealPrompt(brief);
+  for (const name of ['controls', 'progress', 'slides', 'backgrounds', 'slide-number', 'present', 'past', 'future', 'stack']) {
+    assert.ok(new RegExp(`\\b${name}\\b`).test(afterBrief(prompt)), name);
+  }
+  assert.ok(prompt.includes('<div class="demo-controls">'));
+  assert.ok(prompt.includes('\\lt') && prompt.includes('\\gt'), 'inside formulas < and > are written \\lt and \\gt');
+  assert.match(prompt, /raw < starts an HTML tag/);
 });

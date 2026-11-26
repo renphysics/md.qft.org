@@ -340,17 +340,19 @@ describe('Reveal.js decks of every version', () => {
       assert.ok(laidOut);
       return { id: plugin.id, options: JSON.parse(JSON.stringify(options)) };
     };
+    // MathJax-only commands KaTeX lacks; see tests/deck-linker-advice.test.ts.
+    const defaults = { '\\label': { tokens: [], numArgs: 1 }, '\\require': { tokens: [], numArgs: 1 }, '\\eqref': '(\\text{?})\\label{#1}', '\\ref': '\\text{?}\\label{#1}' };
     const katex = run('KaTeX', { katex: { delimiters: [{ left: '$', right: '$', display: false }], local: 'x', version: '0.16', macros: { '\\R': '\\mathbb{R}' } } });
-    assert.deepEqual(katex, { id: 'katex', options: { throwOnError: false, delimiters: [{ left: '$', right: '$', display: false }], macros: { '\\R': '\\mathbb{R}' }, ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] } });
+    assert.deepEqual(katex, { id: 'katex', options: { throwOnError: false, delimiters: [{ left: '$', right: '$', display: false }], macros: { ...defaults, '\\R': '\\mathbb{R}' }, ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] } });
     const three = run('MathJax3', { mathjax3: { tex: { inlineMath: [['\\(', '\\)']], macros: { RR: '\\mathbb{R}', bold: ['{\\bf #1}', 1] } } } });
     assert.equal(three.id, 'mathjax3');
     assert.deepEqual(three.options.delimiters, [
       { left: '$$', right: '$$', display: true }, { left: '\\[', right: '\\]', display: true }, { left: '\\(', right: '\\)', display: false }]);
-    assert.deepEqual(three.options.macros, { '\\RR': '\\mathbb{R}', '\\bold': '{\\bf #1}' });
+    assert.deepEqual(three.options.macros, { ...defaults, '\\RR': '\\mathbb{R}', '\\bold': '{\\bf #1}' });
     const two = run('', { math: { tex2jax: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] }, TeX: { Macros: { half: '\\frac12' } } } });
     assert.equal(two.id, 'mathjax2');
     assert.deepEqual(two.options.delimiters, [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }]);
-    assert.deepEqual(two.options.macros, { '\\half': '\\frac12' });
+    assert.deepEqual(two.options.macros, { ...defaults, '\\half': '\\frac12' });
   });
 
   it('maps ES-module imports of Reveal.js and KaTeX to the bundled classic builds', async () => {
@@ -426,7 +428,7 @@ describe('assets', () => {
     assert.match(html, /<section data-background="#ff0000" data-background-video="data:video\/mp4;base64,[^"]+" data-background-video-loop="">/);
     assert.ok(scripts(html)[0].marker === 'media', 'the video helper runs before the deck');
     assert.match(html, /<img alt="a" src="data:image\/png;base64,/);
-    assert.match(html, /<video poster="data:image\/png;base64,[^"]+" data-autoplay=""><source data-src="data:video\/mp4;base64,[^"]+" type="video\/mp4"><track kind="captions"><\/video>/);
+    assert.match(html, /<video poster="data:image\/png;base64,[^"]+" data-autoplay=""><source data-src="data:video\/mp4;base64,[^"]+" type="video\/mp4"><\/video>/);
     assert.match(html, /<picture><img src="data:image\/png/);
     assert.match(html, /<img data-preview-image="data:image\/png;base64,[^"]+" src="data:image\/png;base64,[^"]+" alt="case">/);
     assert.match(html, /<img src="data:image\/png;base64,[^"]+" alt="encoded">/);
@@ -456,9 +458,9 @@ describe('assets', () => {
       'external-image example.org/h.png',
       'external-image example.org/sky.jpg',
       'external-image upload.example.org/Double-slit.svg',
-      'external-library cdn.jsdelivr.net/chart.js@4',
+      'external-library https://cdn.jsdelivr.net/npm/chart.js@4',
       'external-media cdn.example.com/clip.mp4',
-      'external-style example.org/extra.css',
+      'external-style https://example.org/extra.css',
     ].sort());
     assert.match(result.html, /<img src="data:image\/svg\+xml;base64,[^"]+" alt="x">/, 'a remote picture becomes a placeholder');
     assert.match(result.html, /<div role="note" data-qft-placeholder="embedded-page" style="[^"]*;width:560px;height:315px">An embedded page from www\.youtube\.com is not available offline\.<\/div>/);

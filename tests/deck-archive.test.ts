@@ -175,7 +175,7 @@ describe('single HTML files as decks', () => {
   });
 
   it('rejects empty and oversized pages', async () => {
-    await assert.rejects(deckFromHtmlFile(new File([], 'empty.html')), /smaller than 24 MB/);
+    await assert.rejects(deckFromHtmlFile(new File([], 'empty.html')), /This HTML file is empty\. Export the presentation again\./);
     const big = { name: 'big.html', size: PRESENTATION_LIMITS.htmlBytes + 1, arrayBuffer: () => { throw new Error('read'); } } as unknown as File;
     await assert.rejects(deckFromHtmlFile(big), /smaller than 24 MB/);
   });
