@@ -84,6 +84,9 @@ test('the trusted runner relays only bounded application messages from its actua
   const token = 'a'.repeat(36);
   frame.send(frame.parent, { type: 'qft-presentation-load', token, html: '<p>Lesson</p>' });
   const child = frame.frames[0];
+  // Focusing before the runner owns focus is refused by Chromium's policy and
+  // logged as an error; the host requests focus once the deck is ready.
+  assert.equal(child.focusCount, 0);
   frame.send({}, { qftPresentation: 1, token, kind: 'ready' });
   frame.send(child.contentWindow, { qftPresentation: 1, token: 'b'.repeat(36), kind: 'ready' });
   frame.send(child.contentWindow, { qftPresentation: 1, token, kind: 'request-editor-storage' });
@@ -116,16 +119,15 @@ function playerFixture() {
   const frames: any[] = [];
   const states: string[] = [];
   const errors: string[] = [];
+  const origins: string[] = [];
   const timers = new Map<number, () => void>();
   let clock = 0;
   let receive: (event: any) => void = () => {};
   let escapes = 0;
   const host = { children: [] as any[], replaceChildren(...children: any[]) { this.children = children; } };
-  const createPlayer = compiledFunction('createPresentationPlayer', {
-    crypto, AbortController,
-    preparePresentationDocument(html: string, token: string, nonce: string) { return `prepared|${token}|${nonce}|${html}`; },
-    document: {
-      createElement(tag: string) {
+  const document = {
+    activeElement: undefined as unknown,
+    createElement(tag: string) {
         assert.equal(tag, 'iframe');
         const value = {
           attrs: {} as Record<string, string>, style: {}, focused: false, removed: false, load: () => {}, sent: [] as any[],
@@ -133,13 +135,19 @@ function playerFixture() {
           setAttribute(name: string, value: string) { this.attrs[name] = value; },
           addEventListener(name: string, callback: () => void) { if (name === 'load') this.load = callback; },
           remove() { this.removed = true; },
-          focus() { this.focused = true; },
+          focus() { this.focused = true; document.activeElement = this; this.calls.push('focus'); },
+          blur() { this.focused = false; if (document.activeElement === this) document.activeElement = undefined; this.calls.push('blur'); },
+          calls: [] as string[],
         };
-        value.contentWindow.postMessage = (message: any) => value.sent.push(message);
+        value.contentWindow.postMessage = (message: any) => { value.sent.push(message); value.calls.push(`message:${message.type}`); };
         frames.push(value);
         return value;
-      },
     },
+  };
+  const createPlayer = compiledFunction('createPresentationPlayer', {
+    crypto, AbortController,
+    preparePresentationDocument(html: string, token: string, nonce: string) { return `prepared|${token}|${nonce}|${html}`; },
+    document,
     window: {
       addEventListener(_: string, callback: typeof receive) { receive = callback; },
       setTimeout(callback: () => void) { timers.set(++clock, callback); return clock; },
@@ -148,9 +156,9 @@ function playerFixture() {
   });
   const player = createPlayer(host, '<div>Compiled Slidev</div>', {
     title: 'Lesson', sandboxUrl: '/presentation-sandbox.html',
-    onState(value: string) { states.push(value); }, onError(value: string) { errors.push(value); }, onEscape() { escapes++; },
+    onState(value: string) { states.push(value); }, onError(value: string, origin: string) { errors.push(value); origins.push(origin); }, onEscape() { escapes++; },
   });
-  return { player, frames, states, errors, timers, host, escapeCount: () => escapes, send: (source: unknown, data: unknown) => receive({ source, data }) };
+  return { player, frames, states, errors, origins, timers, host, document, escapeCount: () => escapes, send: (source: unknown, data: unknown) => receive({ source, data }) };
 }
 
 test('the player remains inert until Start and never grants an origin or privileged browser APIs', () => {
@@ -191,6 +199,7 @@ test('ready/error/escape messages require both the current frame and its token',
   assert.equal(f.escapeCount(), 1);
   for (let i = 0; i < 5; i++) f.send(frame.contentWindow, { ...message, kind: 'error', detail: 'x'.repeat(500) });
   assert.equal(f.errors.length, 1, 'the failing frame is destroyed, so late messages are ignored');
+  assert.deepEqual(f.origins, ['presentation'], 'text from the frame is attributed to the presentation');
   assert.equal(f.errors[0].length, 350);
   assert.equal(f.states.at(-1), 'error');
   assert.equal(frame.removed, true);
@@ -227,6 +236,35 @@ test('a presentation which never becomes ready has actionable timeout feedback',
   timeout();
   assert.equal(f.states.at(-1), 'error');
   assert.match(f.errors[0], /not finished loading/);
+  assert.deepEqual(f.origins, ['player']);
+});
+
+test('ready hands keyboard focus to the deck without a click, and focus() repeats the hand-off', () => {
+  const f = playerFixture();
+  f.player.start();
+  const frame = f.frames[0];
+  assert.equal(f.document.activeElement, frame, 'Start focuses the new frame');
+  frame.load();
+  const token = frame.sent[0].token;
+  frame.calls.length = 0;
+  f.send(frame.contentWindow, { qftPresentation: 1, token, kind: 'ready' });
+  assert.deepEqual(frame.calls, ['blur', 'focus', 'message:qft-presentation-focus'], 'blur, then focus, then ask the runner to focus the deck');
+  assert.equal(frame.sent.at(-1).token, token);
+  frame.calls.length = 0;
+  f.player.focus();
+  assert.deepEqual(frame.calls, ['blur', 'focus', 'message:qft-presentation-focus'], 'Present and Fullscreen reuse the same hand-off');
+});
+
+test('ready does not take focus back from a control the user moved to while loading', () => {
+  const f = playerFixture();
+  f.player.start();
+  const frame = f.frames[0];
+  frame.load();
+  f.document.activeElement = { other: true };
+  frame.calls.length = 0;
+  f.send(frame.contentWindow, { qftPresentation: 1, token: frame.sent[0].token, kind: 'ready' });
+  assert.equal(f.states.at(-1), 'ready');
+  assert.deepEqual(frame.calls, []);
 });
 
 test('oversized or invalid documents are rejected before a DOM or frame is created', () => {

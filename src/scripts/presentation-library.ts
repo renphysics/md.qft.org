@@ -1,6 +1,10 @@
 import type { PresentationPackage } from '../lib/presentation-package';
 import type { StoredPresentationInfo } from '../lib/presentation-store';
-import { createPresentationPlayer, exportPresentationHtml, type PresentationPlayer } from '../lib/presentation-runtime';
+import { PresentationProblemLog } from '../lib/presentation-messages';
+import {
+  createPresentationPlayer, exportPresentationHtml,
+  type PresentationMessageOrigin, type PresentationPlayer,
+} from '../lib/presentation-runtime';
 
 function bytesLabel(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -23,6 +27,8 @@ function fileName(title: string): string {
 }
 
 export class PresentationLibrary extends HTMLElement {
+  /** What the library can truthfully promise about local playback. */
+  static readonly privacyNote = 'Not uploaded. Presentations cannot read your documents, and ordinary network requests are blocked.';
   private abort = new AbortController();
   private initialized = false;
   private player?: PresentationPlayer;
@@ -32,6 +38,7 @@ export class PresentationLibrary extends HTMLElement {
   private operation = 0;
   private busy = false;
   private returnFocus?: HTMLElement;
+  private problems = new PresentationProblemLog();
 
   private q<T extends HTMLElement = HTMLElement>(selector: string): T {
     const element = this.querySelector<T>(selector);
@@ -54,7 +61,7 @@ export class PresentationLibrary extends HTMLElement {
     // Fullscreen requests must remain directly inside the user gesture.
     this.q('[data-pres-present]').addEventListener('click', () => this.present(), { signal });
     click('[data-pres-stop]', () => this.player?.stop());
-    click('[data-pres-restart]', () => this.player?.restart());
+    click('[data-pres-restart]', () => { this.clearProblems(); this.player?.restart(); });
     click('[data-pres-zip]', () => this.downloadArchive());
     click('[data-pres-html]', () => this.downloadHtml());
     click('[data-pres-copy]', () => this.copySource());
@@ -118,10 +125,47 @@ export class PresentationLibrary extends HTMLElement {
     dialog.showModal();
   }
 
+  /** Application messages only. Text supplied by a presentation goes to reportProblem. */
   private notice(value?: unknown): void {
     const area = this.q('[data-pres-notice]');
     area.textContent = value === undefined ? '' : value instanceof Error ? value.message : String(value);
     area.hidden = value === undefined;
+  }
+
+  /**
+   * Playback problems appear on the stage, so they stay visible in fullscreen.
+   * Presentation text is labelled as such and rendered as text, never markup.
+   */
+  private reportProblem(origin: PresentationMessageOrigin, message: string): void {
+    this.problems.add(origin, message);
+    this.renderProblems();
+  }
+
+  private clearProblems(): void {
+    this.problems.clear();
+    this.renderProblems();
+  }
+
+  private renderProblems(): void {
+    const area = this.q('[data-pres-problem]');
+    const lines = this.problems.problems.map((problem) => {
+      const line = document.createElement('p');
+      if (problem.origin === 'presentation') {
+        const label = document.createElement('strong');
+        label.textContent = 'The presentation reported: ';
+        const quote = document.createElement('q');
+        quote.textContent = problem.text;
+        line.append(label, quote);
+      } else line.textContent = problem.text;
+      return line;
+    });
+    if (this.problems.hidden) {
+      const more = document.createElement('p');
+      more.textContent = `${this.problems.hidden} more message${this.problems.hidden === 1 ? ' was' : 's were'} not shown.`;
+      lines.push(more);
+    }
+    area.replaceChildren(...lines);
+    area.hidden = !lines.length;
   }
 
   async openLibrary(): Promise<void> {
@@ -137,7 +181,7 @@ export class PresentationLibrary extends HTMLElement {
     this.q('[data-pres-library]').hidden = false;
     this.q('[data-pres-deck]').hidden = true;
     this.q('[data-pres-back]').hidden = true;
-    this.q('[data-pres-storage]').textContent = 'No uploads. Playback has no external connections.';
+    this.q('[data-pres-storage]').textContent = PresentationLibrary.privacyNote;
     this.notice();
     await this.refreshLibrary();
   }
@@ -262,6 +306,7 @@ export class PresentationLibrary extends HTMLElement {
     this.active = pkg;
     this.openDialog();
     this.notice();
+    this.clearProblems();
     this.q('[data-pres-title]').textContent = pkg.manifest.title;
     this.q('[data-pres-subtitle]').textContent = `Slidev · ${pkg.files.length} files · ${bytesLabel(pkg.archive.size)}`;
     this.q('[data-pres-start-title]').textContent = pkg.manifest.title;
@@ -289,7 +334,7 @@ export class PresentationLibrary extends HTMLElement {
         this.q('[data-pres-stop]').hidden = state !== 'loading' && state !== 'ready';
         this.q('[data-pres-restart]').hidden = state === 'stopped';
       },
-      onError: (message) => this.notice(message),
+      onError: (message, origin) => this.reportProblem(origin, message),
       // Escape belongs to Slidev's overview/menu while embedded. Only the
       // outer fullscreen state needs handling here; keep the lesson open.
       onEscape: () => { if (this.isFullscreen()) this.exitFullscreen(); },
@@ -328,6 +373,7 @@ export class PresentationLibrary extends HTMLElement {
   private start(): void {
     this.setView('preview');
     this.notice();
+    this.clearProblems();
     this.player?.start();
   }
 

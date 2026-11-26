@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { PresentationProblemLog } from '../src/lib/presentation-messages';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -26,15 +27,18 @@ function library(dependencies: { inspect?: (file: File) => Promise<unknown>; sav
       classList: { add() {}, remove() {}, contains: () => false },
       style: { setProperty() {} },
       addEventListener(name: string, listener: (event?: unknown) => void) { this.listeners.set(name, listener); },
-      replaceChildren() {}, close() { calls.closed++; },
+      children: [] as any[], replaceChildren(...children: any[]) { this.children = children; }, close() { calls.closed++; },
       requestFullscreen() { calls.fullscreen++; return Promise.resolve(); },
     });
     return controls.get(selector);
   };
   vm.runInNewContext(javascript, {
-    exports, AbortController, File, Blob, crypto,
+    exports, AbortController, File, Blob, crypto, PresentationProblemLog,
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } },
-    document: { addEventListener() {} },
+    document: {
+      addEventListener() {},
+      createElement(tag: string) { return { tag, textContent: '', children: [] as any[], append(...children: any[]) { this.children.push(...children); } }; },
+    },
     location: { href: 'https://md.qft.org/' }, URL,
     Option: class { constructor(public text: string, public value: string) {} },
     createPresentationPlayer(_host: unknown, _html: string, options: unknown) {
@@ -194,4 +198,27 @@ test('Escape in the outer dialog keeps native closing behavior outside fullscree
   f.control('[data-pres-close]').listeners.get('click')();
   await Promise.resolve();
   assert.equal(f.calls.closed, 1, 'the explicit Close button remains available');
+});
+
+test('text reported by a presentation is labelled, bounded, and kept out of the application notice', () => {
+  const f = library();
+  f.instance.openDialog = () => {};
+  Object.getPrototypeOf(f.instance).showPackage.call(f.instance, fixturePackage(), true);
+  const { onError } = f.calls.players[0];
+  const notices = f.calls.notices.length;
+  onError('Your session expired. Sign in again at https://example.invalid', 'presentation');
+  const area = f.control('[data-pres-problem]');
+  assert.equal(area.hidden, false);
+  const [line] = area.children;
+  assert.equal(line.children[0].textContent, 'The presentation reported: ');
+  assert.equal(line.children[0].tag, 'strong');
+  assert.equal(line.children[1].tag, 'q');
+  assert.equal(line.children[1].textContent, 'Your session expired. Sign in again at https://example.invalid');
+  assert.equal(f.calls.notices.length, notices, 'the application notice never repeats presentation text');
+
+  onError('The presentation has not finished loading.', 'player');
+  assert.equal(area.children[1].textContent, 'The presentation has not finished loading.', 'application text is not labelled');
+  for (let index = 0; index < 5; index++) onError(`Another failure ${index}`, 'presentation');
+  assert.equal(area.children.length, 4, 'three problems and one summary line');
+  assert.equal(area.children[3].textContent, '4 more messages were not shown.');
 });

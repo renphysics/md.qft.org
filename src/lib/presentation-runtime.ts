@@ -1,5 +1,11 @@
 /** Presentation applications run in an opaque-origin frame, never in the editor. */
 export type PresentationPlayerState = 'stopped' | 'loading' | 'ready' | 'error';
+/**
+ * Who wrote an error message. Text that arrives from the frame is supplied by
+ * the package (or by code running beside it) and must be presented as such;
+ * 'player' messages are written by this application.
+ */
+export type PresentationMessageOrigin = 'presentation' | 'player';
 
 export interface PresentationPlayerOptions {
   title: string;
@@ -8,7 +14,7 @@ export interface PresentationPlayerOptions {
   /** Portable exports reuse the outer document's nonce for their srcdoc child. */
   scriptNonce?: string;
   onState?: (state: PresentationPlayerState) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, origin: PresentationMessageOrigin) => void;
   onEscape?: () => void;
 }
 
@@ -69,7 +75,9 @@ function presentationRuntimeFactory() {
       objectUrl = URL.createObjectURL(new Blob([message.html], { type: 'text/html;charset=utf-8' }));
       frame.src = objectUrl;
       document.body.replaceChildren(frame);
-      frame.focus({ preventScroll: true });
+      // Focusing here, before this document has focus, is refused by the
+      // focus-without-user-activation policy. The host hands focus over once
+      // the presentation is ready, then asks with qft-presentation-focus.
     });
     document.addEventListener('securitypolicyviolation', (event) => {
       if (used) send('error', `The presentation attempted an unsupported navigation or resource (${event.effectiveDirective}). Use a fully bundled offline presentation.`);
@@ -234,14 +242,22 @@ function presentationRuntimeFactory() {
       frame?.remove(); frame = undefined; token = undefined;
       if (!disposed) setState('stopped');
     };
-    const fail = (message: string) => {
+    const fail = (message: string, origin: PresentationMessageOrigin) => {
       if (timeout !== undefined) window.clearTimeout(timeout);
       timeout = undefined;
       // A failed or incompatible application must not keep executing behind the
       // error overlay. Restart creates a fresh, isolated browsing context.
       frame?.remove(); frame = undefined; token = undefined;
       setState('error');
-      if (errors++ < 3) options.onError?.(message.slice(0, 350));
+      if (errors++ < 3) options.onError?.(message.slice(0, 350), origin);
+    };
+    // A frame focused before its document loaded does not pass the keyboard on
+    // in Chromium. Blurring first makes the next focus() a real focus change,
+    // which gives the runner document focus; the runner then focuses the deck.
+    const handOffFocus = (current: HTMLIFrameElement) => {
+      current.blur();
+      current.focus({ preventScroll: true });
+      if (token) current.contentWindow?.postMessage({ type: 'qft-presentation-focus', token }, '*');
     };
     const start = () => {
       if (disposed) return;
@@ -250,7 +266,7 @@ function presentationRuntimeFactory() {
       let prepared: string;
       const scriptNonce = options.scriptNonce ?? nonce();
       try { prepared = preparePresentationDocument(html, token, scriptNonce); }
-      catch (error) { fail(error instanceof Error ? error.message : 'The presentation could not be prepared.'); return; }
+      catch (error) { fail(error instanceof Error ? error.message : 'The presentation could not be prepared.', 'player'); return; }
       frame = document.createElement('iframe');
       const current = frame;
       current.className = 'presentation-frame';
@@ -268,7 +284,7 @@ function presentationRuntimeFactory() {
       host.replaceChildren(current);
       setState('loading');
       timeout = window.setTimeout(() => {
-        if (frame === current && state === 'loading') fail('The presentation has not finished loading. Try Restart, or rebuild it with the portable Slidev packaging tool.');
+        if (frame === current && state === 'loading') fail('The presentation has not finished loading. Try Restart, or rebuild it with the portable Slidev packaging tool.', 'player');
       }, 20_000);
       current.focus({ preventScroll: true });
     };
@@ -280,16 +296,16 @@ function presentationRuntimeFactory() {
         if (timeout !== undefined) window.clearTimeout(timeout);
         timeout = undefined;
         setState('ready');
-      } else if (message.kind === 'error' && typeof message.detail === 'string') fail(message.detail);
+        // Keep the keyboard with the deck unless the user has moved on, for
+        // example to the source view or another control, while it loaded.
+        if (frame && document.activeElement === frame) handOffFocus(frame);
+      } else if (message.kind === 'error' && typeof message.detail === 'string') fail(message.detail, 'presentation');
       else if (message.kind === 'escape') options.onEscape?.();
     }, { signal: abort.signal });
     return {
       start, stop, restart: start,
       destroy() { if (disposed) return; stop(); disposed = true; abort.abort(); },
-      focus() {
-        frame?.focus({ preventScroll: true });
-        if (frame && token) frame.contentWindow?.postMessage({ type: 'qft-presentation-focus', token }, '*');
-      },
+      focus() { if (frame) handOffFocus(frame); },
       isRunning() { return !!frame; },
     };
   }
@@ -326,6 +342,6 @@ export function exportPresentationHtml(html: string, title: string): string {
   const nonce = [...crypto.getRandomValues(new Uint8Array(18))].map((value) => value.toString(16).padStart(2, '0')).join('');
   const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-  const script = `const createPlayer=${presentationRuntimeSource()};const host=document.getElementById('presentation');const status=document.getElementById('status');const start=document.getElementById('start');const stop=document.getElementById('stop');const fullscreen=document.getElementById('fullscreen');const player=createPlayer(host,${json(html)},{title:${json(title)},scriptNonce:${json(nonce)},onState(state){start.textContent=state==='stopped'?'Start presentation':'Restart';stop.disabled=state==='stopped';status.textContent=state==='stopped'?'Ready to present · works offline':state==='loading'?'Opening presentation…':state==='ready'?'Live · use the slide controls or arrow keys':'Presentation needs attention';document.getElementById('placeholder').hidden=state!=='stopped';},onError(message){status.textContent=message;},onEscape(){if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}});start.addEventListener('click',()=>player.start());stop.addEventListener('click',()=>player.stop());fullscreen.addEventListener('click',async()=>{if(!player.isRunning())player.start();try{if(!document.fullscreenElement)await document.getElementById('stage').requestFullscreen();else await document.exitFullscreen();player.focus();}catch{status.textContent='Fullscreen is unavailable. Use the browser fullscreen command.';}});window.addEventListener('pagehide',()=>player.destroy(),{once:true});`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src 'self' blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'; script-src-attr 'none'"><title>${escape(title)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f6f4f0;color:#292626;font:14px/1.5 system-ui,sans-serif}header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid #e1ddd7;min-height:52px}h1{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}nav{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;border:1px solid #d3cdc4;border-radius:6px;background:#fff;padding:7px 12px;cursor:pointer}button:first-child{background:#773b49;border-color:#773b49;color:#fff}button:disabled{opacity:.5;cursor:default}button:focus-visible{outline:3px solid #b17683;outline-offset:3px}#stage{position:relative;height:calc(100dvh - 96px);min-height:240px;background:#fff}#stage:fullscreen{height:100dvh;width:100vw}#presentation{height:100%;width:100%}#placeholder{position:absolute;inset:0;display:grid;place-content:center;padding:30px;text-align:center;pointer-events:none}#placeholder[hidden]{display:none}#placeholder strong{font-size:clamp(22px,4vw,42px);font-weight:600}#status{margin:0;padding:10px 18px;font-size:12px;min-height:44px}@media(max-width:600px){header{flex-wrap:wrap}h1{flex-basis:100%}#stage{height:calc(100dvh - 140px)}}</style></head><body><header><h1>${escape(title)}</h1><nav aria-label="Presentation controls"><button id="start">Start presentation</button><button id="stop" disabled>Stop</button><button id="fullscreen">Fullscreen</button></nav></header><main id="stage"><div id="presentation"></div><div id="placeholder"><strong>${escape(title)}</strong><p>Choose Start presentation to run the interactive slides.</p></div></main><p id="status" role="status" aria-live="polite">Ready to present · works offline</p><script nonce="${nonce}">${script.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
+  const script = `const createPlayer=${presentationRuntimeSource()};const host=document.getElementById('presentation');const status=document.getElementById('status');const start=document.getElementById('start');const stop=document.getElementById('stop');const fullscreen=document.getElementById('fullscreen');const placeholder=document.getElementById('placeholder');const problem=document.getElementById('problem');const player=createPlayer(host,${json(html)},{title:${json(title)},scriptNonce:${json(nonce)},onState(state){start.textContent=state==='stopped'?'Start presentation':'Restart';stop.disabled=state==='stopped';status.textContent=state==='stopped'?'Ready to present · works offline':state==='loading'?'Opening presentation…':state==='ready'?'Live · use the slide controls or arrow keys':'Presentation needs attention';placeholder.hidden=state==='loading'||state==='ready';if(state!=='error')problem.hidden=true;},onError(message,origin){problem.replaceChildren();if(origin==='presentation'){const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=message;problem.append(label,quote);}else problem.textContent=message;problem.hidden=false;},onEscape(){if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}});start.addEventListener('click',()=>player.start());stop.addEventListener('click',()=>player.stop());fullscreen.addEventListener('click',async()=>{if(!player.isRunning())player.start();try{if(!document.fullscreenElement)await document.getElementById('stage').requestFullscreen();else await document.exitFullscreen();player.focus();}catch{status.textContent='Fullscreen is unavailable. Use the browser fullscreen command.';}});window.addEventListener('pagehide',()=>player.destroy(),{once:true});`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src 'self' blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'; script-src-attr 'none'"><title>${escape(title)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f6f4f0;color:#292626;font:14px/1.5 system-ui,sans-serif}header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid #e1ddd7;min-height:52px}h1{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}nav{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;border:1px solid #d3cdc4;border-radius:6px;background:#fff;padding:7px 12px;cursor:pointer}button:first-child{background:#773b49;border-color:#773b49;color:#fff}button:disabled{opacity:.5;cursor:default}button:focus-visible{outline:3px solid #b17683;outline-offset:3px}#stage{position:relative;height:calc(100dvh - 96px);min-height:240px;background:#fff}#stage:fullscreen{height:100dvh;width:100vw}#presentation{height:100%;width:100%}#placeholder{position:absolute;inset:0;display:grid;place-content:center;padding:30px;text-align:center;pointer-events:none}#placeholder[hidden]{display:none}#placeholder>strong{font-size:clamp(22px,4vw,42px);font-weight:600}#problem{max-width:640px;margin:8px auto 0;padding:12px 16px;border:1px solid #cf8796;border-radius:6px;background:#fff0f3;color:#84283d;overflow-wrap:anywhere}#problem[hidden]{display:none}#status{margin:0;padding:10px 18px;font-size:12px;min-height:44px}@media(max-width:600px){header{flex-wrap:wrap}h1{flex-basis:100%}#stage{height:calc(100dvh - 140px)}}</style></head><body><header><h1>${escape(title)}</h1><nav aria-label="Presentation controls"><button id="start">Start presentation</button><button id="stop" disabled>Stop</button><button id="fullscreen">Fullscreen</button></nav></header><main id="stage"><div id="presentation"></div><div id="placeholder"><strong>${escape(title)}</strong><p>Choose Start presentation to run the interactive slides.</p><p id="problem" role="alert" hidden></p></div></main><p id="status" role="status" aria-live="polite">Ready to present · works offline</p><script nonce="${nonce}">${script.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }

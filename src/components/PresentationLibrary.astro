@@ -40,6 +40,7 @@ import '../styles/presentations.css';
           <div class="presentation-start" data-pres-start>
             <span class="presentation-engine">SLIDEV</span><h3 data-pres-start-title>Your presentation is ready.</h3>
             <p>Slides and demonstrations run locally when you press Start.</p>
+            <div class="presentation-problem" data-pres-problem role="alert" hidden></div>
             <button class="button-primary" data-pres-start-button><Icon name="play" size={17} /> Start presentation</button>
             <p class="presentation-start-detail" data-pres-start-detail></p>
           </div>
@@ -53,7 +54,7 @@ import '../styles/presentations.css';
         <p data-pres-file-info></p><p class="presentation-source-note">Source is preserved exactly as imported. Revise it with your editor or AI assistant, rebuild the presentation, then open the new ZIP. The compiled slides do not change when source files are edited elsewhere.</p>
       </div>
     </section>
-    <footer class="presentation-dialog-footer"><span><span class="presentation-local-dot" aria-hidden="true"></span><span data-pres-storage>No uploads. Playback has no external connections.</span></span><a href={withBase('guide/#slidev')}>Slidev guide <Icon name="external" size={12} /></a></footer>
+    <footer class="presentation-dialog-footer"><span><span class="presentation-local-dot" aria-hidden="true"></span><span data-pres-storage>Not uploaded. Presentations cannot read your documents, and ordinary network requests are blocked.</span></span><a href={withBase('guide/#slidev')}>Slidev guide <Icon name="external" size={12} /></a></footer>
   </dialog>
   <input type="file" data-pres-input accept=".zip,application/zip" hidden />
 </qft-presentation-library>
