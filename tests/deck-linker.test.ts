@@ -346,12 +346,14 @@ describe('Reveal.js decks of every version', () => {
     assert.deepEqual(katex, { id: 'katex', options: { throwOnError: false, delimiters: [{ left: '$', right: '$', display: false }], macros: { ...defaults, '\\R': '\\mathbb{R}' }, ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] } });
     const three = run('MathJax3', { mathjax3: { tex: { inlineMath: [['\\(', '\\)']], macros: { RR: '\\mathbb{R}', bold: ['{\\bf #1}', 1] } } } });
     assert.equal(three.id, 'mathjax3');
-    assert.deepEqual(three.options.delimiters, [
+    // MathJax also reads LaTeX environments outside delimiters; tests/deck-linker-mathjax.test.ts checks those.
+    const plain = (list: { left: string }[]) => list.filter((pair) => !pair.left.startsWith('\\begin{'));
+    assert.deepEqual(plain(three.options.delimiters), [
       { left: '$$', right: '$$', display: true }, { left: '\\[', right: '\\]', display: true }, { left: '\\(', right: '\\)', display: false }]);
     assert.deepEqual(three.options.macros, { ...defaults, '\\RR': '\\mathbb{R}', '\\bold': '{\\bf #1}' });
     const two = run('', { math: { tex2jax: { inlineMath: [['$', '$']], displayMath: [['$$', '$$']] }, TeX: { Macros: { half: '\\frac12' } } } });
     assert.equal(two.id, 'mathjax2');
-    assert.deepEqual(two.options.delimiters, [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }]);
+    assert.deepEqual(plain(two.options.delimiters), [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }]);
     assert.deepEqual(two.options.macros, { ...defaults, '\\half': '\\frac12' });
   });
 

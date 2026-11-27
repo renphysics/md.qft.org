@@ -627,8 +627,8 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
         ...(project.entry ? { entry: project.entry } : {}),
         ...(project.skipped ? { skippedFiles: project.skipped } : {}),
       });
-      // An empty start page plays nothing, so "plays as one ordinary page" would contradict its error.
-      const empty = linked.issues.some((issue) => issue.code === 'page-empty');
+      // A page that is empty or too large plays nothing, so "plays as one ordinary page" would contradict its error.
+      const empty = linked.issues.some((issue) => issue.code === 'page-empty' || issue.code === 'deck-too-large');
       const kept = withNameWarning(project.issues.filter((issue) => !SUPERSEDED_BY_LINKER.has(issue.code) && !(empty && issue.code === 'no-slides-found')),
         [...project.issues, ...linked.issues]);
       const issues = mergeIssues(kept, linked.issues);

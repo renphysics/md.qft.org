@@ -164,8 +164,8 @@ describe('too large (VUX.6)', () => {
   const nextStep = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
 
   it('ends the per-file note and the error with what to do, also with long file names', async () => {
-    const one = await link({ 'index.html': page('<video src="b.mp4"></video>'), 'b.mp4': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
-    assert.equal(issue(one, 'asset-too-large')?.message, `b.mp4 (3 KB) is too large to include, so it is left out. ${nextStep}`);
+    const one = await link({ 'index.html': page('<img src="b.png" alt="">'), 'b.png': new Uint8Array([...PNG, ...new Uint8Array(3000)]) }, { maxHtmlLength: 2000 });
+    assert.match(issue(one, 'asset-too-large')?.message ?? '', new RegExp(`^b\\.png \\(3 KB\\) is too large to include, so it is left out\\. ${nextStep.replace(/[.()]/g, '\\$&')}$`));
     const name = (letter: string) => `pictures/${letter.repeat(120)}.png`;
     const files: Record<string, string | Uint8Array> = { 'index.html': page(['a', 'b', 'c'].map((letter) => `<img src="${name(letter)}" alt="">`).join('')) };
     for (const letter of ['a', 'b', 'c']) files[name(letter)] = new Uint8Array([...PNG, ...new Uint8Array(400)]);
@@ -174,6 +174,40 @@ describe('too large (VUX.6)', () => {
     assert.equal(error?.severity, 'error');
     assert.ok(error!.message.endsWith(nextStep), error!.message);
     assert.match(error!.message, /The largest files? (?:is|are) pictures\//);
+  });
+});
+
+describe('too large: the next step fits the largest file (review W3.5)', () => {
+  const video = 'Make the video shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  const recording = 'Make the recording shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  const other = 'Leave out files the slides do not use; then open the new ZIP.';
+
+  it('names videos, recordings and other files in the per-file note and the error', async () => {
+    const one = await link({ 'index.html': page('<video src="b.mp4"></video>'), 'b.mp4': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.equal(issue(one, 'asset-too-large')?.message, `b.mp4 (3 KB) is too large to include, so it is left out. ${video}`);
+    const sound = await link({ 'index.html': page('<audio src="a.mp3"></audio>'), 'a.mp3': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.ok(issue(sound, 'asset-too-large')?.message.endsWith(recording));
+    const many = await link({
+      'index.html': page('<video src="media/lecture.mp4"></video><img src="photo.png" alt="">'),
+      'media/lecture.mp4': new Uint8Array(900).fill(7), 'photo.png': new Uint8Array([...PNG, ...new Uint8Array(400)]),
+    }, { maxHtmlLength: 1800 });
+    const error = issue(many, 'deck-too-large');
+    assert.match(error?.message ?? '', /The largest files are media\/lecture\.mp4 \(1 KB\), photo\.png/);
+    assert.ok(error!.message.endsWith(video), error!.message);
+    const font = await link({ 'index.html': page('<style>@font-face{font-family:x;src:url(f.woff2)}</style><p>x</p>'), 'f.woff2': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.ok(issue(font, 'asset-too-large')?.message.endsWith(other), JSON.stringify(font.issues));
+  });
+
+  it('gives only the error, not also the note that the page plays as an ordinary page', async () => {
+    const big = new Uint8Array(10 * 1024 * 1024).fill(7);
+    // Stored, not compressed: the ZIP reader refuses files that expand far beyond their compressed size.
+    const zip = zipSync({ 'index.html': encoder.encode(page('<video src="a.mp4"></video><video src="b.mp4"></video>')), 'a.mp4': [big, { level: 0 }], 'b.mp4': [big, { level: 0 }] });
+    const project = await openDeck(new File([new Uint8Array(zip).buffer], 'big.zip', { type: 'application/zip' }));
+    assert.ok(project);
+    const playable = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
+    assert.equal(isPlayable(playable), false);
+    assert.ok(playable.issues.some((item) => item.code === 'deck-too-large' && item.message.endsWith(video)), JSON.stringify(playable.issues.map((item) => item.message)));
+    assert.ok(!playable.issues.some((item) => item.code === 'no-slides-found'));
   });
 });
 

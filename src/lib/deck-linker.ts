@@ -499,6 +499,15 @@ const MAX_NOTE_LENGTH = 350;
 /** The last sentence of a note about files too large to include (review VUX.6). */
 const SMALLER_FILES = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
 
+/** That sentence for the kind of the largest file (review W3.5); pictures when no file is named. */
+function smallerFiles(path: string | undefined): string {
+  const extension = /\.([a-z0-9]{1,5})$/i.exec(path ?? '')?.[1]?.toLowerCase() ?? '';
+  if (/^(?:mp4|m4v|webm|ogv|mov|mkv|avi|mpe?g)$/.test(extension)) return 'Make the video shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  if (/^(?:mp3|wav|ogg|oga|opus|m4a|aac|flac|weba)$/.test(extension)) return 'Make the recording shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  if (path === undefined || /^(?:png|jpe?g|gif|webp|avif|svg|bmp|ico|tiff?|jfif)$/.test(extension)) return SMALLER_FILES;
+  return 'Leave out files the slides do not use; then open the new ZIP.';
+}
+
 /** The last sentence of a note about something left out that the AI can fix. */
 const NEXT_STEP = 'Copy the report for your AI assistant to get a version that works here.';
 
@@ -780,7 +789,7 @@ class DeckLinker {
     if (length > this.maxLength || this.embeddedChars + length > this.maxLength * 2) {
       this.dataUris.set(key, null);
       this.removedReferences += 1;
-      this.report('asset-too-large', 'warning', `${cleanReportedText(key, 120)} (${formatBytes(bytes.length)}) is too large to include, so it is left out. ${SMALLER_FILES}`, key);
+      this.report('asset-too-large', 'warning', `${cleanReportedText(key, 120)} (${formatBytes(bytes.length)}) is too large to include, so it is left out. ${smallerFiles(key)}`, key);
       return undefined;
     }
     const uri = `data:${type};base64,${base64(bytes)}`;
@@ -2555,9 +2564,10 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
     const head = `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.`;
     const named = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${cleanReportedText(path, 60)} (${formatBytes(bytes)})`);
     // As many of the largest files as fit, so that the next step is never cut off.
-    let message = `${head} ${SMALLER_FILES}`;
+    const advice = smallerFiles(stats.largestAssets[0]?.path);
+    let message = `${head} ${advice}`;
     for (let count = named.length; count > 0; count -= 1) {
-      const candidate = `${head} The largest file${count > 1 ? 's are' : ' is'} ${named.slice(0, count).join(', ')}. ${SMALLER_FILES}`;
+      const candidate = `${head} The largest file${count > 1 ? 's are' : ' is'} ${named.slice(0, count).join(', ')}. ${advice}`;
       if (candidate.length <= MAX_NOTE_LENGTH) { message = candidate; break; }
     }
     linker.report('deck-too-large', 'error', message);
