@@ -541,13 +541,18 @@ const failed = (issues: DeckIssue[], profile: PresentationProfile): PlayableDeck
 /** Codes that report a file the slides use as missing from the ZIP. */
 const MISSING_FILE_CODES = new Set(['missing-file', 'missing-local-file', 'skipped-file-reference']);
 
+/** A character outside ASCII, or a percent escape of one: a name that could be one of the unreadable names. */
+const NOT_PLAIN_NAME = /[^\u0000-\u007f]|%[89a-f][0-9a-f]/i;
+
 /**
  * The note that some names in the ZIP are in an unknown code page is
- * information, and a warning once a file the slides use is reported missing:
- * then it is the likely reason.
+ * information, and a warning once a file the slides use is reported missing
+ * whose name is not plain ASCII: then it is the likely reason. The message is
+ * checked too, as a list of missing files names only the first in `where`.
  */
 function withNameWarning(kept: readonly DeckIssue[], all: readonly DeckIssue[]): DeckIssue[] {
-  const missing = all.some((issue) => MISSING_FILE_CODES.has(issue.code));
+  const missing = all.some((issue) => MISSING_FILE_CODES.has(issue.code)
+    && NOT_PLAIN_NAME.test(`${issue.where ?? ''} ${issue.message.replace(/[…“”]/g, '')}`));
   return kept.map((issue) => missing && issue.code === 'zip-names-not-utf8' && issue.severity === 'info'
     ? { ...issue, severity: 'warning' as const, message: legacyNamesNote(issue.where ?? '', true) } : issue);
 }

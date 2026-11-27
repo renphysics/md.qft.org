@@ -253,10 +253,11 @@ interface LegacyNames {
  * macOS write UTF-8 without the flag: another code page must match strictly
  * more names. When UTF-8 wins, the names that are not valid UTF-8 are scored
  * again on their own. The evidence is the archive's text (HTML first), read
- * once; names are looked up in a set of its pieces, never built into a
- * pattern. Without any match the names stay as they are, with a note.
+ * once, and the ZIP's own file name; names are looked up in a set of their
+ * pieces, never built into a pattern. Without any match the names stay as
+ * they are, with a note.
  */
-function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Map<ArchiveEntry, Uint8Array>): LegacyNames {
+function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Map<ArchiveEntry, Uint8Array>, fileName: string): LegacyNames {
   const legacy = directory.filter((entry) => entry.rawName);
   if (!legacy.length) return { entries: directory };
   const texts: string[] = [];
@@ -273,12 +274,14 @@ function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Ma
     budget -= entry.size;
   }
   const pieces = textPieces(texts);
+  // Windows names the ZIP of a folder after the folder, and the chosen file's own name is proper Unicode.
+  for (const piece of telltalePieces(fileName.replace(/\.zip$/i, ''))) pieces.add(piece);
   const scored = legacy.filter((entry) => !entry.directory).slice(0, LEGACY_SCORED_NAMES);
   let best = bestCodePage([UTF8_PAGE, ...CODE_PAGES], scored, pieces);
   // UTF-8 won, or nothing did: the names that cannot be UTF-8 still need a code page of their own.
+  const notUtf8 = (entry: ArchiveEntry) => UTF8_PAGE.decode(entry.rawName!) === undefined;
   let reread = legacy;
   if (!best || best === UTF8_PAGE) {
-    const notUtf8 = (entry: ArchiveEntry) => UTF8_PAGE.decode(entry.rawName!) === undefined;
     reread = legacy.filter(notUtf8);
     if (!reread.length) return { entries: directory };
     best = bestCodePage(CODE_PAGES, scored.filter(notUtf8), pieces);
@@ -292,8 +295,17 @@ function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Ma
     };
   }
   const page = best;
-  // A name that the slides use as UTF-8 is never read again.
-  const rereadSet = new Set(reread.filter((entry) => !matches(UTF8_PAGE, entry, pieces)));
+  // A name that is valid UTF-8 is read again only when the slides use it as read in that code page, or when it
+  // lies in the same non-ASCII top-level folder as a name that is read again (so a zipped folder stays one
+  // folder); never when the slides use it as UTF-8.
+  const topFolder = (entry: ArchiveEntry) => {
+    const slash = entry.rawName!.indexOf(0x2f);
+    return slash > 0 && entry.rawName!.subarray(0, slash).some((byte) => byte > 0x7f) ? String.fromCharCode(...entry.rawName!.subarray(0, slash)) : undefined;
+  };
+  const candidates = reread.filter((entry) => !matches(UTF8_PAGE, entry, pieces));
+  const direct = candidates.filter((entry) => notUtf8(entry) || matches(page, entry, pieces));
+  const folders = new Set(direct.map(topFolder).filter((folder) => folder !== undefined));
+  const rereadSet = new Set([...direct, ...candidates.filter((entry) => folders.has(topFolder(entry)!))]);
   const taken = new Set(directory.map((entry) => collisionKey(entry.name)));
   const entries = directory.map((entry) => {
     if (!rereadSet.has(entry)) return entry;
@@ -334,7 +346,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   const inspected = inspectDirectory(bytes, false);
   // Names in a legacy code page are read again before any path rule applies to them.
   const cache = new Map<ArchiveEntry, Uint8Array>();
-  const legacyNames = readLegacyNames(bytes, inspected, cache);
+  const legacyNames = readLegacyNames(bytes, inspected, cache, baseName(file.name, ''));
   const directory = legacyNames.entries;
   const issues: DeckIssue[] = legacyNames.issue ? [legacyNames.issue] : [];
   const kept: { path: string; entry: ArchiveEntry; before?: string }[] = [];
