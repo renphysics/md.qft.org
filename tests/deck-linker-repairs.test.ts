@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { zipSync } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
-import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkResult } from '../src/lib/deck-linker.ts';
+import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
 import { buildPlayable, isPlayable, openDeck } from '../src/lib/deck-project.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
@@ -24,9 +24,9 @@ function deck(files: Record<string, string | Uint8Array>): DeckFiles {
   return new Map(Object.entries(files).map(([path, value]) => [path, typeof value === 'string' ? encoder.encode(value) : value]));
 }
 
-async function link(files: Record<string, string | Uint8Array>): Promise<LinkResult> {
+async function link(files: Record<string, string | Uint8Array>, options: LinkOptions = {}): Promise<LinkResult> {
   const map = deck(files);
-  return linkDeck(map, detectDeck(map), nodeVendorProvider());
+  return linkDeck(map, detectDeck(map), nodeVendorProvider(), options);
 }
 
 function zipFile(files: Record<string, string | Uint8Array>, name = 'deck.zip'): File {
@@ -154,5 +154,22 @@ describe('an empty start page (VF2a.5)', () => {
       assert.equal(isPlayable(playable), false);
       assert.deepEqual(playable.issues.map((item) => item.code), ['page-empty'], text);
     }
+  });
+});
+
+describe('too large (VUX.6)', () => {
+  const nextStep = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
+
+  it('ends the per-file note and the error with what to do, also with long file names', async () => {
+    const one = await link({ 'index.html': page('<video src="b.mp4"></video>'), 'b.mp4': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.equal(issue(one, 'asset-too-large')?.message, `b.mp4 (3 KB) is too large to include, so it is left out. ${nextStep}`);
+    const name = (letter: string) => `pictures/${letter.repeat(120)}.png`;
+    const files: Record<string, string | Uint8Array> = { 'index.html': page(['a', 'b', 'c'].map((letter) => `<img src="${name(letter)}" alt="">`).join('')) };
+    for (const letter of ['a', 'b', 'c']) files[name(letter)] = new Uint8Array([...PNG, ...new Uint8Array(400)]);
+    const many = await link(files, { maxHtmlLength: 1800 });
+    const error = issue(many, 'deck-too-large');
+    assert.equal(error?.severity, 'error');
+    assert.ok(error!.message.endsWith(nextStep), error!.message);
+    assert.match(error!.message, /The largest files? (?:is|are) pictures\//);
   });
 });

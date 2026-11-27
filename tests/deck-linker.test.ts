@@ -634,7 +634,7 @@ describe('unusual and hostile input', () => {
     const many = await link({ 'index.html': page('<img src="a.png" alt=""><img src="c.png" alt="">'), 'a.png': PNG, 'c.png': new Uint8Array([...PNG, ...new Uint8Array(700)]) }, { maxHtmlLength: 1200 });
     const error = many.issues.find((issue) => issue.code === 'deck-too-large');
     assert.equal(error?.severity, 'error');
-    assert.match(error!.message, /The largest files are c\.png \(1 KB\), a\.png \(1 KB\)\.$/);
+    assert.match(error!.message, /The largest files are c\.png \(1 KB\), a\.png \(1 KB\)\. Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP\.$/);
   });
 
   it('neither throws nor hangs on hostile documents', async () => {

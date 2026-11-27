@@ -493,6 +493,12 @@ const CSS_SCAN = String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:[^"\\\n]|\\[\s\S])*["\n]?
 
 type CssOrigin = { kind: 'deck'; dir: string } | { kind: 'vendor'; library: VendorLibrary; dir: string };
 
+/** The longest note the linker writes; longer ones are cut. */
+const MAX_NOTE_LENGTH = 350;
+
+/** The last sentence of a note about files too large to include (review VUX.6). */
+const SMALLER_FILES = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
+
 /** The last sentence of a note about something left out that the AI can fix. */
 const NEXT_STEP = 'Copy the report for your AI assistant to get a version that works here.';
 
@@ -607,7 +613,7 @@ class DeckLinker {
     const key = `${code}\u0000${where ?? message}`;
     if (this.issueKeys.has(key)) return;
     this.issueKeys.add(key);
-    this.issues.push({ code, severity, message: cleanReportedText(message, 350), ...(where ? { where: cleanReportedText(where, 200) } : {}) });
+    this.issues.push({ code, severity, message: cleanReportedText(message, MAX_NOTE_LENGTH), ...(where ? { where: cleanReportedText(where, 200) } : {}) });
   }
 
   private reportRemote(target: Extract<Target, { kind: 'remote' }>, kind: 'image' | 'media' | 'script' | 'style' | 'font' | 'page' | 'markdown'): void {
@@ -748,7 +754,7 @@ class DeckLinker {
     if (length > this.maxLength || this.embeddedChars + length > this.maxLength * 2) {
       this.dataUris.set(key, null);
       this.removedReferences += 1;
-      this.report('asset-too-large', 'warning', `${key} (${formatBytes(bytes.length)}) is too large to include, so it is left out.`, key);
+      this.report('asset-too-large', 'warning', `${cleanReportedText(key, 120)} (${formatBytes(bytes.length)}) is too large to include, so it is left out. ${SMALLER_FILES}`, key);
       return undefined;
     }
     const uri = `data:${type};base64,${base64(bytes)}`;
@@ -2358,9 +2364,15 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
   const html = await linker.link(decodeText(files.get(entry)!, entry)) ?? '';
   const stats = linker.stats(entry, html.length);
   if (html.length > maxLength) {
-    const largest = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${path} (${formatBytes(bytes)})`).join(', ');
-    linker.report('deck-too-large', 'error',
-      `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.${largest ? ` The largest files are ${largest}.` : ''}`);
+    const head = `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.`;
+    const named = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${cleanReportedText(path, 60)} (${formatBytes(bytes)})`);
+    // As many of the largest files as fit, so that the next step is never cut off.
+    let message = `${head} ${SMALLER_FILES}`;
+    for (let count = named.length; count > 0; count -= 1) {
+      const candidate = `${head} The largest file${count > 1 ? 's are' : ' is'} ${named.slice(0, count).join(', ')}. ${SMALLER_FILES}`;
+      if (candidate.length <= MAX_NOTE_LENGTH) { message = candidate; break; }
+    }
+    linker.report('deck-too-large', 'error', message);
   }
   return { html, issues: linker.issues, stats };
 }
