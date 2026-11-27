@@ -334,7 +334,7 @@ describe('Reveal\'s math plugin stand-in', () => {
       ['MathJax2', {}, 11], ['MathJax2', { math: { tex2jax: { processEnvironments: false } } }, 0], ['KaTeX', {}, 0],
     ] as const) {
       const seen: any[] = [];
-      const context: Record<string, any> = { document: { readyState: 'complete' }, renderMathInElement: (root: unknown, options: any) => seen.push(options) };
+      const context: Record<string, any> = { document: { readyState: 'complete' }, renderMathInElement: (_root: unknown, options: any) => seen.push(options) };
       context.window = context;
       vm.runInNewContext(mathStandInSource(), context);
       context.RevealMath[factory]().init({ getConfig: () => config, isReady: () => true, getSlidesElement: () => element('div', []), layout: () => {} });
