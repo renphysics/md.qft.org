@@ -97,6 +97,15 @@ function mathHelpersSource(): string {
     });
     return result;
   }
+  // MathJax also typesets LaTeX environments written directly in the text
+  // (review W3.2), unless processEnvironments is false. These are the ones
+  // KaTeX can typeset at the top level; eqnarray goes through preProcess.
+  var environmentNames = ['equation', 'equation*', 'align', 'align*', 'alignat', 'alignat*', 'gather', 'gather*', 'CD', 'eqnarray', 'eqnarray*'];
+  function environments(off) {
+    return off === false ? [] : environmentNames.map(function (name) {
+      return { left: '\\\\begin{' + name + '}', right: '\\\\end{' + name + '}', display: true };
+    });
+  }
   function longestFirst(list) {
     return list.map(function (item, index) { return [item, index]; }).sort(function (a, b) {
       return b[0].left.length - a[0].left.length || a[1] - b[1];
@@ -160,7 +169,7 @@ ${mathHelpersSource()}
     var skip = id === 'mathjax2' ? tex.skipTags : settings.options && settings.options.skipHtmlTags;
     return {
       throwOnError: false,
-      delimiters: longestFirst(pairs(tex.displayMath || mathjaxDisplay, true).concat(pairs(tex.inlineMath || mathjaxInline, false))),
+      delimiters: longestFirst(pairs(tex.displayMath || mathjaxDisplay, true).concat(pairs(tex.inlineMath || mathjaxInline, false), environments(tex.processEnvironments))),
       ignoredTags: Array.isArray(skip) ? skip : ignored,
       macros: macros(id === 'mathjax2' ? settings.TeX && settings.TeX.Macros : tex.macros),
       preProcess: preProcess
@@ -245,7 +254,7 @@ ${mathHelpersSource()}
     if (plain(tex.macros)) Object.assign(given, tex.macros);
     return {
       throwOnError: false,
-      delimiters: longestFirst(pairs(display, true).concat(pairs(inline, false))),
+      delimiters: longestFirst(pairs(display, true).concat(pairs(inline, false), environments(tex.processEnvironments === false ? false : two.processEnvironments))),
       ignoredTags: skip,
       ignoredClasses: ['tex2jax_ignore', 'mathjax_ignore'],
       macros: macros(given),

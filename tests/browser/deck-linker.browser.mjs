@@ -210,6 +210,7 @@ export default async function run(t) {
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script></head><body>
 <p id="inline">Inline \\(x^2 + \\RR\\) and a price of $5 and $6.</p>
 <p id="display">$$\\int_0^1 x\\,dx = \\frac12$$</p>
+<div id="env">\\begin{align} a &= b + c \\label{eq:one} \\\\ d &= e \\tag{*} \\end{align}</div>
 <p id="later"></p>
 <script>window.addLater = function () { var later = document.getElementById('later'); later.textContent = 'Added \\\\(z^3\\\\) later'; return MathJax.typesetPromise([later]).then(function () { return later.querySelectorAll('.katex').length; }); };</script>
 </body></html>`;
@@ -222,8 +223,13 @@ export default async function run(t) {
       inline: document.querySelectorAll('#inline .katex').length,
       errors: document.querySelectorAll('.katex-error').length,
       text: document.querySelector('#inline').textContent,
+      environment: document.querySelectorAll('#env .katex-display').length,
+      environmentText: document.querySelector('#env .katex-html')?.textContent ?? document.querySelector('#env').textContent,
     }));
     assert.equal(state.inline, 1, 'one inline formula: MathJax does not read single dollars by default');
+    // MathJax typesets an environment written directly in the text (review W3.2).
+    assert.equal(state.environment, 1, 'the bare align environment is typeset');
+    assert.doesNotMatch(state.environmentText, /\\begin|\\label/);
     assert.equal(state.errors, 0, 'the macro from the configuration is known');
     assert.match(state.text, /a price of \$5 and \$6\.$/);
     assert.equal(await frame.evaluate(() => window.addLater()), 1, 'MathJax.typesetPromise typesets the added text');
