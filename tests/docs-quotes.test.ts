@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { formatDeckReport } from '../src/lib/deck-report';
+import { formatDeckReport, namedAsOpened } from '../src/lib/deck-report';
 import { describePresentationLimit } from '../src/lib/presentation-runtime';
 
 /** A documentation file with its line breaks and Markdown emphasis folded away, so a wrapped quotation reads as one line. */
@@ -31,4 +31,11 @@ test('the documentation quotes the report\'s Reveal.js rule for files and its re
     assert.ok(text.includes(rule), `${path} quotes the rule`);
     assert.ok(text.includes(reply), `${path} quotes the reply`);
   }
+});
+
+test('the documentation quotes the advice for a single HTML file as the report writes it', () => {
+  const issue = { code: 'missing-file', severity: 'warning' as const, message: 'The presentation refers to pic.png, but that file is not in it. Add the file to the ZIP.', where: 'pic.png' };
+  const advice = namedAsOpened(issue, 'index.html', 'lesson.html').message.replace('The presentation refers to pic.png, but that file is not in it.', '');
+  assert.equal(advice, ' Put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.');
+  for (const path of ['README.md', 'docs/ARCHITECTURE.md']) assert.ok(doc(path).includes(advice.trim()), `${path} quotes the advice`);
 });

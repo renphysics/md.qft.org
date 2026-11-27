@@ -142,8 +142,14 @@ because Windows names the ZIP of a folder after the folder: a ZIP of the folder
 `课件` chosen as `课件.zip` or `课件 (1).zip` gets its folder read as GBK. UTF-8
 is tried first and wins a tie, so ZIPs made on macOS or Linux keep their
 names, and a name that is valid UTF-8 is read in the old code page only when
-the slides use it in that spelling (or it lies in the same such folder), so
-one misleading word in the slides does not rename a correct ZIP. The edited ZIP stores the fixed names
+the slides use it in that spelling, when it lies in the same such folder, when
+the same top-level folder of the ZIP (or its top level) holds a name that is
+not valid UTF-8, or, for GBK, Big5, Shift_JIS and EUC-KR, when it is made only
+of characters that occur in the names that are not valid UTF-8 or that the
+slides use in the old spelling (so an
+unused `图片3.png` beside the used `图片1.png` is read correctly too); a name the
+slides use as UTF-8 is never read again, so one misleading word in the slides
+does not rename a correct ZIP. The edited ZIP stores the fixed names
 as UTF-8; **Original** returns the file as uploaded. When no code page
 matches, a note names one example and says that you can ignore it if nothing
 is missing in the slides; when a file the slides use is then missing and its
@@ -187,8 +193,16 @@ files, so a crafted file cannot freeze the page.
   are typeset too, laid out like `gather` (each line centred, unlike MathJax)
   and like `align` (not stretched to the full width). Calls a presentation makes after changing a slide, such as
   `MathJax.typesetPromise()` or `MathJax.Hub.Queue(…)`, typeset again.
-  `\label{…}` and `\require{…}` show nothing, `\eqref{…}` shows "(?)" and
-  `\ref{…}` "?" (also in ordinary text when the presentation uses MathJax),
+  Equations are numbered as MathJax's own setting says (`tex.tags: 'ams'`, or
+  `TeX.equationNumbers.autoNumber: 'AMS'` in MathJax 2; MathJax's default
+  numbers nothing, and an explicit `\tag{…}` always shows), in the order of
+  the presentation, and they do not change with the slide shown or when the
+  presentation typesets again;
+  `multline` gets one number, on its last line. `\label{…}` names a number,
+  and `\eqref{…}` and `\ref{…}` show "(N)" and "N", in formulas and in
+  ordinary text; an unknown name shows "(?)" and "?". `tags: 'all'` numbers
+  only environments, and a reference inside a formula to an equation further
+  on keeps the placeholder. `\require{…}` shows nothing,
   `\unicode{x2192}` gives the character, and `eqnarray` is laid out like
   `align`; a few other MathJax-only commands may show as errors. A
   polyfill.io script beside MathJax is left out with a note that it is not
@@ -292,7 +306,8 @@ slides. Portable packages still stop at their first error.
   the top of the slides says so ("Some parts may be missing"); it closes after
   about 12 seconds (not while the pointer or the keyboard is in it) or on
   **Dismiss**, and the line under the stage says
-  "Playing with basic settings" for the whole playback. If the presentation
+  "Playing with basic settings" for the whole playback. While that notice
+  shows, a print or speaker-view note goes to the notes without replacing it. If the presentation
   then starts Reveal.js itself after all, its own settings and plugins apply
   and the notice goes away. If the rescue does not work, a box on the stage
   says "The slides did not start", quotes the presentation's first error, and
@@ -329,7 +344,10 @@ slides. Portable packages still stop at their first error.
   answers no and `prompt()` answers nothing, and the notes say once that the
   presentation asked a question the player cannot show. Opening a new window
   (other than a website right after your click, above) does nothing and gives
-  one note. Printing (`window.print()`) does nothing; the note says "The
+  one note. Printing (`window.print()`) does not print, but the presentation
+  hears `beforeprint` and then `afterprint`, as when a print dialog is closed,
+  so a Print button that hides the slides for a handout shows them again; the
+  note says "The
   presentation tried to print, which the player cannot do. To print the
   slides, open the presentation's HTML file in your web browser (unzip a ZIP
   first) and print from there." The print note and the Reveal.js speaker view
@@ -417,8 +435,12 @@ handler); and that a quiz form works when its submit handler checks the
 answers with a script and cancels the submission. For Slidev they are the
 rules of the Slidev prompt. For a single HTML file the report names the file
 (`entry: NAME.html (a single HTML file)`), uses that name in the notes where
-the site would write `index.html` (in the library too), and asks for the
-complete corrected file under the same name; for a ZIP it ends "Reply: send
+the site would write `index.html` (in the library and in the box on the stage
+too), gives advice for one file where a note would send you to a ZIP (" Add
+the file to the ZIP." becomes " Put it inside the HTML file (a picture as a
+data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML
+file together with that file."), and asks for the complete corrected file
+under the same name; for a ZIP it ends "Reply: send
 back the complete corrected presentation as a ZIP with the same file names
 (the entry above at the top), fixing the notes above and changing nothing
 else."
@@ -440,7 +462,9 @@ typing is not applied, or edits could not be saved, Escape always asks
 after an undo; if the dialog closes in any other way while changes are
 pending, it opens again as it was, still playing, and asks. A presentation
 file dropped on the dialog then asks the same question: **Keep editing** keeps
-everything, **Discard changes** opens the dropped file. **Discard changes to this file** removes
+everything, **Discard changes** opens the dropped file. A Markdown file or
+lesson ZIP dropped there asks nothing: it opens in the workspace, and the
+typing stays "Not applied". **Discard changes to this file** removes
 typing that is not applied yet and keeps what is saved (Undo in the editor
 brings the typing back); on a file with only applied changes it asks first,
 then returns that file to its imported text. **Restore original** returns the

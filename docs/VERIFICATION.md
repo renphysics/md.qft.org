@@ -74,6 +74,19 @@ New browser steps cover a presentation file dropped on the open dialog with unap
 - **Screen readers.** Roles, labels and live regions were checked in code and in the suites; no screen reader was used.
 - **The deployed site.** These changes were not deployed; the converter's time limit and GitHub Pages compression of `esbuild.wasm` were not checked on the live host.
 
+### Automated checks after the closing fixes
+
+The tree after the closing fixes (equation numbers in MathJax presentations, the player's stand-in for printing, the dropped file, the basic-settings notice, the advice for a single HTML file, ZIP names, the lone Slidev file and this documentation) gave, run on 2026-11-27 in full Chromium against this tree's own build:
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 155 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 846 tests in 101 suites; 844 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 12 of 12 suites, 143 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
+
+New unit tests cover equation numbers, `\label`, `\eqref` and `\ref` in both MathJax stand-ins (`deck-linker-mathjax-numbers`), the order of `beforeprint`, the print limit and `afterprint` with a throwing handler and a nested `print()` (`presentation-runtime`), the advice for a single HTML file checked with the real check (`deck-report`), the per-part rule and the default picture names of a two-byte code page (`deck-zip-code-pages`), the lone Slidev file and the two Check lesson warnings (`slidev-source`, `lesson-check`), and the quotation of the single-file advice (`docs-quotes`); new browser steps cover the numbered and unnumbered MathJax presentations (`deck-linker`), a Print button that hides its slides and the basic-settings notice during `print()` (`deck-notices`), a lesson ZIP dropped on unapplied typing (`deck-editing`), the name of an empty single file in the problem box (`deck-problems`) and a lone Slidev `slides.md` opened as a document (`decks`).
+
 ## Presentations from AI tools — 2026-11-26
 
 This iteration lets the presentation library open Reveal.js decks (a single HTML file or a ZIP), other web pages, and ordinary Slidev builds, play them offline in the existing sandbox, edit the source of Reveal.js decks and web pages, and report what the check found to the AI that made the deck. It also repairs the defects confirmed by the research in [docs/research/presentation-platform](research/presentation-platform/README.md), section 9: keyboard focus after Start and Present, attribution of deck error text, the privacy wording, the page query in the slide preview, Save PDF on the site's own example, the lesson prompt's placeholder `projectId`, and the Slidev Node version.
