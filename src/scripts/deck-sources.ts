@@ -388,7 +388,14 @@ export class DeckSourceView {
       if (outcome.storageProblem) this.problems([outcome.storageProblem]);
       return true;
     } finally {
-      if (project === this.project) this.setBusy(false);
+      if (project === this.project) {
+        this.setBusy(false);
+        // Apply changes disables itself while it works, so the browser drops
+        // the keyboard to the page; it goes to the editor, as after Discard.
+        const apply = this.q<HTMLButtonElement>('[data-pres-apply]');
+        const focused = document.activeElement;
+        if (!focused || focused === document.body || (focused === apply && apply.disabled)) this.focusWork();
+      }
     }
   }
 

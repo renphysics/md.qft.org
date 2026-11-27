@@ -315,8 +315,13 @@ export default async function run(t) {
     assert.match(await page.locator('[data-pres-confirm-message]').textContent(), /applied changes to slides\.md will be removed/);
     await page.locator('[data-pres-confirm-cancel]').click();
     await confirm.waitFor({ state: 'hidden' });
+    // A rebuild would start at once: give it time, then wait until nothing is busy.
+    await page.waitForTimeout(1000);
+    await until(async () => (await page.locator('[data-pres-source]').getAttribute('aria-busy')) === null, 'Source files to be idle');
     assert.equal(await badge(page, 'slides.md').textContent(), 'Edited', 'Keep my changes keeps the edit');
     assert.match(await editorText(page), new RegExp(EDITED_HEADING));
+    assert.match(await page.locator('[data-pres-storage]').textContent(), /Saved in this browser with your edits/);
+    assert.doesNotMatch(await editStatus(page), /back to its imported text/);
     // Confirmed, the file goes back to its imported text, and is saved so.
     await page.locator('[data-pres-discard]').click();
     await confirm.waitFor({ state: 'visible' });
@@ -328,8 +333,13 @@ export default async function run(t) {
     // Apply the edit again for the next step.
     await retypeLine(page, ORIGINAL_HEADING, `## ${EDITED_HEADING}`);
     await until(async () => (await badge(page, 'slides.md').textContent()) === 'Not applied', 'the retyped edit');
-    await page.keyboard.press('Control+s');
+    // This time by keyboard on Apply changes: Escape leaves the editor, Enter applies.
+    await page.waitForTimeout(500);
+    await page.keyboard.press('Escape');
+    await until(() => page.evaluate(() => document.activeElement?.hasAttribute('data-pres-apply')), 'the keyboard to move to Apply changes');
+    await page.keyboard.press('Enter');
     await until(async () => (await badge(page, 'slides.md').textContent()) === 'Edited', 'the edit to be applied again');
+    await until(() => page.locator('[data-pres-code] .cm-editor').evaluate((editor) => editor.contains(document.activeElement)), 'the keyboard to be back in the editor after Apply');
   });
 
   await t.step('Restore original, after confirmation, brings the first text back on the same slide', async () => {
