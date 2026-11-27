@@ -26,6 +26,11 @@ export interface DeckArchive {
   issues: DeckIssue[];
   /** Files left out because their names cannot be used: deck path (wrapping folder removed) and the reason in words. */
   skipped: Map<string, string>;
+  /**
+   * Names in a legacy code page that were read again in the code page the
+   * slides match: the earlier one-character-per-byte deck path and the path now.
+   */
+  renamed?: Map<string, string>;
 }
 
 /** At most this many skipped files are named individually; the rest are counted. */
@@ -69,10 +74,159 @@ function normalisePath(name: string): { path: string; usable: boolean } {
   const slashed = name.replace(/\\/g, '/');
   if (slashed.startsWith('/') || /^[A-Za-z]:/.test(slashed)
     || slashed.split('/').some((part) => part === '..')) {
-    return unreadable('A file path points outside the archive: ' + cleanReportedText(name, 200));
+    return unreadable('A file path points outside the archive: ' + cleanReportedText(name, 200) + '. Make the ZIP again from the folder that holds the presentation, then open the new ZIP.');
   }
   const path = slashed.split('/').filter((part) => part !== '' && part !== '.').join('/').normalize('NFC');
   return { path, usable: safePresentationPath(path) };
+}
+
+/** The upper halves (bytes 0x80 to 0xff) of two DOS code pages that browsers do not decode. */
+const CP437_HIGH = 'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
+const CP850_HIGH = 'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´­±‗¾¶§÷¸°¨·¹³²■ ';
+
+/** A code page that ZIP tools on Windows use for names without the UTF-8 flag, named in plain words. */
+interface CodePage {
+  words: string;
+  decode: (bytes: Uint8Array) => string | undefined;
+}
+
+function tableCodePage(words: string, high: string): CodePage {
+  return { words, decode: (bytes) => Array.from(bytes, (byte) => byte < 0x80 ? String.fromCharCode(byte) : high[byte - 0x80]).join('') };
+}
+
+function browserCodePage(words: string, label: string): CodePage {
+  let decoder: TextDecoder | null | undefined;
+  return {
+    words,
+    decode: (bytes) => {
+      if (decoder === undefined) {
+        try { decoder = new TextDecoder(label, { fatal: true }); } catch { decoder = null; }
+      }
+      if (!decoder) return undefined;
+      try { return decoder.decode(bytes); } catch { return undefined; }
+    },
+  };
+}
+
+/** In the order they are tried; the earlier one wins a tie. */
+const CODE_PAGES: readonly CodePage[] = [
+  browserCodePage('GBK (Chinese)', 'gb18030'),
+  browserCodePage('Big5 (Traditional Chinese)', 'big5'),
+  browserCodePage('Shift_JIS (Japanese)', 'shift_jis'),
+  browserCodePage('EUC-KR (Korean)', 'euc-kr'),
+  tableCodePage('code page 437 (older Windows in English)', CP437_HIGH),
+  tableCodePage('code page 850 (older Windows in Western Europe)', CP850_HIGH),
+  browserCodePage('Windows-1252 (Western Europe)', 'windows-1252'),
+  browserCodePage('code page 866 (older Windows in Russian)', 'ibm866'),
+  browserCodePage('Windows-1251 (Cyrillic)', 'windows-1251'),
+  browserCodePage('Windows-1250 (Central Europe)', 'windows-1250'),
+];
+
+/** At most this many legacy names are scored against the slides' text. */
+const LEGACY_SCORED_NAMES = 2000;
+/** At most this much of the slides' own text is read to score them. */
+const LEGACY_TEXT_BYTES = 8 * 1024 * 1024;
+/** Files whose text can name other files. */
+const REFERENCING_FILE = /\.(?:html?|css|[cm]?js|md|markdown|json)$/i;
+/**
+ * Characters that end a file name where the slides write one (quotes,
+ * brackets, slashes, spaces, query and fragment marks). Names are compared in
+ * pieces between them, so a name with a space still matches.
+ */
+const NAME_BREAK = /[\s"'`()<>[\]{}=,;:|*?!&#+/\\]+/;
+const NON_ASCII = /[^\u0000-\u007f]/;
+
+/** The pieces of a name or text that hold a non-ASCII letter: the only part that tells code pages apart. */
+function telltalePieces(text: string): string[] {
+  return text.normalize('NFC').split(NAME_BREAK).filter((piece) => NON_ASCII.test(piece));
+}
+
+/** Every telltale piece of the slides' text, as written and percent-decoded. One pass over the text. */
+function textPieces(texts: readonly string[]): Set<string> {
+  const pieces = new Set<string>();
+  for (const text of texts) {
+    for (const token of text.normalize('NFC').split(NAME_BREAK)) {
+      if (NON_ASCII.test(token)) pieces.add(token);
+      else if (token.includes('%')) {
+        let decoded: string | undefined;
+        try { decoded = decodeURIComponent(token); } catch { decoded = undefined; }
+        if (decoded) for (const piece of telltalePieces(decoded)) pieces.add(piece);
+      }
+    }
+  }
+  return pieces;
+}
+
+interface LegacyNames {
+  entries: ArchiveEntry[];
+  issue?: DeckIssue;
+}
+
+/**
+ * ZIP tools on Windows that do not set the UTF-8 flag write names in the
+ * system's code page. When some names are neither UTF-8 nor flagged, read
+ * them in each likely code page, count how many of the decoded file names the
+ * slides' own text mentions, and use the code page with the most matches. The
+ * evidence is the archive's text, read once; names are looked up in a set of
+ * its pieces, never built into a pattern. Without any match the names stay as
+ * they are, with a note that says how to fix them.
+ */
+function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Map<ArchiveEntry, Uint8Array>): LegacyNames {
+  const legacy = directory.filter((entry) => entry.rawName);
+  if (!legacy.length) return { entries: directory };
+  const texts: string[] = [];
+  let budget = LEGACY_TEXT_BYTES;
+  for (const entry of directory) {
+    if (entry.rawName || entry.directory || entry.size > budget || isIgnoredPath(entry.name) || !REFERENCING_FILE.test(entry.name)) continue;
+    const data = readEntry(bytes, entry, true)!;
+    cache.set(entry, data);
+    texts.push(decodeText(data, entry.name));
+    budget -= entry.size;
+  }
+  const pieces = textPieces(texts);
+  const scored = legacy.filter((entry) => !entry.directory).slice(0, LEGACY_SCORED_NAMES);
+  let best: CodePage | undefined;
+  let bestHits = 0;
+  for (const page of CODE_PAGES) {
+    let hits = 0;
+    for (const entry of scored) {
+      const name = page.decode(entry.rawName!);
+      const telltale = name === undefined ? [] : telltalePieces(name);
+      if (telltale.length && telltale.every((piece) => pieces.has(piece))) hits += 1;
+    }
+    if (hits > bestHits) { best = page; bestHits = hits; }
+  }
+  if (!best) {
+    return {
+      entries: directory,
+      issue: {
+        code: 'zip-names-not-utf8', severity: 'info',
+        message: 'Some file names in this ZIP are not stored as UTF-8, so names with accents or non-Latin letters cannot be matched. Rename those files using plain letters, digits and dashes, change the slides to the new names, and make the ZIP again; or make the ZIP with a tool that stores UTF-8 names.',
+      },
+    };
+  }
+  const key = (name: string) => name.replace(/\\/g, '/').normalize('NFC').toLowerCase();
+  const taken = new Set(directory.map((entry) => key(entry.name)));
+  const entries = directory.map((entry) => {
+    if (!entry.rawName) return entry;
+    const name = best.decode(entry.rawName);
+    if (name === undefined || name === entry.name || taken.has(key(name))) return entry;
+    taken.add(key(name));
+    return { ...entry, name };
+  });
+  for (const [index, entry] of entries.entries()) if (cache.has(directory[index])) cache.set(entry, cache.get(directory[index])!);
+  return {
+    entries,
+    issue: {
+      code: 'zip-names-code-page', severity: 'info',
+      message: `The file names in this ZIP are not stored as UTF-8. They were read as ${best.words}, which matches the names the slides use.`,
+    },
+  };
+}
+
+/** The deck path an archive name had before its code page was found, for edits saved under it. */
+function earlierPath(name: string): string | undefined {
+  try { return normalisePath(name).path; } catch { return undefined; }
 }
 
 /**
@@ -88,13 +242,17 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     throw new PresentationPackageError('Choose a presentation ZIP smaller than 60 MB.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const directory = inspectDirectory(bytes, false);
-  const issues: DeckIssue[] = [];
-  const kept: { path: string; entry: ArchiveEntry }[] = [];
+  const inspected = inspectDirectory(bytes, false);
+  // Names in a legacy code page are read again before any path rule applies to them.
+  const cache = new Map<ArchiveEntry, Uint8Array>();
+  const legacyNames = readLegacyNames(bytes, inspected, cache);
+  const directory = legacyNames.entries;
+  const issues: DeckIssue[] = legacyNames.issue ? [legacyNames.issue] : [];
+  const kept: { path: string; entry: ArchiveEntry; before?: string }[] = [];
   const unusable: string[] = [];
   const unchecked: ArchiveEntry[] = [];
   let skipped = 0;
-  for (const entry of directory) {
+  for (const [index, entry] of directory.entries()) {
     const { path, usable } = normalisePath(entry.name);
     if (entry.directory) continue;
     if (isIgnoredPath(path)) { unchecked.push(entry); continue; }
@@ -111,7 +269,8 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
       }
       continue;
     }
-    kept.push({ path, entry });
+    const before = inspected[index] !== entry ? earlierPath(inspected[index].name) : undefined;
+    kept.push({ path, entry, ...(before !== undefined ? { before } : {}) });
   }
   if (skipped > NAMED_SKIPS) {
     issues.push({
@@ -119,11 +278,15 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
       message: `Skipped ${skipped - NAMED_SKIPS} more files whose names cannot be used in a presentation. Rename them and make the ZIP again.`,
     });
   }
-  if (!kept.length) unreadable('It contains no usable files.');
+  if (!kept.length) unreadable('It contains no usable files. Make the ZIP again from the folder that holds the presentation, then open the new ZIP.');
 
   const first = kept[0].path.split('/')[0];
   const wrapped = kept.every(({ path }) => path.includes('/') && path.split('/')[0] === first);
   if (wrapped) for (const item of kept) item.path = item.path.slice(first.length + 1);
+  const renamed = new Map<string, string>();
+  for (const { path, before } of kept) {
+    if (before !== undefined) renamed.set(wrapped ? before.slice(before.indexOf('/') + 1) : before, path);
+  }
   const skippedFiles = new Map<string, string>();
   for (const path of unusable) {
     skippedFiles.set(wrapped && path.startsWith(first + '/') ? path.slice(first.length + 1) : path, unusableNameReason(path));
@@ -132,21 +295,21 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
   const seen = new Map<string, boolean>();
   for (const { path } of kept) {
     const key = path.toLowerCase();
-    if (seen.has(key)) unreadable('It contains duplicate or ambiguous paths: ' + cleanReportedText(path, 200));
+    if (seen.has(key)) unreadable('It contains duplicate or ambiguous paths: ' + cleanReportedText(path, 200) + '. Rename one of the files, then make the ZIP again.');
     seen.set(key, false);
   }
   for (const { path } of kept) {
     const parts = path.toLowerCase().split('/');
     for (let index = 1; index < parts.length; index += 1) {
       if (seen.get(parts.slice(0, index).join('/')) === false) {
-        unreadable('A path is used both as a file and as a folder: ' + cleanReportedText(path, 200));
+        unreadable('A path is used both as a file and as a folder: ' + cleanReportedText(path, 200) + '. Rename the file or the folder, then make the ZIP again.');
       }
     }
   }
 
   const files: DeckFiles = new Map();
   for (const { path, entry } of kept.sort((left, right) => left.path.localeCompare(right.path))) {
-    const data = readEntry(bytes, entry, true)!;
+    const data = cache.get(entry) ?? readEntry(bytes, entry, true)!;
     // Stored entries are views of the whole archive; keep each file independent.
     files.set(path, data.buffer === bytes.buffer ? data.slice() : data);
   }
@@ -163,6 +326,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
     expandedBytes: directory.reduce((sum, entry) => sum + entry.size, 0),
     issues,
     skipped: skippedFiles,
+    ...(renamed.size ? { renamed } : {}),
   };
 }
 

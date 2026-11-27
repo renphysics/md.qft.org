@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { strToU8 } from 'fflate';
+import { strToU8, zipSync, type Zippable } from 'fflate';
+import { readDeckArchive } from '../src/lib/deck-archive.ts';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import vm from 'node:vm';
 import { linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
@@ -45,6 +46,31 @@ const convert = async (files: DeckFiles) => {
   assert.equal(detection.kind, 'slidev-build');
   return convertSlidevFiles(files, detection, async () => 'window.bundled=1');
 };
+
+/**
+ * A ZIP whose entries after index.html have legacy (not UTF-8, unflagged)
+ * names: same-length stand-ins, patched in both records.
+ */
+function legacyNamesZip(html: string, names: Uint8Array[]): File {
+  const input: Zippable = { 'index.html': [strToU8(html), { level: 0 }] };
+  names.forEach((raw, index) => { input[`f${index}`.padEnd(raw.length, '_')] = [new Uint8Array([1]), { level: 0 }]; });
+  const bytes = zipSync(input);
+  const view = new DataView(bytes.buffer);
+  let position = view.getUint32(bytes.length - 22 + 16, true);
+  for (let index = 0; index < view.getUint16(bytes.length - 22 + 10, true); index += 1) {
+    const local = view.getUint32(position + 42, true);
+    const size = view.getUint16(position + 28, true);
+    const standIn = /^f(\d+)_*$/.exec(new TextDecoder().decode(bytes.subarray(position + 46, position + 46 + size)));
+    if (standIn) {
+      bytes.set(names[Number(standIn[1])], position + 46);
+      bytes.set(names[Number(standIn[1])], local + 30);
+    }
+    view.setUint16(position + 8, view.getUint16(position + 8, true) & ~0x800, true);
+    view.setUint16(local + 6, view.getUint16(local + 6, true) & ~0x800, true);
+    position += 46 + size + view.getUint16(position + 30, true) + view.getUint16(position + 32, true);
+  }
+  return new File([bytes.buffer as ArrayBuffer], 'names.zip');
+}
 
 const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   // F1.1: a 1.9 KB ZIP froze the page for 37 s.
@@ -102,6 +128,13 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     context.window = context;
     vm.runInNewContext(`${mathJaxStandInSource()}\nMathJax.typeset();`, context);
     assert.ok(node.nodeValue.startsWith('\\ref{a'), 'nothing to replace');
+  } },
+  // VF2a.4: legacy names scored against the slides' text in ten code pages: 999 names of 200 bytes, nearly 8 MB of text.
+  { name: '999 legacy ZIP names of 200 bytes and 8 MB of text with non-ASCII and percent pieces', run: async () => {
+    const names = Array.from({ length: 999 }, (_, index) => Uint8Array.from([...strToU8(String(index)), ...new Array(196 - String(index).length).fill(0x94), ...strToU8('.png')]));
+    const text = 'ö%C3%B6 Schr\u00f6dinger.png%'.repeat(Math.floor(7.5 * KB * KB / 32)); // just under the 8 MB read
+    const archive = await readDeckArchive(legacyNamesZip(page(`<p>${text}</p>`), names));
+    assert.ok(archive.issues.some((issue) => issue.code === 'zip-names-not-utf8'), 'no code page matched');
   } },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
