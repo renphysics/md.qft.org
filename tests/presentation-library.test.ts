@@ -66,6 +66,7 @@ function library(dependencies: Dependencies = {}) {
       addEventListener(name: string, listener: (event?: unknown) => void) { this.listeners.set(name, listener); },
       children: [] as any[], replaceChildren(...children: any[]) { this.children = children; }, close() { calls.closed++; },
       focus() {}, select() {}, setAttribute() {}, removeAttribute() {},
+      rect: { bottom: 0 }, scrollTop: 0, getBoundingClientRect() { return this.rect; },
       contains(node: unknown) { return node === this || (node instanceof FakeElement && node.within === this); },
       requestFullscreen() { calls.fullscreen++; return Promise.resolve(); },
     });
@@ -1247,7 +1248,7 @@ test('a click on a notice\'s text, outside its buttons, leaves the keyboard with
 });
 
 const LEFT_RESTARTED = 'The presentation tried to replace its slides with a page from phet.colorado.edu, which the player cannot do. It was started again at the same slide. Ask your AI assistant to use an ordinary link for that page.';
-const LEFT_STOPPED = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.';
+const LEFT_STOPPED = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start presentation to play it again. Ask your AI assistant to use an ordinary link for that page.';
 
 test('a presentation that replaces itself with a page after a click plays again on the same slide, at most three times', async () => {
   const f = library();
@@ -1294,21 +1295,45 @@ test('a presentation that replaces itself with a page after a click plays again 
   assert.equal(f.instance.runtime.at(-1).text, 'The presentation tried to replace its slides with a page from phet.colorado.edu, which the player cannot do. It was started again from the beginning. Ask your AI assistant to use an ordinary link for that page.');
 });
 
+test('a restart after a website button right after Start does not open the notes by itself', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  options.onLeft({ host: 'phet.colorado.edu', active: true });
+  assert.equal(f.calls.updates.length, 1);
+  assert.equal(f.control('[data-pres-notes]').open, false);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 1 problem reported');
+});
+
 test('a presentation that replaces itself with a page by itself is stopped with the app\'s own sentence', () => {
   const f = library();
   f.show(revealProject(), revealPlayable());
   const { options } = f.calls.players[0];
   options.onState('loading');
   options.onState('ready');
+  // As the real player does: stopping shows the start panel at once.
+  f.instance.player.stop = () => { f.calls.stopped++; options.onState('stopped'); };
+  // The problem box pushes Start presentation 22 px below the stage.
+  f.control('[data-pres-start]').rect = { bottom: 469 };
+  f.control('[data-pres-start-button]').rect = { bottom: 491 };
   options.onLeft({ host: 'phet.colorado.edu', active: false });
   assert.equal(f.calls.updates.length, 0);
   assert.equal(f.calls.stopped, 1);
+  assert.equal(f.control('[data-pres-notes]').open, false, 'the stop right after Start does not open the notes');
+  assert.equal(f.control('[data-pres-start]').scrollTop, 34, 'the start panel scrolls Start presentation into view');
+  // Notes opened afterwards make the stage shorter: the panel scrolls again.
+  f.instance.connectedCallback();
+  f.control('[data-pres-start]').rect = { bottom: 428 };
+  f.control('[data-pres-notes]').listeners.get('toggle')();
+  assert.equal(f.control('[data-pres-start]').scrollTop, 34 + 75, 'and again when the notes open');
   const problem = f.control('[data-pres-problem]');
   assert.equal(problem.hidden, false);
   assert.deepEqual(problem.children.map((line: any) => line.textContent), [LEFT_STOPPED]);
   assert.deepEqual(JSON.parse(JSON.stringify(f.instance.runtime)), [{ origin: 'player', text: LEFT_STOPPED, hostFromPresentation: true }]);
   options.onLeft({ active: false });
-  const noHost = 'The presentation tried to replace its slides with a page, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.';
+  const noHost = 'The presentation tried to replace its slides with a page, so the player stopped it. Choose Start presentation to play it again. Ask your AI assistant to use an ordinary link for that page.';
   assert.equal(problem.children.at(-1).textContent, noHost);
   assert.deepEqual(JSON.parse(JSON.stringify(f.instance.runtime.at(-1))), { origin: 'player', text: noHost }, 'no host, no mark');
 });

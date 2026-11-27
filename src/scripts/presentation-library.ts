@@ -236,6 +236,8 @@ export class PresentationLibrary extends HTMLElement {
       // As after Dismiss.
       if (!moved) this.player?.focus();
     }, { signal });
+    // Opened notes make the stage shorter.
+    this.q('[data-pres-notes]').addEventListener('toggle', () => this.startButtonInView(), { signal });
     for (const which of ['rescued', 'link'] as const) {
       const strip = this.q(`[data-pres-${which}]`);
       // A notice does not close while the pointer or the keyboard is in it,
@@ -470,6 +472,14 @@ export class PresentationLibrary extends HTMLElement {
     }
     area.replaceChildren(...lines);
     area.hidden = !lines.length;
+    this.startButtonInView();
+  }
+
+  /** A problem box in the start panel can push Start presentation below the stage: scroll the panel to show it. */
+  private startButtonInView(): void {
+    const panel = this.q('[data-pres-start]');
+    const below = this.q('[data-pres-start-button]').getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom;
+    if (!panel.hidden && below > 0) panel.scrollTop += below + 12;
   }
 
   /**
@@ -1457,7 +1467,6 @@ export class PresentationLibrary extends HTMLElement {
     const player = this.player;
     const active = this.active;
     if (!player || !active) return;
-    const before = this.runtimeProblems();
     if (left.active && this.leftRestarts < PresentationLibrary.leftRestartLimit) {
       this.leftRestarts += 1;
       const position = player.currentPosition();
@@ -1465,11 +1474,12 @@ export class PresentationLibrary extends HTMLElement {
       this.addRuntime('player', leftText(left.host, `which the player cannot do. ${position ? 'It was started again at the same slide.' : 'It was started again from the beginning.'}`), true, !!left.host);
     } else {
       player.stop();
-      const text = leftText(left.host, 'so the player stopped it. Choose Start to play it again.');
+      const text = leftText(left.host, 'so the player stopped it. Choose Start presentation to play it again.');
       this.reportProblem('player', text);
       this.addRuntime('player', text, true, !!left.host);
     }
-    this.runtimeAdded(before);
+    // Not a fresh start: the notes stay as the person left them.
+    this.renderStatus();
   }
 
   private isFullscreen(): boolean {

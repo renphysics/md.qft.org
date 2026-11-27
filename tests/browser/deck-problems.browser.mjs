@@ -367,12 +367,22 @@ document.getElementById('sim').addEventListener('click', () => { const site = 'h
     await page.waitForTimeout(4_000);
     const problem = page.locator('[data-pres-problem]');
     assert.equal(await problem.isVisible(), true, 'stopped with a problem');
-    const sentence = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.';
+    const sentence = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start presentation to play it again. Ask your AI assistant to use an ordinary link for that page.';
     assert.equal(await problem.textContent(), sentence);
     assert.equal(await problem.locator('strong').count(), 0, 'the player\'s own words, without the presentation\'s label');
     assert.equal(await page.locator('[data-pres-start-button]').isVisible(), true);
     assert.equal(await page.locator('[data-pres-host] iframe').count(), 0, 'stopped');
     assert.deepEqual(await page.locator('[data-pres-runtime-list] li').allTextContents(), [sentence]);
+    assert.equal(await page.locator('[data-pres-notes]').evaluate((notes) => /** @type {HTMLDetailsElement} */ (notes).open), false, 'the notes stay closed');
+    // Opened notes make the stage shorter; Start presentation stays in view.
+    await page.locator('[data-pres-notes] summary').click();
+    await page.waitForTimeout(300);
+    const inView = await page.evaluate(() => {
+      const button = document.querySelector('[data-pres-start-button]').getBoundingClientRect();
+      const panel = document.querySelector('[data-pres-start]').getBoundingClientRect();
+      return button.top >= panel.top && button.bottom <= panel.bottom;
+    });
+    assert.equal(inView, true, 'Start presentation is in view');
   });
 
   await t.step('Nothing else left the page', async () => {
