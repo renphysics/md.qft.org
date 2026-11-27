@@ -80,6 +80,8 @@ export class PresentationLibrary extends HTMLElement {
   static readonly privacyNote = 'Not uploaded. Presentations cannot read your documents, and ordinary network requests are blocked.';
   /** Run-time messages kept for one playback, as the player sends at most 20 warnings. */
   static readonly runtimeLimit = 20;
+  /** How long the basic-settings notice stays over the slides. */
+  static readonly rescuedNoticeMs = 12_000;
   private abort = new AbortController();
   private initialized = false;
   private player?: PresentationPlayer;
@@ -112,9 +114,16 @@ export class PresentationLibrary extends HTMLElement {
   private stall?: Exclude<PresentationStall, 'recovered'>;
   /** When the current playback started (Start, Restart or a replay), for opening the notes. */
   private playbackStarted = 0;
-  /** The website the deck's last link points to, while its strip shows. */
+  /** The website the deck's last link points to, while its notice shows. */
   private linkUrl?: URL;
   private linkTimer?: number;
+  /**
+   * The basic-settings notice is due: shown unless the link notice takes its
+   * place. It closes itself after RESCUED_NOTICE_MS, on Dismiss and at the
+   * next start; the status line keeps saying it for the whole playback.
+   */
+  private rescuedNotice = false;
+  private rescuedTimer?: number;
 
   /** Start a new operation: earlier ones see a changed number and their slow work is cancelled. */
   private nextOperation(): number {
@@ -150,7 +159,7 @@ export class PresentationLibrary extends HTMLElement {
     click('[data-pres-html]', () => this.downloadHtml());
     click('[data-pres-report]', () => this.copyReport());
     click('[data-pres-exit-fullscreen]', () => this.exitFullscreen());
-    click('[data-pres-rescued-dismiss]', () => { this.q('[data-pres-rescued]').hidden = true; this.player?.focus(); });
+    click('[data-pres-rescued-dismiss]', () => { this.hideRescued(); this.player?.focus(); });
     click('[data-pres-link-dismiss]', () => { this.hideLink(); this.player?.focus(); });
     // Opening the address needs this click on the page itself: the deck can
     // only ask, and the new tab gets neither an opener nor a referrer.
@@ -158,6 +167,8 @@ export class PresentationLibrary extends HTMLElement {
       const url = this.linkUrl;
       this.hideLink();
       if (url) window.open(url.href, '_blank', 'noopener,noreferrer');
+      // As after Dismiss: the arrow keys move the slides again.
+      this.player?.focus();
     }, { signal });
     for (const button of this.querySelectorAll<HTMLButtonElement>('[data-pres-view]')) {
       button.addEventListener('click', () => this.setView(button.dataset.presView === 'source' ? 'source' : 'preview'), { signal });
@@ -324,13 +335,32 @@ export class PresentationLibrary extends HTMLElement {
     area.hidden = !lines.length;
   }
 
-  /** A warning or error from the running deck, kept for the check notes and the report. */
-  private addRuntime(origin: PresentationMessageOrigin, message: string): void {
+  /**
+   * A warning or error from the running deck, kept for the check notes and the
+   * report. `counted: false` marks the player's information (the speaker
+   * view): listed, but neither counted as a problem nor put in the report.
+   */
+  private addRuntime(origin: PresentationMessageOrigin, message: string, counted = true): void {
     const text = cleanReportedText(message);
     if (!text || this.runtime.length >= PresentationLibrary.runtimeLimit
       || this.runtime.some((item) => item.origin === origin && item.text === text)) return;
-    this.runtime.push({ origin, text });
+    this.runtime.push(counted ? { origin, text } : { origin, text, counted: false });
     this.renderNotes();
+  }
+
+  /** Run-time problems of this playback: what the status line counts. */
+  private runtimeProblems(): number {
+    return this.runtime.filter((item) => item.counted !== false).length;
+  }
+
+  /**
+   * After a new run-time entry: problems right after a start are most often
+   * why the slides look wrong (an edit with a syntax error, a missing
+   * library), so the first one opens the notes.
+   */
+  private runtimeAdded(problemsBefore: number): void {
+    if (!problemsBefore && this.runtimeProblems() && Date.now() - this.playbackStarted < 5000) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
+    this.renderStatus();
   }
 
   private clearRuntime(): void {
@@ -732,21 +762,16 @@ export class PresentationLibrary extends HTMLElement {
       },
       onError: (message, origin) => { this.reportProblem(origin, message); this.addRuntime(origin, message); },
       onWarning: (message) => {
-        const first = !this.runtime.length;
+        const before = this.runtimeProblems();
         this.addRuntime('presentation', message);
-        // Problems right after a start are most often why the slides look
-        // wrong (an edit with a syntax error, a missing library): show them.
-        if (first && this.runtime.length && Date.now() - this.playbackStarted < 5000) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
-        this.renderStatus();
+        this.runtimeAdded(before);
       },
       // What the player could not do, in its own words (no "reported" label).
-      // Information such as the speaker view is no problem: not listed here.
+      // Information such as the speaker view is listed, not counted.
       onLimit: (limit) => {
-        if (!limit.counted) return;
-        const first = !this.runtime.length;
-        this.addRuntime('player', limit.text);
-        if (first && this.runtime.length && Date.now() - this.playbackStarted < 5000) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
-        this.renderStatus();
+        const before = this.runtimeProblems();
+        this.addRuntime('player', limit.text, limit.counted);
+        this.runtimeAdded(before);
       },
       onStalled: (detail, firstError) => this.showStall(detail, firstError),
       onLink: (url) => this.showLink(url),
@@ -768,9 +793,12 @@ export class PresentationLibrary extends HTMLElement {
   private renderStatus(): void {
     const state = this.playerState;
     let text = ({ stopped: 'Ready to start', loading: 'Opening presentation…', ready: 'Playing locally', error: 'Playback needs attention' })[state];
+    const problems = this.runtimeProblems();
     if (state === 'ready' && this.stall === 'blank') text = 'The slides did not start';
-    else if (state === 'ready' && this.runtime.length) {
-      text += ` · ${this.runtime.length === 1 ? '1 problem' : `${this.runtime.length} problems`} reported`;
+    else if (state === 'ready') {
+      // The basic-settings notice closes itself; this line keeps saying it.
+      if (this.stall === 'rescued') text = 'Playing with basic settings';
+      if (problems) text += ` · ${problems === 1 ? '1 problem' : `${problems} problems`} reported`;
     }
     this.q('[data-pres-player-status]').textContent = text;
   }
@@ -778,22 +806,25 @@ export class PresentationLibrary extends HTMLElement {
   /**
    * A Reveal.js deck stopped during start-up. 'blank': a problem on the
    * stage, over the empty slides, with the deck's first error as its own
-   * words; the frame stays, in case the deck starts late. 'rescued': a strip
-   * above the slides, which the player started with basic settings.
+   * words; the frame stays, in case the deck starts late. 'rescued': a notice
+   * over the top of the slides, which the player started with basic settings.
    */
   private showStall(detail: PresentationStall, firstError: string | undefined): void {
     if (detail === 'recovered') {
       // The deck started Reveal.js itself after all, with its own settings.
       if (this.stall !== 'rescued') return;
       this.stall = undefined;
-      this.q('[data-pres-rescued]').hidden = true;
+      this.hideRescued();
       this.renderStatus();
       return;
     }
     this.stall = detail;
     if (detail === 'rescued') {
       this.q('[data-pres-rescued-text]').textContent = STALL_RESCUED_TEXT;
-      this.q('[data-pres-rescued]').hidden = false;
+      this.rescuedNotice = true;
+      if (this.rescuedTimer !== undefined) window.clearTimeout(this.rescuedTimer);
+      this.rescuedTimer = window.setTimeout(() => this.hideRescued(), PresentationLibrary.rescuedNoticeMs);
+      this.renderNoticeArea();
     } else {
       const lines: HTMLElement[] = [];
       const intro = document.createElement('p');
@@ -816,7 +847,7 @@ export class PresentationLibrary extends HTMLElement {
       area.replaceChildren(...lines);
       area.hidden = false;
     }
-    if (this.runtime.length) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
+    if (this.runtimeProblems()) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
     this.renderStatus();
   }
 
@@ -830,34 +861,51 @@ export class PresentationLibrary extends HTMLElement {
 
   /**
    * The deck's link to a website, offered on the page: the host name in bold
-   * as the URL parser gives it, the rest shortened, as text only. A new link
-   * replaces it; a slide change, Stop, Restart or 20 seconds remove it.
+   * as the URL parser gives it, the rest shortened (and decoded when that is
+   * safe), as text only. A new link replaces it; a slide change, Stop,
+   * Restart or 20 seconds remove it. While it shows, it takes the place of
+   * the basic-settings notice: one notice at a time over the slides.
    */
   private showLink(url: URL): void {
     if (!this.player?.isRunning()) return;
-    const { host, rest } = linkParts(url);
+    const { host, rest, shortened } = linkParts(url);
     const text = this.q('[data-pres-link-text]');
     const strong = document.createElement('strong');
     strong.textContent = host;
-    text.replaceChildren('The presentation links to ', strong, ...(rest ? [rest] : []), '.');
+    // A shortened address ends in "…": no full stop after it.
+    text.replaceChildren('The presentation links to ', strong, ...(rest ? [rest] : []), ...(shortened ? [] : ['.']));
     this.linkUrl = url;
-    this.q('[data-pres-link]').hidden = false;
     if (this.linkTimer !== undefined) window.clearTimeout(this.linkTimer);
     this.linkTimer = window.setTimeout(() => this.hideLink(), 20_000);
+    this.renderNoticeArea();
   }
 
   private hideLink(): void {
     if (this.linkTimer !== undefined) window.clearTimeout(this.linkTimer);
     this.linkTimer = undefined;
     this.linkUrl = undefined;
-    this.q('[data-pres-link]').hidden = true;
+    this.renderNoticeArea();
   }
 
-  /** What belongs to one playback on the stage: the start-up problem, the rescue strip and the link strip. */
+  private hideRescued(): void {
+    if (this.rescuedTimer !== undefined) window.clearTimeout(this.rescuedTimer);
+    this.rescuedTimer = undefined;
+    this.rescuedNotice = false;
+    this.renderNoticeArea();
+  }
+
+  /** The notice area over the top of the slides shows one notice: the link's, else the basic-settings one. */
+  private renderNoticeArea(): void {
+    const link = this.linkUrl !== undefined;
+    this.q('[data-pres-link]').hidden = !link;
+    this.q('[data-pres-rescued]').hidden = link || !this.rescuedNotice;
+  }
+
+  /** What belongs to one playback on the stage: the start-up problem and the notices over the slides. */
   private clearPlaybackNotices(): void {
     this.stall = undefined;
     this.q('[data-pres-stalled]').hidden = true;
-    this.q('[data-pres-rescued]').hidden = true;
+    this.hideRescued();
     this.hideLink();
   }
 

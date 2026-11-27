@@ -2,7 +2,7 @@
  * What the library tells a teacher when a presentation misbehaves while it
  * plays, end to end in the real library: a Reveal.js deck whose start-up
  * script stops before Reveal.initialize is started with basic settings and
- * says so in a strip above the slides; one that cannot be started shows a
+ * says so in a notice over the slides; one that cannot be started shows a
  * problem on the stage and the status line does not claim it plays; links to
  * websites open only from the page's own button, in a new tab, also in
  * Present; and applying an edit to a plain page says that it starts again
@@ -79,22 +79,24 @@ export default async function run(t) {
     await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal?.isReady?.()), 'Reveal.js to be ready');
     assert.equal(await frame.locator('section.present h1').isVisible(), true, 'the first slide shows');
     assert.equal(await page.locator('[data-pres-stalled]').isVisible(), false);
-    assert.equal(await status(page), 'Playing locally · 1 problem reported');
+    assert.equal(await status(page), 'Playing with basic settings · 1 problem reported');
     assert.equal(await page.locator('[data-pres-notes]').evaluate((details) => details.open), true, 'the notes open for a start-up problem');
     assert.match(await page.locator('[data-pres-runtime-list]').textContent(), /undefinedSetting is not defined/);
-    // The strip is above the slides, not over them.
-    const [stripBox, frameBox] = await Promise.all([strip.boundingBox(), page.locator('[data-pres-host] iframe').boundingBox()]);
-    assert.ok(stripBox.y + stripBox.height <= frameBox.y + 1, `strip ${JSON.stringify(stripBox)} frame ${JSON.stringify(frameBox)}`);
+    // The notice lies over the top of the slides: the frame keeps the whole stage.
+    const [stripBox, frameBox, stageBox] = await Promise.all([strip.boundingBox(), page.locator('[data-pres-host] iframe').boundingBox(), page.locator('[data-pres-stage]').boundingBox()]);
+    assert.ok(Math.abs(frameBox.y - stageBox.y) <= 1 && Math.abs(frameBox.height - stageBox.height) <= 1, `frame ${JSON.stringify(frameBox)} stage ${JSON.stringify(stageBox)}`);
+    assert.ok(Math.abs(stripBox.y - stageBox.y) <= 1 && stripBox.height <= stageBox.height / 2, `notice ${JSON.stringify(stripBox)} stage ${JSON.stringify(stageBox)}`);
     await page.keyboard.press('ArrowRight');
     await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h === 1), 'the keyboard to change slides');
     await page.screenshot({ path: resolve(t.artifacts, 'deck-problems-rescued.png') });
   });
 
-  await t.step('The rescue strip stays visible in Present', async () => {
+  await t.step('The rescue notice shows in Present and closes itself after about 12 seconds; the status line keeps saying it', async () => {
     await page.locator('[data-pres-present]').click();
     await until(() => page.evaluate(() => document.fullscreenElement === document.querySelector('[data-pres-stage]')), 'Present to show the stage in fullscreen');
-    assert.equal(await page.locator('[data-pres-rescued]').isVisible(), true);
     assert.equal(await page.evaluate(() => document.fullscreenElement.contains(document.querySelector('[data-pres-rescued]'))), true);
+    await until(async () => !(await page.locator('[data-pres-rescued]').isVisible()), 'the notice to close itself', 20_000);
+    assert.equal(await status(page), 'Playing with basic settings · 1 problem reported');
     await page.screenshot({ path: resolve(t.artifacts, 'deck-problems-rescued-present.png') });
     await page.locator('[data-pres-exit-fullscreen]').click();
     await until(() => page.evaluate(() => !document.fullscreenElement), 'fullscreen to end');
@@ -116,7 +118,7 @@ export default async function run(t) {
     const text = await problem.textContent();
     assert.match(text, /^The slides did not start\. The presentation's own start-up script stopped with an error\./);
     assert.match(text, /The presentation reported: “?.*missingHelper is not defined/);
-    assert.match(text, /Open the notes below, or copy the report for your AI assistant\.$/);
+    assert.match(text, /The notes list what was found; copy the report for your AI assistant\.$/);
     assert.equal(await status(page), 'The slides did not start');
     assert.equal(await page.locator('[data-pres-host] iframe').count(), 1, 'the frame stays');
     assert.equal(await page.locator('[data-pres-notes]').evaluate((details) => details.open), true);

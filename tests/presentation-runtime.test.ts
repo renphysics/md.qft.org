@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { build } from 'esbuild';
 import ts from 'typescript';
 import { describePresentationLimit, exportPresentationHtml, isPresentationPosition, preparePresentationDocument, presentationRunnerDocument, presentationRuntimeSource } from '../src/lib/presentation-runtime';
+import { linkParts } from '../src/lib/presentation-messages';
 
 const runnerHtml = readFileSync(new URL('../public/presentation-sandbox.html', import.meta.url), 'utf8');
 const runnerScript = runnerHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
@@ -1586,12 +1587,23 @@ test('a standalone export shows the stall and link strips from text, and only it
   assert.equal(exported.match(/window\.open\(/g)?.length, 1);
   // Then the keyboard goes back to the slides, as after Dismiss.
   assert.match(exported, /addEventListener\('click',\(\)=>\{const url=linkUrl;hideLink\(\);if\(url\)window\.open\(url\.href,'_blank','noopener,noreferrer'\);player\.focus\(\);\}\)/);
-  assert.match(exported, /strong\.textContent=url\.hostname;linkText\.replaceChildren\(/, 'the host name is set as text');
+  assert.match(exported, /strong\.textContent=parts\.host;linkText\.replaceChildren\('The presentation links to ',strong,parts\.rest,parts\.shortened\?'':'\.'\)/, 'the host name is set as text; no full stop after a shortened address');
+  // The library's own display of the address (decoded when safe), embedded whole.
+  const embedded = /const linkParts=(\(\(\)=>\{const __name=\(value\)=>value;return \(function[\s\S]*?\);\}\)\(\));let linkUrl;/.exec(exported);
+  assert.ok(embedded, 'linkParts is embedded');
+  const parts = vm.runInNewContext(embedded[1], { URL, decodeURI, Array }) as typeof linkParts;
+  for (const href of ['https://en.wikipedia.org/wiki/Newton%27s_laws', 'https://example.org/a%20b', `https://example.org/${'x'.repeat(90)}`]) {
+    assert.equal(JSON.stringify(parts(new URL(href))), JSON.stringify(linkParts(new URL(href))), href);
+  }
+  // One notice at a time over the slides: the link's takes the basic-settings notice's place.
+  assert.match(exported, /const showNotices=\(\)=>\{link\.hidden=!linkUrl;rescued\.hidden=!!linkUrl\|\|!rescuedDue;\};/);
+  assert.match(exported, /<main id="stage"><div id="strips"><div class="strip" id="rescued"[\s\S]*?id="link-dismiss">Dismiss<\/button><\/div><\/div><\/div><div id="presentation">/);
+  assert.match(exported, /#strips\{position:absolute;top:0;left:0;right:0;height:50%;/, 'the notices lie over the top half of the stage');
   // Start is the primary button; the Dismiss buttons in the strips all look alike.
   assert.match(exported, /nav button:first-child\{background:#773b49;/);
   assert.doesNotMatch(exported, /[}>]button:first-child\{/);
   // A late start by the deck withdraws the basic-settings strip.
-  assert.match(exported, /onStalled\(detail,first\)\{if\(detail==='recovered'\)\{rescued\.hidden=true;return;\}/);
+  assert.match(exported, /onStalled\(detail,first\)\{if\(detail==='recovered'\)\{rescuedDue=false;showNotices\(\);return;\}/);
   assert.match(exported, /profile:"tolerant",onState/, 'no start-up check unless asked for');
   assert.match(exportPresentationHtml('<p>Deck</p>', 'Deck', { profile: 'tolerant', startCheck: 'reveal' }), /profile:"tolerant",startCheck:"reveal",onState/);
   assert.match(exportPresentationHtml('<p>Deck</p>', 'Deck', { startCheck: 'reveal' }), /profile:"strict",onState/, 'never in the strict profile');

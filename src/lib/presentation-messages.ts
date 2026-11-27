@@ -60,17 +60,36 @@ export class PresentationProblemLog {
 
 /** A Reveal.js deck that did not start: the first line of the problem on the stage. */
 export const STALL_BLANK_TEXT = "The slides did not start. The presentation's own start-up script stopped with an error.";
-/** The library's next step for that problem (the standalone copy has no notes). */
-export const STALL_BLANK_NEXT = 'Open the notes below, or copy the report for your AI assistant.';
+/**
+ * The library's next step for that problem (the standalone copy has no
+ * notes). It says no "below": in Present the notes are not on screen.
+ */
+export const STALL_BLANK_NEXT = 'The notes list what was found; copy the report for your AI assistant.';
 /** A Reveal.js deck that the player started itself, with basic settings. */
 export const STALL_RESCUED_TEXT = "The presentation's start-up script stopped with an error, so the slides are shown with basic settings. Some parts may be missing.";
 
 /**
  * A checked web address split for display: the host name as the URL parser
  * gives it (internationalised names in their ASCII form, so look-alike letters
- * cannot pass for another site), and the rest of the address, shortened.
+ * cannot pass for another site), and the rest of the address, shortened to
+ * `limit` characters with "…" (`shortened` then says so, so that no full stop
+ * follows). The path is shown decoded only when the decoded text has no
+ * control, format, separator (space included), private-use, surrogate or
+ * unassigned character; otherwise it stays percent-encoded, which is plain
+ * ASCII. decodeURI keeps reserved characters such as %2F and %3F encoded.
+ *
+ * Self-contained on purpose: the standalone HTML export embeds its source.
  */
-export function linkParts(url: URL, limit = 60): { host: string; rest: string } {
-  const rest = `${url.port ? `:${url.port}` : ''}${url.pathname === '/' && !url.search && !url.hash ? '' : url.pathname}${url.search}${url.hash}`;
-  return { host: url.hostname, rest: cleanReportedText(rest.length > limit ? `${rest.slice(0, limit - 1)}…` : rest, limit) };
+export function linkParts(url: URL, limit = 60): { host: string; rest: string; shortened: boolean } {
+  let path = url.pathname;
+  try {
+    const decoded = decodeURI(path);
+    if (!/[\p{C}\p{Z}]/u.test(decoded)) path = decoded;
+  } catch {
+    // Not valid UTF-8 once decoded: keep the encoded form.
+  }
+  const full = `${url.port ? `:${url.port}` : ''}${url.pathname === '/' && !url.search && !url.hash ? '' : path}${url.search}${url.hash}`;
+  const characters = Array.from(full);
+  const shortened = characters.length > limit;
+  return { host: url.hostname, rest: shortened ? `${characters.slice(0, limit - 1).join('')}…` : full, shortened };
 }

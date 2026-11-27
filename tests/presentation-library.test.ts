@@ -722,7 +722,7 @@ test('a deck that did not start shows a problem on the stage, which goes when it
   assert.equal(area.hidden, true);
 });
 
-test('a rescued deck shows a strip above the slides, cleared by the next start', () => {
+test('a rescued deck shows a notice over the slides that closes itself, and the status line keeps saying it', () => {
   const f = library();
   f.show(revealProject(), revealPlayable());
   const { options } = f.calls.players[0];
@@ -732,9 +732,41 @@ test('a rescued deck shows a strip above the slides, cleared by the next start',
   assert.equal(f.control('[data-pres-rescued]').hidden, false);
   assert.equal(f.control('[data-pres-rescued-text]').textContent, STALL_RESCUED_TEXT);
   assert.equal(f.control('[data-pres-stalled]').hidden, true);
-  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing with basic settings');
+  options.onWarning('Uncaught ReferenceError: undefinedSetting is not defined');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing with basic settings · 1 problem reported');
+  // About 12 seconds later the notice closes itself; the status line keeps saying it.
+  f.calls.timers.at(-1)!();
+  assert.equal(f.control('[data-pres-rescued]').hidden, true);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing with basic settings · 1 problem reported');
   options.onState('loading');
   assert.equal(f.control('[data-pres-rescued]').hidden, true);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Opening presentation…');
+});
+
+test('one notice at a time: a link replaces the basic-settings notice while it shows', async () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  f.instance.connectedCallback();
+  options.onState('ready');
+  options.onStalled('rescued', undefined);
+  const rescued = f.control('[data-pres-rescued]');
+  const link = f.control('[data-pres-link]');
+  options.onLink(new URL('https://en.wikipedia.org/wiki/Wave'));
+  assert.equal(link.hidden, false);
+  assert.equal(rescued.hidden, true, 'the link notice replaces it');
+  f.control('[data-pres-link-dismiss]').listeners.get('click')();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(link.hidden, true);
+  assert.equal(rescued.hidden, false, 'it comes back while its time lasts');
+  f.control('[data-pres-rescued-dismiss]').listeners.get('click')();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(rescued.hidden, true);
+  options.onLink(new URL('https://en.wikipedia.org/wiki/Wave'));
+  options.onPosition('1/0');
+  assert.equal(rescued.hidden, true, 'a dismissed notice stays away');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing with basic settings');
 });
 
 test('a Reveal.js deck gets the start-up check; a late start withdraws the strip; the player\'s limits are its own words', () => {
@@ -754,12 +786,18 @@ test('a Reveal.js deck gets the start-up check; a late start withdraws the strip
   assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
 
   options.onLimit({ code: 'speaker-view', text: 'The speaker view (S key) is not available in the player.', counted: false });
-  assert.equal(f.instance.runtime.length, 0, 'information is no problem');
-  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally', 'information is no problem');
+  assert.equal(f.control('[data-pres-runtime-list]').children[0].textContent, 'The speaker view (S key) is not available in the player.', 'but it is listed');
+  assert.equal(f.control('[data-pres-runtime]').hidden, false);
+  assert.equal(f.control('[data-pres-notes]').open, false, 'information does not open the notes');
   options.onLimit({ code: 'question', text: 'The presentation asked a question in a pop-up window.', counted: true });
-  const [line] = f.control('[data-pres-runtime-list]').children;
+  const [, line] = f.control('[data-pres-runtime-list]').children;
   assert.equal(line.textContent, 'The presentation asked a question in a pop-up window.', 'without the “reported” label');
-  assert.equal(JSON.stringify(f.instance.runtime), JSON.stringify([{ origin: 'player', text: 'The presentation asked a question in a pop-up window.' }]));
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 1 problem reported');
+  assert.equal(JSON.stringify(f.instance.runtime), JSON.stringify([
+    { origin: 'player', text: 'The speaker view (S key) is not available in the player.', counted: false },
+    { origin: 'player', text: 'The presentation asked a question in a pop-up window.' },
+  ]));
 
   const plain = library();
   plain.show(fixtureProject({ kind: 'html', engine: 'html', title: 'Own slides' }), revealPlayable());
@@ -779,11 +817,20 @@ test('a link to a website shows a strip; only its button opens the address, in a
   const text = f.control('[data-pres-link-text]');
   assert.equal(text.children[1].textContent, 'xn--bcher-kva.example', 'the host name in its ASCII form, in bold');
   assert.equal(text.children[1].tag, 'strong');
-  assert.equal(textOf(text), 'The presentation links to xn--bcher-kva.example/wiki/Interference_(wave_propagation)?lang=en#history-and-m….');
+  assert.equal(textOf(text), 'The presentation links to xn--bcher-kva.example/wiki/Interference_(wave_propagation)?lang=en#history-and-m…', 'no full stop after a shortened address');
   assert.deepEqual(f.calls.opened, [], 'nothing opens by itself');
+  const focus = f.calls.focus;
   f.control('[data-pres-link-open]').listeners.get('click')();
   assert.deepEqual(f.calls.opened, [['https://xn--bcher-kva.example/wiki/Interference_(wave_propagation)?lang=en#history-and-more-text-that-is-long', '_blank', 'noopener,noreferrer']]);
   assert.equal(strip.hidden, true);
+  assert.equal(f.calls.focus, focus + 1, 'the keyboard goes back to the slides');
+  // A readable path is shown decoded; one with spaces or invisible characters stays encoded.
+  options.onLink(new URL("https://en.wikipedia.org/wiki/Newton%27s_laws_of_motion"));
+  assert.equal(textOf(text), "The presentation links to en.wikipedia.org/wiki/Newton's_laws_of_motion.");
+  options.onLink(new URL('https://de.wikipedia.org/wiki/Schr%C3%B6dinger'));
+  assert.equal(textOf(text), 'The presentation links to de.wikipedia.org/wiki/Schrödinger.');
+  options.onLink(new URL('https://example.org/a%20b/%E2%80%AEgnp.exe'));
+  assert.equal(textOf(text), 'The presentation links to example.org/a%20b/%E2%80%AEgnp.exe.');
   // A new link replaces the strip; a slide change, a start or the timer removes it.
   options.onLink(new URL('https://phet.colorado.edu/'));
   options.onLink(new URL('https://en.wikipedia.org/wiki/Wave'));
