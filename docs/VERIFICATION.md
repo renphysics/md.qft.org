@@ -40,6 +40,19 @@ The tree after the second round of fixes (the findings of an independent verific
 
 The new browser suites are `deck-notices` (the notices over the slides at 1280×800, 390×844 and 320×568) and `library-phone` (the dialog at phone width, and the library after a new release). The exact sandbox and policy strings of the interactive demo frame, `public/demo-sandbox.html` and the document and slide exports are now pinned by unit tests, as the presentation player's already were.
 
+### Automated checks after the third fix round
+
+The tree after the third round of fixes (the findings of the verification of the second round; see ARCHITECTURE.md and the README for the behaviour) gave, run on 2026-11-27 in full Chromium against this tree's own build:
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 151 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 791 tests in 95 suites; 789 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 12 of 12 suites, 133 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
+
+The new browser suite is `player-actions` (a quiz form that answers on a click and on Enter, a required empty field, `requestSubmit()` and implicit submission, a form that no handler stops; `window.open` of a website after a click and links the presentation cancels; an error thrown with an empty value; a button that sends the presentation to a website). New unit test files cover the `onload` and `onerror` code of replaced scripts (`deck-linker-events`), the rewrite of literal page-address changes (`deck-linker-navigation`) and the report lines for the linker's and the player's new notes (`deck-report-merge`); `interactive-exports` now checks that the exports declare `no-referrer` exactly once in their own head, before any embedded runtime.
+
 ### Not verified in this round
 
 - **The review's own tools on the fixed tree.** The fixes rest on the regression tests above, each of which reproduced its finding first. The reviewers' scripts and the seven AI-made presentations were not run again for this record.
