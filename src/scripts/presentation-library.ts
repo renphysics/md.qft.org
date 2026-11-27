@@ -987,6 +987,7 @@ export class PresentationLibrary extends HTMLElement {
       if (!name || active !== this.active) return;
       active.singleFile = name;
       this.renderNotes();
+      if (!canPlay(active.playable)) this.renderPlayback();
     }).catch(() => {});
   }
 
@@ -1039,7 +1040,7 @@ export class PresentationLibrary extends HTMLElement {
       this.player = undefined;
       this.replayPending = false;
       this.clearProblems();
-      for (const issue of playable.issues) if (issue.severity === 'error') this.reportProblem('player', issue.message);
+      for (const issue of playable.issues) if (issue.severity === 'error') this.reportProblem('player', namedAsOpened(issue, project.entry, active.singleFile).message);
       this.q('[data-pres-start]').hidden = false;
       this.q('[data-pres-stop]').hidden = true;
       this.q('[data-pres-restart]').hidden = true;

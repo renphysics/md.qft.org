@@ -385,6 +385,14 @@ document.getElementById('sim').addEventListener('click', () => { const site = 'h
     assert.equal(inView, true, 'Start presentation is in view');
   });
 
+  await t.step('An empty single file is named as it was opened in the problem on the stage too', async () => {
+    await back(page);
+    await page.locator('[data-pres-input]').setInputFiles({ name: 'lesson-empty.html', mimeType: 'text/html', buffer: Buffer.from('<!doctype html><html><head><title>x</title></head><body>   </body></html>') });
+    const problem = page.locator('[data-pres-problem]');
+    await until(async () => (await problem.textContent()) === 'lesson-empty.html is empty. Ask your AI assistant for the presentation again.', 'the problem with the name as opened');
+    assert.doesNotMatch(await page.locator('[data-pres-notes]').textContent(), /index\.html/);
+  });
+
   await t.step('Nothing else left the page', async () => {
     assert.deepEqual(t.externalRequests, []);
   });
