@@ -48,6 +48,19 @@ describe('deck check report', () => {
     assert.match(report, /result: plays, with notes/);
   });
 
+  it('lists the player\'s information without counting it as a problem', () => {
+    const speaker = { origin: 'player' as const, text: 'The speaker view (S key) is not available in the player.', counted: false };
+    const quiet = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], runtime: [speaker] });
+    assert.match(quiet, /^result: plays$/m, 'information alone leaves "plays"');
+    assert.doesNotMatch(quiet, /speaker view|while playing|Rules for this player/);
+    assert.match(quiet.split('\n').at(-1)!, /^Reply: no changes are needed/);
+    const limit = { origin: 'player' as const, text: 'The presentation tried to print, which the player cannot do.', counted: true };
+    const both = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], runtime: [speaker, limit] });
+    assert.match(both, /^result: plays, with notes$/m);
+    assert.match(both, /^while playing:\n- player: The presentation tried to print, which the player cannot do\.$/m);
+    assert.doesNotMatch(both, /speaker view/);
+  });
+
   it('cleans and bounds every value and counts issues beyond the limit', () => {
     const issues = Array.from({ length: 45 }, (_, index) => ({ code: `code-${index}`, severity: 'warning' as const, message: `Message\u0007 ${index}‮` }));
     const report = formatDeckReport({ kind: 'reveal', engine: 'reveal', engineVersion: '5\n.2', issues });
@@ -114,14 +127,21 @@ describe('deck check report', () => {
       const lines = report.split('\n');
       const rules = lines.find((line) => line.startsWith('Rules for this player:'));
       assert.ok(rules, kind);
-      assert.match(rules, /supplies only Reveal\.js 6\.0\.2 and KaTeX/);
-      assert.match(rules, /every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
-      assert.match(rules, /nothing may load from the internet while the presentation plays/);
+      // An assistant read "supplies only Reveal.js" as the script alone and
+      // replaced reveal.css with a hand-written file: name the stylesheets.
+      assert.doesNotMatch(rules, /supplies only/);
+      assert.match(rules, /supplies Reveal\.js 6\.0\.2 \(reveal\.js, reveal\.css, the themes, and the notes, math, highlight, markdown, search and zoom plugins\) and KaTeX 0\.19\.1/);
+      assert.match(rules, /keep the links to those files exactly as they are/);
+      assert.match(rules, /for formulas use the math plugin \(RevealMath\.KaTeX\)/);
+      assert.match(rules, /Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
+      assert.match(rules, /nothing else may load from the internet while the presentation plays/);
+      assert.match(rules, /confirm\(\), prompt\(\), printing, new windows and data saved in the browser do not work in the player\./);
+      assert.doesNotMatch(rules, /\n/, 'one line');
       assert.ok(lines.indexOf(rules) < lines.length - 1, 'the reply stays last');
       assert.match(lines.at(-1)!, /^Reply: send back the complete corrected presentation/);
     }
     assert.doesNotMatch(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [] }), /Rules for this player/, 'nothing to change, no rules');
-    assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /supplies only Reveal\.js/, 'Slidev gets its own rules');
+    assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /supplies Reveal\.js/, 'Slidev gets its own rules');
   });
 
   it('says whether the presentation was edited when the caller knows', () => {
