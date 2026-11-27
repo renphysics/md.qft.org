@@ -150,16 +150,30 @@ export function mathStandInSource(): string {
  * Reveal.js plugins that the deck lists in `plugins: [ … ]` but whose script
  * was left out. Each name that is still undefined when this runs becomes a
  * plugin that does nothing, as a function returning `{ id, init }`, which
- * Reveal.js accepts both as a plugin and as a plugin factory. `typeof` on a
- * name declared later with let or const throws (temporal dead zone), hence
- * one try per name. `names` must be plain identifiers.
+ * Reveal.js accepts both as a plugin and as a plugin factory. Any other
+ * member of either is a function that does nothing (review VF2b.8), so that
+ * a key bound to `RevealChalkboard.toggleNotesCanvas()` does nothing instead
+ * of throwing; `then` and symbol keys stay undefined, so the stub is never
+ * taken for a promise or an iterable. `typeof` on a name declared later with
+ * let or const throws (temporal dead zone), hence one try per name. `names`
+ * must be plain identifiers.
  */
 export function pluginStubSource(names: readonly string[]): string {
   const valid = names.filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
   const lines = valid.map((name) => `  try { if (typeof ${name} === 'undefined') window[${JSON.stringify(name)}] = unavailable(${JSON.stringify(`${name}-unavailable`)}); } catch (error) {}`);
   return `(function () {
+  function nothing() {}
+  function quiet(target) {
+    if (typeof Proxy !== 'function') return target;
+    return new Proxy(target, {
+      get: function (object, key) {
+        if (key in object || typeof key === 'symbol' || key === 'then') return object[key];
+        return nothing;
+      },
+    });
+  }
   function unavailable(id) {
-    return function () { return { id: id, init: function () {} }; };
+    return quiet(function () { return quiet({ id: id, init: nothing }); });
   }
 ${lines.join('\n')}
 })();`;

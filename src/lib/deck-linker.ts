@@ -2026,7 +2026,7 @@ function elementsStyledAsReveal(root: ParentNode): Element[] {
   return result;
 }
 
-/** The first `limit` bare identifiers listed in the `plugins: [ … ]` of a script. */
+/** The first `limit` bare identifiers listed in the `plugins: [ … ]` of a script, also as window.Name. */
 function pluginNames(code: string, limit: number): string[] {
   const names = new Set<string>();
   const pattern = /\bplugins\s*:\s*\[/g;
@@ -2036,7 +2036,8 @@ function pluginNames(code: string, limit: number): string[] {
     const list = code.slice(open + 1, end - 1).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
     for (const item of list.split(',')) {
       if (names.size >= limit) break;
-      const name = item.trim();
+      // window.RevealPointer and globalThis.RevealPointer name the same global (review VF2b.8).
+      const name = item.trim().replace(/^(?:window|globalThis|self)[ \t\r\n]*\.[ \t\r\n]*/, '');
       if (/^[A-Za-z_$][\w$]{0,80}$/.test(name)) names.add(name);
     }
     pattern.lastIndex = Math.max(end, pattern.lastIndex);

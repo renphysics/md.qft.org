@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import vm from 'node:vm';
 import { zipSync } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
@@ -171,5 +172,33 @@ describe('too large (VUX.6)', () => {
     assert.equal(error?.severity, 'error');
     assert.ok(error!.message.endsWith(nextStep), error!.message);
     assert.match(error!.message, /The largest files? (?:is|are) pictures\//);
+  });
+});
+
+describe('Reveal.js plugins that were left out (VF2b.8)', () => {
+  it('stubs names written as window.Name or globalThis.Name, and calls on a stub do nothing', async () => {
+    const result = await link({
+      'index.html': reveal('<section>A</section>', {
+        init: `Reveal.initialize({ plugins: [RevealNotes, window.RevealPointer, globalThis . RevealChalkboard, window.RevealMath.KaTeX],
+  keyboard: { 67: () => RevealChalkboard.toggleNotesCanvas() } });`,
+      }).replace(REVEAL_SCRIPT, `${REVEAL_SCRIPT}<script src="https://cdn.jsdelivr.net/npm/reveal.js-plugins@4.2.5/chalkboard/plugin.js"></script>`),
+    });
+    assert.deepEqual(result.issues.filter((item) => item.code === 'plugin-unavailable').map((item) => item.where), ['RevealPointer', 'RevealChalkboard']);
+    const stub = /<script data-qft-linker="plugins">([\s\S]*?)<\/script>/.exec(result.html)?.[1];
+    assert.ok(stub);
+    const context = vm.createContext({});
+    context.window = context;
+    vm.runInContext(stub, context);
+    const chalkboard = context.RevealChalkboard as ((() => Record<string, unknown>) & Record<string | symbol, unknown>);
+    assert.equal(typeof chalkboard, 'function');
+    assert.equal((chalkboard.toggleNotesCanvas as () => unknown)(), undefined, 'a key binding to the plugin does nothing');
+    assert.equal(chalkboard.then, undefined, 'not taken for a promise');
+    assert.equal(chalkboard[Symbol.iterator], undefined);
+    const plugin = chalkboard();
+    assert.equal(plugin.id, 'RevealChalkboard-unavailable');
+    assert.equal((plugin.init as () => unknown)(), undefined);
+    assert.equal(typeof plugin.destroy, 'function');
+    assert.equal(plugin.then, undefined);
+    assert.equal(typeof context.RevealPointer, 'function');
   });
 });
