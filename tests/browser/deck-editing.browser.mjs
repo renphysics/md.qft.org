@@ -211,6 +211,62 @@ export default async function run(t) {
     assert.equal(await dialog.isVisible(), true);
     await page.keyboard.press('Escape');
     await confirm.waitFor({ state: 'visible' });
+    // Chromium refuses a page's second "keep open" without a new click or key,
+    // so these sequences used to close the dialog and lose the typing.
+    const asksAndStays = async (what) => {
+      await confirm.waitFor({ state: 'visible' });
+      await page.waitForTimeout(400);
+      assert.equal(await dialog.isVisible(), true, `${what}: the dialog stays open`);
+      assert.equal(await confirm.isVisible(), true, `${what}: the question stays`);
+      assert.match(await editorText(page), /letter-spacing/, `${what}: the typing is kept`);
+    };
+    // Right after typing, the editor keeps Escape for its suggestions, as before.
+    const settled = () => page.waitForTimeout(500);
+    // Keep editing by Escape, type more, then Escape twice.
+    await page.keyboard.press('Escape');
+    await confirm.waitFor({ state: 'hidden' });
+    await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('/*MORE*/');
+    await settled();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await asksAndStays('Escape twice after Keep editing by Escape');
+    // The same after Keep editing by a click.
+    await page.locator('[data-pres-confirm-cancel]').click();
+    await confirm.waitFor({ state: 'hidden' });
+    await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('/*MORE*/');
+    await settled();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await asksAndStays('Escape twice after Keep editing by a click');
+    // Type, undo, and Escape twice at once.
+    await page.keyboard.press('Escape');
+    await confirm.waitFor({ state: 'hidden' });
+    await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('/*X*/');
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await asksAndStays('Escape twice right after an undo');
+    // Any other way the dialog closes: it opens again as it was, and asks.
+    await page.keyboard.press('Escape');
+    await confirm.waitFor({ state: 'hidden' });
+    await dialog.evaluate((element) => element.close());
+    await asksAndStays('a close the page did not ask for');
+    // Also while the question is on screen: it comes back above the dialog.
+    await dialog.evaluate((element) => element.close());
+    await asksAndStays('a close while the question is shown');
+    await page.locator('[data-pres-confirm-cancel]').click();
+    await confirm.waitFor({ state: 'hidden' });
+    assert.equal(await dialog.isVisible(), true, 'Keep editing keeps the dialog');
+    await page.locator('[data-pres-close]').click();
+    await confirm.waitFor({ state: 'visible' });
+    assert.equal(await page.locator('[data-pres-host] iframe').count(), 1, 'the presentation still plays');
     await page.locator('[data-pres-confirm-accept]').click();
     await dialog.waitFor({ state: 'hidden' });
     await until(async () => (await page.locator('[data-pres-host] iframe').count()) === 0, 'playback to stop');

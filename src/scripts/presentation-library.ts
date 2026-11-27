@@ -255,12 +255,40 @@ export class PresentationLibrary extends HTMLElement {
     const dialog = this.q<HTMLDialogElement>('[data-pres-dialog]');
     // The close event arrives a task after the dialog closes. A file opened
     // in between has already reopened it, so a late event changes nothing.
-    dialog.addEventListener('close', () => { if (!dialog.open) this.afterClose(); }, { signal });
+    dialog.addEventListener('close', () => {
+      if (dialog.open || this.closed) return;
+      // The last line of defence: a dialog that closed by itself (a close the
+      // page could not refuse) while typing was not applied, or edits not
+      // saved, opens again with everything as it was, and asks.
+      if (this.mustConfirmLeaving()) { this.reopenAndAsk(); return; }
+      this.afterClose();
+    }, { signal });
+    // Escape is handled on the keydown: Chromium does not let a page refuse a
+    // second close request without a new click or key in between, so the
+    // dialog's cancel event below cannot always keep it open. A prevented
+    // Escape keydown starts no close request at all.
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+      if (this.isFullscreen()) { event.preventDefault(); this.exitFullscreen(); return; }
+      // The code editor first gets the key for itself (to close its
+      // suggestions); the listener below moves the keyboard out when it does not.
+      if (this.inEditor()) return;
+      if (this.mustConfirmLeaving()) {
+        event.preventDefault();
+        void Promise.resolve(this.leave(() => this.closeDialog())).catch((error) => this.notice(error));
+      }
+    }, { signal, capture: true });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || !this.inEditor()) return;
+      event.preventDefault();
+      this.focusOutOfEditor();
+    }, { signal });
+    // A fallback for a close request that did not come from a keydown here.
     dialog.addEventListener('cancel', (event) => {
       if (this.isFullscreen()) { event.preventDefault(); this.exitFullscreen(); return; }
       // Escape in the code editor only leaves the editor, as people press it
       // there out of habit: the keyboard moves to Apply changes, or to the file list.
-      if (document.activeElement instanceof Element && document.activeElement.closest('[data-pres-code]')) {
+      if (this.inEditor()) {
         event.preventDefault();
         this.focusOutOfEditor();
         return;
@@ -274,7 +302,6 @@ export class PresentationLibrary extends HTMLElement {
     dialog.addEventListener('keydown', (event) => {
       // The source editor handles its own keys; Ctrl+S there applies changes.
       if (event.defaultPrevented) return;
-      if (event.key === 'Escape' && this.isFullscreen()) { event.preventDefault(); this.exitFullscreen(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && this.active) {
         event.preventDefault();
         event.stopPropagation();
@@ -293,6 +320,30 @@ export class PresentationLibrary extends HTMLElement {
       history.replaceState(null, '', `${query.pathname}${query.search}${query.hash}`);
       void this.openExample().catch((error) => this.notice(error));
     }
+  }
+
+  /** True when the keyboard is in the code editor of Source files. */
+  private inEditor(): boolean {
+    return document.activeElement instanceof Element && !!document.activeElement.closest('[data-pres-code]');
+  }
+
+  /**
+   * The dialog closed although leaving would lose changes: open it again as it
+   * was (nothing was stopped or cleared), then ask as Close does. A question
+   * already on screen is closed first, as Keep editing, so that the new one
+   * lies above the dialog.
+   */
+  private reopenAndAsk(): void {
+    const dialog = this.q<HTMLDialogElement>('[data-pres-dialog]');
+    const confirm = this.q<HTMLDialogElement>('[data-pres-confirm]');
+    const ask = () => { void Promise.resolve(this.leave(() => this.closeDialog())).catch((error) => this.notice(error)); };
+    const asking = confirm.open;
+    if (asking) confirm.close();
+    dialog.showModal();
+    // The earlier question answers "keep editing" when its close event
+    // arrives; the new question is asked after that.
+    if (asking) confirm.addEventListener('close', ask, { once: true });
+    else ask();
   }
 
   /** Move the keyboard from the code editor to Apply changes when it can apply, else to the selected file. */
