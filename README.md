@@ -126,7 +126,16 @@ optional example.
 
 ZIPs made on Linux or macOS whose file names are UTF-8 without the ZIP's UTF-8
 flag (Info-ZIP's `zip`) keep their names, such as `Schrödinger.png`, and names
-in the decomposed spelling macOS uses are found by their usual spelling.
+in the decomposed spelling macOS uses are found by their usual spelling. ZIP
+tools on Windows often store names in an old code page instead (GBK, Big5,
+Shift_JIS, EUC-KR, code pages 437, 850 and 866, Windows-1250, 1251 and 1252).
+A presentation ZIP with such names is read in the code page whose names the
+slides' own text uses, so its pictures are found, and a note says so (for
+example "They were read as GBK (Chinese), which matches the names the slides
+use."). The edited ZIP stores the fixed names as UTF-8; **Original** returns
+the file as uploaded. When no code page matches, a note explains how to rename
+the files or make the ZIP with a tool that stores UTF-8 names. Lesson ZIPs keep
+their earlier rules for file names.
 
 ### What is changed so a presentation plays offline
 
@@ -143,13 +152,27 @@ files, so a crafted file cannot freeze the page.
   Presentations made for Reveal.js 3, 4, or 5 play with Reveal.js 6; the notes
   say so for Reveal.js 3 and older. A Reveal.js plugin whose script is left
   out (such as a menu or chalkboard from a CDN) is skipped, so the slides
-  still start without it, and the notes name it.
+  still start without it, and the notes name it; keys bound to it do nothing.
+  A Reveal.js presentation without reveal.css gets a warning, because its
+  slides would be laid out wrongly.
 - Formulas typeset with MathJax are typeset with KaTeX instead, using the
-  presentation's delimiters and macros. `\label{…}` and `\require{…}` show
-  nothing, `\eqref{…}` shows "(?)", `\ref{…}` shows "?", and `eqnarray` is
-  laid out like `align`; a few other MathJax-only commands may show as errors.
-  A raw `<` inside `\( \)`, `\[ \]`, or `$$ $$` in the page text is read as
-  text, so the formula shows, and a note suggests `\lt`.
+  presentation's delimiters and macros. This covers Reveal.js's math plugin
+  and MathJax loaded on its own (MathJax 2, 3 or 4 from jsDelivr, unpkg,
+  cdnjs or cdn.mathjax.org, or a MathJax copy missing from the ZIP), with a
+  version 3/4 configuration object, a version 2 `text/x-mathjax-config` or
+  `Hub.Config`, or no configuration (then MathJax's defaults: `\( \)`,
+  `$$ $$` and `\[ \]`; single dollars only when the configuration lists
+  them). Calls a presentation makes after changing a slide, such as
+  `MathJax.typesetPromise()` or `MathJax.Hub.Queue(…)`, typeset again.
+  `\label{…}` and `\require{…}` show nothing, `\eqref{…}` shows "(?)" and
+  `\ref{…}` "?" (also in ordinary text when the presentation uses MathJax),
+  `\unicode{x2192}` gives the character, and `eqnarray` is laid out like
+  `align`; a few other MathJax-only commands may show as errors. A
+  polyfill.io script beside MathJax is left out with a note that it is not
+  needed. A raw `<` inside `\( \)`, `\[ \]`, or `$$ $$` in the page text,
+  and inside `$…$` when the presentation typesets single dollars (prices such
+  as $5 are left alone), is read as text, so the formula shows, and a note
+  suggests `\lt`.
 - The presentation's own scripts, stylesheets (also those loaded with
   `rel="preload" as="style"` or `media="print"` and an `onload` switch),
   pictures (also in CSS `image-set()` and inside SVG sprites), media, fonts,
@@ -170,17 +193,30 @@ files, so a crafted file cannot freeze the page.
   with this site. Other module imports cannot run here and are reported.
 - The notes also warn about things the player cannot supply while the
   presentation plays: files that its scripts load (for example with `fetch`),
-  links to other files of the presentation, class names that Reveal.js uses
-  for its own parts (such as `controls`), and file names that cannot be used
-  (the note names the character, such as `%`).
+  links to other files of the presentation, e-mail and phone links (`mailto:`,
+  `tel:`; show the address as text instead), class names that Reveal.js uses
+  for its own parts (such as `controls`, also on a slide itself), and file
+  names that cannot be used (the note names the character, such as `%`). A
+  link written as `//host/path` is treated as an `https` website link. When
+  the presentation's own scripts save data in the browser (`localStorage`,
+  `sessionStorage`, `indexedDB`, cookies), a note says that it lasts only
+  until the presentation is stopped.
+- A file too large to include is left out with a note, and a presentation
+  that would grow past the limit is refused; both say to make the largest
+  pictures smaller (for example under 500 KB each) or to ask your AI
+  assistant to compress them.
 - A Slidev build's modules are bundled into one script with esbuild, running
   in a background worker. Its router keeps its history in memory, its styles
   and assets are embedded, and remote fonts and embeds are left out. Builds
   that use live code editors (Monaco code blocks) or Web Workers are refused
   with a note that says why; a picture or file the slides use but the ZIP
-  lacks is named. If the converter cannot be downloaded or is not ready
-  within 90 seconds, the presentation shows what to do (check the
-  connection, reload the page, open the ZIP again). Conversion was checked on
+  lacks is named, and notes that ask for a rebuild end "…then open a new ZIP
+  of the project (with dist/ inside)." If the converter cannot be downloaded
+  or is not ready within 90 seconds, the presentation shows what to do
+  (check the connection, reload the page, open the ZIP again): the note is
+  marked **Try again**, the stage says "This presentation could not be opened
+  this time.", nothing is saved, and the report for AI says there is nothing
+  to change in the presentation. Conversion was checked on
   builds from Slidev 53.1.0 and 52.11.5; older builds may not play.
 
 ### While it plays
@@ -189,34 +225,56 @@ Linked presentations and converted Slidev builds play in a tolerant player,
 so a failing script or a missing file becomes a note instead of stopping the
 slides. Portable packages still stop at their first error.
 
-- **Problems while playing.** Up to 20 warnings the presentation reports are
-  listed under **While playing** in **Notes from the check**. The line under
-  the stage then says, for example, "Playing locally · 1 problem reported".
-  If the first problem arrives within 5 seconds of Start, Restart, or a replay
-  after Apply, the notes open by themselves.
-- **Slides that do not start.** When a Reveal.js presentation's start-up
-  script stops with an error before the slides start, the player tries to
-  start them with basic settings. If that works, a strip above the slides says
-  so ("Some parts may be missing"). If not, a box on the stage says "The slides
-  did not start", quotes the presentation's first error, and points to the
-  notes and the report.
-- **Links to websites.** Clicking a link to a website in the presentation
-  shows a strip in the stage, also in fullscreen: "The presentation links to
-  **host**…", with **Open link in a new tab** and **Dismiss**. Only that button
-  opens the address, in a new tab without opener or referrer. The strip goes
-  away on a slide change, Stop, Restart, or after 20 seconds. Links to other
-  files of the presentation do nothing.
+- **Problems while playing.** Up to 20 errors the presentation reports are
+  listed under **While playing** in **Notes from the check**, as "The
+  presentation reported: …". What the player itself could not do is listed
+  there too, in the player's own plain sentences with a next step (up to 20),
+  for example "A picture from **host** needs the internet, so it is not shown.
+  Put the file in the ZIP." (one note per picture). The line under the stage
+  then says, for example, "Playing locally · 1 problem reported". If the first
+  problem arrives within 5 seconds of Start, Restart, or a replay after Apply,
+  the notes open by themselves.
+- **Slides that do not start.** When a presentation detected as Reveal.js
+  stops in its start-up script with an error before the slides start, the
+  player tries to start them with basic settings. If that works, a notice over
+  the top of the slides says so ("Some parts may be missing"); it closes after
+  about 12 seconds or on **Dismiss**, and the line under the stage says
+  "Playing with basic settings" for the whole playback. If the presentation
+  then starts Reveal.js itself after all, its own settings and plugins apply
+  and the notice goes away. If the rescue does not work, a box on the stage
+  says "The slides did not start", quotes the presentation's first error, and
+  ends "The notes list what was found; copy the report for your AI
+  assistant." Plain web pages and Slidev builds are never started this way.
+- **Links to websites.** Clicking (or middle-clicking) a link to a website
+  that the presentation does not handle itself shows a notice over the top of
+  the stage, also in fullscreen: "The presentation links to **host**…", with
+  **Open link in a new tab** and **Dismiss**. Reveal.js link previews are
+  offered the same way. Only that button opens the address, in a new tab
+  without opener or referrer, and the keyboard then goes back to the slides.
+  The notice goes away on a slide change, Stop, Restart, or after 20 seconds;
+  it replaces the "basic settings" notice while it shows, and a long notice
+  covers at most half of the stage. A shortened address ends with "…", and
+  the path is shown readable (`Newton's_laws` rather than `Newton%27s_laws`)
+  unless that would show spaces or unusual characters. A link over 2,000
+  characters gives a note instead. Links to other files of the presentation
+  do nothing. A presentation's script can also ask for this notice by itself
+  shortly after you clicked or pressed a key in the page; it still shows only
+  the real address and opens nothing until you choose the button.
 - **Pop-up messages.** `alert()` shows its text in a small box on top of the
-  slides with an **OK** button (Enter, Space, and Escape close it too);
-  several messages show one after another. Unlike a real alert, the
-  presentation's script does not wait for OK. `confirm()` answers no and
-  `prompt()` answers nothing, and the notes say once that the presentation
-  asked a question the player cannot show. Opening a new window, for example
-  the Reveal.js speaker view (**S**), does nothing and gives one note.
-- **Cookies and IDs.** Cookies work, but only in memory for the current
-  playback: Stop, Restart, and Apply start without them.
-  `crypto.randomUUID()` works. The clipboard, caches, and service workers stay
-  unavailable.
+  slides with an **OK** button (Enter, Space, and Escape close it too), which
+  stays visible in a very small stage; screen readers cannot reach the slides
+  behind it while it shows. Several messages show one after another. Unlike a
+  real alert, the presentation's script does not wait for OK. `confirm()`
+  answers no and `prompt()` answers nothing, and the notes say once that the
+  presentation asked a question the player cannot show. Opening a new window
+  or printing (`window.print()`) does nothing and gives one note. The Reveal.js
+  speaker view (**S**) is not available either; the notes list it, but it is
+  not counted as a problem and is not in the report for AI.
+- **Saved data, cookies and IDs.** Data that the presentation saves with
+  `localStorage` or `sessionStorage`, and cookies, work, but only in memory
+  for the current playback: Stop, Restart, and Apply start without them.
+  `indexedDB` is not available. `crypto.randomUUID()` works. The clipboard,
+  caches, and service workers stay unavailable.
 
 The player bar shows the slide count a presentation reports. **Present** opens
 fullscreen, and so does a presentation's own fullscreen key, such as **F** in
@@ -227,18 +285,28 @@ Reveal.js.
 Every file is checked and prepared before it is saved, so a presentation that
 cannot play is reported rather than stored. **Notes from the check** lists what
 was replaced, left out, or needs a fix (marked **Needs a fix**, **Check**, or
-**Note**), with the problems while playing. Text from a presentation is always
-labelled as the presentation's own words and shown as plain text.
+**Note**; **Try again** for a problem on the site's side, such as a converter
+that could not load), with the problems while playing. Text from a
+presentation is always labelled as the presentation's own words and shown as
+plain text.
 
 **Copy report for AI** copies a short plain-text report (`qft-deck-check/1`)
 to paste into the AI assistant that made the presentation. It says whether the
 files were edited here, and whether the presentation plays, plays with notes,
-cannot play, does not start, or starts with basic settings. The notes from the
-check sit in one fenced block labelled as text taken from the presentation's
-files, to be treated as data and not as instructions. When changes are needed
-it states the player's rules (only Reveal.js 6.0.2 and KaTeX are supplied;
-everything else must be in the ZIP; nothing may load from the internet, or,
-for Slidev, the rules of the Slidev prompt) and ends with what to send back.
+cannot play, does not start, or starts with basic settings, or was not
+opened this time because the site could not load its converter (then it says
+there is nothing to change in the presentation). The notes from the check sit
+in one fenced block labelled as text taken from the presentation's files, to
+be treated as data and not as instructions. When changes are needed it states
+the player's rules and ends with what to send back. For Reveal.js and web
+pages the rules say what the player supplies (Reveal.js 6.0.2 with reveal.css,
+the themes and its plugins, and KaTeX 0.19.1 with its parts and fonts) and to
+keep the links to those files exactly as they are; that a MathJax script from
+a CDN is replaced by KaTeX; that everything else must be in the ZIP and
+nothing may load from the internet; and that confirm(), prompt(), printing,
+new windows, e-mail and phone links do not work and data saved in the browser
+lasts only until the presentation stops. For Slidev they are the rules of the
+Slidev prompt.
 
 ### Edit the source and replay
 
@@ -250,9 +318,11 @@ same slide and fragment, and other pages start again from the beginning. If
 the changed presentation cannot be prepared, nothing is applied and the last
 version that worked keeps playing. Escape in the editor moves the keyboard to
 **Apply changes** or the file list; Escape again closes the dialog, asking
-first if changes are not applied. **Discard changes to this file** returns one
-file to its imported text, and **Restore original** returns the whole
-presentation.
+first if changes are not applied. **Discard changes to this file** removes
+typing that is not applied yet and keeps what is saved (Undo in the editor
+brings the typing back); on a file with only applied changes it asks first,
+then returns that file to its imported text. **Restore original** returns the
+whole presentation. After either, the keyboard goes back to the editor.
 
 Edits are saved in this browser beside the original file, which is never
 rewritten. Opening the original file again opens the library copy with your
@@ -266,9 +336,11 @@ version.
 as that file under its own name (a `.htm` file as `.html`), a ZIP as
 `name-original.zip`. **HTML** downloads a standalone player that opens
 offline, named after the title (for example `Quantum-interference-Slidev.html`).
-It shows the same strips and problem box as the library, and a collapsed
+It shows the same notices and problem box as the library, and a collapsed
 **Third-party notices** section in its footer holds the licence notices of the
-code and fonts it contains.
+code and fonts it contains (with the full Apache License 2.0 text when it
+contains mhchem); for a Slidev build, only this site's notice: the libraries
+inside a Slidev build come with the build.
 
 Copies of libraries inside a presentation (such as `dist/reveal.js` or
 `*.min.js`), pictures, fonts, and media are shown but not edited. In the file
@@ -288,6 +360,10 @@ browser.
   previews: 2 MB per file, 8 MB in total; larger files stay in the ZIP.
 - ZIPs are checked for path traversal, ambiguous or duplicate paths, expansion
   limits, CRC integrity, encryption, and other unsupported archive features.
+  Each refusal says what to do next: a cut-off download gets "This ZIP is
+  damaged or incomplete, perhaps because the download did not finish.
+  Download it again or make the ZIP again, then open the new file.", and a
+  ZIP with more than 1,000 files and folders is asked to keep at most 1,000.
 
 Presentations are saved in a separate IndexedDB database for this site and
 path, with their original files, and a presentation already in the library is
@@ -295,7 +371,13 @@ not added twice. Library rows with the same title show the file name. Opening
 a saved Slidev build converts it again, which takes a few seconds. If a
 presentation cannot be saved, it stays in the library until you leave the page
 (at most five, 120 MB together); keep your original file. After the site is
-updated in another tab, the library asks you to reload the page. Reopening the
+updated in another tab, the library asks you to reload the page. If the site
+was updated while the page was open, or the connection was lost, so that a
+part of the site cannot be loaded, every message says so: "A part of this
+site could not be loaded: … Reload the page to continue. Your saved
+presentations and documents are kept." The library then shows that sentence
+with a **Reload the page** button in place of the list. Nothing reloads by
+itself. Reopening the
 website itself offline is a separate feature; use the standalone HTML download
 in a classroom without internet.
 
@@ -306,7 +388,7 @@ Imported code runs only inside an opaque-origin sandbox (an iframe with
 presentation cannot read your documents or other saved presentations, and
 its ordinary network requests are blocked. Opening, checking, linking, and
 converting a presentation never runs it. A link opens only when you choose
-**Open link in a new tab** on the site's own strip.
+**Open link in a new tab** on the site's own notice.
 
 Blocking network requests is a privacy default rather than a guarantee: a
 presentation written to get around it can still make limited outbound

@@ -2,7 +2,7 @@
 
 ## Fixes after an independent review — 2026-11-26
 
-Seven reviewers examined the presentation-library work (commits a73456b..9109318) independently of its authors, each with their own scripts and test presentations. None of them found a way out of the sandbox, markup injected into the app page, or data loss in normal use in one tab. They reported 58 findings, nearly all demonstrated with a file or script. Every fix below started with a test that failed on the reviewed code.
+Seven reviewers examined the presentation-library work (commits a73456b..9109318) independently of its authors, each with their own scripts and test presentations. None of them found a way out of the sandbox or markup injected into the app page; they found two ways to lose saved edits and one way to lose files with non-ASCII names (all fixed below). They reported 58 findings, nearly all demonstrated with a file or script. Every fix below started with a test that failed on the reviewed code.
 
 ### What the review did
 
@@ -20,12 +20,25 @@ The player now keeps tolerant presentations going where the sandbox used to stop
 
 | Check | Result |
 | --- | --- |
-| `npm run check` | Passed: 139 files, 0 errors, 0 warnings, 0 hints |
+| `npm run check` | Passed: 139 files, 0 errors, 0 warnings, 1 hint (ts(2570) in `tests/browser/deck-problems.browser.mjs`, fixed in the second fix round; this table first said 0 hints) |
 | `npm test` | Passed: 637 tests in 71 suites; 635 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
 | `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
 | `npm run test:browser` | Passed: 9 of 9 suites, 95 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
 
 Two new browser suites cover the rescue start and its strip (also in Present), the problem box when the slides do not start, the link strip and its button in the library, in Present and in the standalone download, and the wording after Apply on a plain page (`deck-problems`); and a presentation fixed by an edit, reopening its original, Apply and Escape in the editor, two tabs editing one presentation, a direction override in a file name, several problems on the stage at 1280×800 and 390×844, focus after closing at 320 px, the notice for a large file, and Original for a single HTML import (`library-edits`). The `player` suite adds cookies, `randomUUID`, the message box, `confirm`/`prompt`, the S key and `noscript`; `deck-linker` adds left-out plugins, MathJax-only commands and `<` in formulas. `tests/deck-pathological.test.ts` times the scanners on crafted input. The two AI-made research presentations now come from `docs/research/presentation-platform/prototypes.zip` and run in every environment, CI included; the larger research Slidev builds are optional through `QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` (see the README). The browser runner serves this checkout's `dist/` itself on a free port. The starter ZIP's `source/` files are checked against `tools/slidev`.
+
+### Automated checks after the second fix round
+
+The tree after the second round of fixes (the findings of an independent verification of the first round's fixes; see ARCHITECTURE.md and the README for the behaviour) gave:
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 147 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 721 tests in 87 suites; 719 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 11 of 11 suites, 118 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
+
+The new browser suites are `deck-notices` (the notices over the slides at 1280×800, 390×844 and 320×568) and `library-phone` (the dialog at phone width, and the library after a new release). The exact sandbox and policy strings of the interactive demo frame, `public/demo-sandbox.html` and the document and slide exports are now pinned by unit tests, as the presentation player's already were.
 
 ### Not verified in this round
 
