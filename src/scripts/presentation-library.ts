@@ -770,6 +770,8 @@ export class PresentationLibrary extends HTMLElement {
    * workspace's importer handles them as before.
    */
   async tryOpenFile(file: File): Promise<boolean> {
+    // A file dropped on the open presentation would replace it: ask first, as Close does.
+    if (this.mustConfirmLeaving() && !(await this.confirmLeaving())) return true;
     if (this.busy) throw new Error('A presentation is already opening. Please wait a moment.');
     this.busy = true;
     const operation = this.nextOperation();
@@ -1369,6 +1371,11 @@ export class PresentationLibrary extends HTMLElement {
   /** Run an action that leaves the deck, asking first when that would lose changes. */
   private leave(action: () => void | Promise<void>): void | Promise<void> {
     if (!this.mustConfirmLeaving()) return action();
+    return this.confirmLeaving().then((confirmed) => { if (confirmed) return action(); });
+  }
+
+  /** Ask whether to leave the deck and lose its changes; resolves true for Discard changes. */
+  private confirmLeaving(): Promise<boolean> {
     const pending = this.sources?.pendingPaths().length ?? 0;
     return this.confirmAction({
       title: 'Leave without your changes?',
@@ -1377,7 +1384,7 @@ export class PresentationLibrary extends HTMLElement {
         : 'Your edits could not be saved in this browser. If you leave now, they are lost. Download the ZIP first to keep them.',
       confirm: 'Discard changes',
       cancel: 'Keep editing',
-    }).then((confirmed) => { if (confirmed) return action(); });
+    });
   }
 
   /** Ask in a small dialog over the library; resolves true when the person confirms. Escape keeps things as they are. */

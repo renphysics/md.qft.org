@@ -213,9 +213,15 @@ export default async function run(t) {
     await confirm.waitFor({ state: 'visible' });
     // Chromium refuses a page's second "keep open" without a new click or key,
     // so these sequences used to close the dialog and lose the typing.
-    const asksAndStays = async (what) => {
+    // Escape is refused on its keydown, so the dialog does not even close and open again.
+    await dialog.evaluate((element) => {
+      /** @type {any} */ (window).dialogCloses = 0;
+      element.addEventListener('close', () => { /** @type {any} */ (window).dialogCloses += 1; });
+    });
+    const asksAndStays = async (what, closes = 0) => {
       await confirm.waitFor({ state: 'visible' });
       await page.waitForTimeout(400);
+      assert.equal(await page.evaluate(() => /** @type {any} */ (window).dialogCloses), closes, `${what}: close events of the dialog`);
       assert.equal(await dialog.isVisible(), true, `${what}: the dialog stays open`);
       assert.equal(await confirm.isVisible(), true, `${what}: the question stays`);
       assert.match(await editorText(page), /letter-spacing/, `${what}: the typing is kept`);
@@ -253,14 +259,23 @@ export default async function run(t) {
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
     await asksAndStays('Escape twice right after an undo');
+    // Keep editing by Escape, then Escape again, with nothing else in between: the
+    // browser would not keep the dialog open, so the keydown itself must refuse it.
+    for (let round = 0; round < 2; round += 1) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+    }
+    await asksAndStays('Keep editing by Escape and Escape again, twice');
     // Any other way the dialog closes: it opens again as it was, and asks.
     await page.keyboard.press('Escape');
     await confirm.waitFor({ state: 'hidden' });
     await dialog.evaluate((element) => element.close());
-    await asksAndStays('a close the page did not ask for');
+    await asksAndStays('a close the page did not ask for', 1);
     // Also while the question is on screen: it comes back above the dialog.
     await dialog.evaluate((element) => element.close());
-    await asksAndStays('a close while the question is shown');
+    await asksAndStays('a close while the question is shown', 2);
     await page.locator('[data-pres-confirm-cancel]').click();
     await confirm.waitFor({ state: 'hidden' });
     assert.equal(await dialog.isVisible(), true, 'Keep editing keeps the dialog');
@@ -270,6 +285,40 @@ export default async function run(t) {
     await page.locator('[data-pres-confirm-accept]').click();
     await dialog.waitFor({ state: 'hidden' });
     await until(async () => (await page.locator('[data-pres-host] iframe').count()) === 0, 'playback to stop');
+  });
+
+  await t.step('A presentation file dropped on the open dialog asks first: Keep editing keeps the typing, Discard opens the file', async () => {
+    await page.locator('[data-open-presentations]').click();
+    await page.locator('.presentation-saved-open', { hasText: 'Optics workshop' }).click();
+    await page.locator('[data-pres-start-button]').waitFor({ state: 'visible', timeout: 60_000 });
+    await openSourceFiles(page);
+    await selectFile(page, 'css/custom.css', '');
+    await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.insertText('\n/* dropped-on */');
+    await until(async () => (await badge(page, 'css/custom.css').textContent()) === 'Not applied', 'the unapplied change');
+    // As a file dragged from the desktop: the drop reaches the workspace, which hands it to the library.
+    const drop = () => page.locator('[data-pres-stage]').evaluate((stage) => {
+      const data = new DataTransfer();
+      data.items.add(new File(['<!doctype html><html><head><title>Dropped lesson</title></head><body><h1>Dropped lesson</h1><p>One slide.</p></body></html>'], 'dropped-lesson.html', { type: 'text/html' }));
+      stage.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, composed: true, dataTransfer: data }));
+    });
+    const confirm = page.locator('[data-pres-confirm]');
+    await drop();
+    await confirm.waitFor({ state: 'visible' });
+    assert.equal(await page.locator('[data-pres-confirm-title]').textContent(), 'Leave without your changes?');
+    await page.locator('[data-pres-confirm-cancel]').click();
+    await confirm.waitFor({ state: 'hidden' });
+    await page.waitForTimeout(1000);
+    assert.equal(await page.locator('[data-pres-title]').textContent(), 'Optics workshop', 'Keep editing keeps the presentation');
+    assert.equal(await badge(page, 'css/custom.css').textContent(), 'Not applied');
+    assert.match(await editorText(page), /dropped-on/, 'Keep editing keeps the typing');
+    await drop();
+    await confirm.waitFor({ state: 'visible' });
+    await page.locator('[data-pres-confirm-accept]').click();
+    await until(async () => (await page.locator('[data-pres-title]').textContent()) === 'Dropped lesson', 'the dropped file to open');
+    await page.locator('[data-pres-close]').click();
+    await dialog.waitFor({ state: 'hidden' });
   });
 
   await t.step('After a reload the deck reopens from the library with its edit', async () => {
