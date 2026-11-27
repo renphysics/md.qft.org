@@ -356,7 +356,7 @@ function readScript(conversion: Conversion, script: Element, folder: string, par
   if (src) {
     const path = conversion.locate(src, folder);
     if (module && !parts.entryModule && path !== undefined && conversion.bytes(path)) { parts.entryModule = path; return; }
-    conversion.report('script-left-out', 'warning', `The script ${shown(src)} is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with “npx slidev build”, then open a new ZIP of the project (with dist/ inside).`, src);
+    conversion.report('script-left-out', 'warning', `The script ${shown(src)} is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).`, src);
     return;
   }
   const code = textOf(script);
@@ -657,7 +657,7 @@ export async function convertSlidevFiles(
   const page = readPage(conversion);
   if (!page.entryModule) {
     conversion.report('slidev-entry-missing', 'error',
-      'The build\'s index.html does not start its app from a script in the ZIP. Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside), with the whole assets folder.',
+      'The build\'s index.html does not start its app from a script in the ZIP. Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside and its whole assets folder).',
       conversion.entry);
     return fail();
   }

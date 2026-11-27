@@ -375,7 +375,7 @@ describe('wording (VF6.5, VF6.8)', () => {
   it('says what to do about a script that is not part of a Slidev build', async () => {
     const converted = await convert(slidevBuild({ head: '<script src="/extra.js"></script>' }));
     assert.equal(converted.issues.find((item) => item.code === 'script-left-out')?.message,
-      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with “npx slidev build”, then open a new ZIP of the project (with dist/ inside).');
+      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).');
   });
 
   it('ends the inline-script notes with a next step, and says "AI assistant"', async () => {
@@ -386,6 +386,25 @@ describe('wording (VF6.5, VF6.8)', () => {
     assert.ok(issue(template, 'inline-script-unsupported')?.message.endsWith(next));
     const source = detectDeck(deck({ 'slides.md': '---\ntheme: default\n---\n# Hi\n', 'package.json': '{"dependencies":{"@slidev/cli":"52.0.0"}}' }));
     assert.match(source.issues.find((item) => item.code === 'slidev-source')?.message ?? '', /ask your AI assistant for the built presentation/);
+  });
+
+  it('asks for a new ZIP of the project with dist/ inside in every Slidev rebuild note, with straight quotes', async () => {
+    const files = deck({ 'slides.md': '---\ntheme: default\n---\n# Hi\n', 'package.json': '{"dependencies":{"@slidev/cli":"52.0.0"}}' });
+    assert.match(detectDeck(files).issues.find((item) => item.code === 'slidev-source')?.message ?? '',
+      /Run "npx slidev build" in the project, which makes its dist folder, then open a new ZIP of the project \(with dist\/ inside\)/);
+    const project = await openDeck(new File([zipSync({ 'slides.md': files.get('slides.md')!, 'package.json': files.get('package.json')! })], 'waves.zip'));
+    assert.ok(project);
+    const result = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
+    for (const item of result.issues.filter((entry) => entry.code === 'slidev-source')) {
+      assert.match(item.message, /open a new ZIP of the project \(with dist\/ inside\)/);
+      assert.doesNotMatch(item.message, /ZIP of the dist folder/);
+    }
+    const build = slidevBuild();
+    build.set('index.html', new TextEncoder().encode(new TextDecoder().decode(build.get('index.html')).replace('src="/assets/index-abc.js"', 'src="https://example.org/app.js"')));
+    const noApp = await convert(build);
+    assert.equal(noApp.issues.find((item) => item.code === 'slidev-entry-missing')?.message,
+      'The build\'s index.html does not start its app from a script in the ZIP. Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside and its whole assets folder).');
+    assert.doesNotMatch(readFileSync('src/lib/slidev-convert.ts', 'utf8'), /[“”]npx/);
   });
 });
 

@@ -834,7 +834,7 @@ function detectSlidevSource(files: DeckFiles, paths: string[], issues: IssueList
   if (!manifest && !(best && best.score >= 4)) return undefined;
   const entry = best && best.score > 0 ? best.path : undefined;
   issues.add('slidev-source', 'error',
-    `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project and open a ZIP of the dist folder here, or ask your AI assistant for the built presentation.`,
+    `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project, which makes its dist folder, then open a new ZIP of the project (with dist/ inside), or ask your AI assistant for the built presentation.`,
     entry ?? manifest);
   const title = cleanReportedText(best?.title ?? '', 200);
   return {
