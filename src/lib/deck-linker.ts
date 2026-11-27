@@ -1451,10 +1451,11 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    // Any other onload code runs once the style is in place; the two forms
-    // above only set what the style element already has.
+    // Other onload code runs once the style is in place (review W3.1); the
+    // two forms above are already applied to the style element.
     const style = css ? [styleElement(css, attributes)] : [];
-    this.edits.replace(element, style.length ? [...style, ...this.scriptEvent(element, style, false)] : []);
+    const handled = /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload) || media !== undefined;
+    this.edits.replace(element, style.length && !handled ? [...style, ...this.scriptEvent(element, style, false)] : style);
   }
 
   /* --------------------------------------------------------- Markdown */
@@ -1880,8 +1881,9 @@ class DeckLinker {
     }
     this.edits.apply();
     if (isEmptyPage(this.document)) {
-      const name = cleanReportedText(this.entry.split('/').pop() || 'The start page', 120);
-      this.report('page-empty', 'error', `${name} is empty. Export the presentation again.`, this.entry || undefined);
+      // The entry's path in the ZIP, which the person can find there (review W7.6).
+      const name = cleanReportedText(this.entry || 'The start page', 120);
+      this.report('page-empty', 'error', `${name} is empty. Ask your AI assistant for the presentation again.`, this.entry || undefined);
       return undefined;
     }
     const elements = elementsOf(this.document);

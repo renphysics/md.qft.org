@@ -7,7 +7,7 @@ import { linkDeck, type LinkResult } from '../src/lib/deck-linker.ts';
 import { buildPlayable, isPlayable, openDeck, type BuildDeps } from '../src/lib/deck-project.ts';
 import { importWorkspaceBundle } from '../src/lib/document-bundle.ts';
 import { PresentationPackageError } from '../src/lib/presentation-package.ts';
-import type { DeckFiles } from '../src/lib/deck-types.ts';
+import type { DeckDetection, DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
 
 /*
@@ -208,12 +208,14 @@ describe('names that cannot be used (F2a.9)', () => {
 });
 
 describe('an empty start page (F2a.11)', () => {
-  it('is an error that says to export the presentation again', async () => {
+  it('is an error that names the page and says to ask the AI assistant for the presentation again (review W7.6)', async () => {
     for (const text of ['', '  \n', '<!doctype html><html><head><title>x</title></head><body>\n</body></html>', '<noscript>Turn on JavaScript</noscript>']) {
       const result = await link({ 'index.html': text });
       assert.equal(result.html, '', JSON.stringify(text));
-      assert.deepEqual(result.issues.map((item) => [item.severity, item.code, item.message]), [['error', 'page-empty', 'index.html is empty. Export the presentation again.']]);
+      assert.deepEqual(result.issues.map((item) => [item.severity, item.code, item.message]), [['error', 'page-empty', 'index.html is empty. Ask your AI assistant for the presentation again.']]);
     }
+    const nested = await linkDeck(new Map([['lesson/start.html', new TextEncoder().encode('<!-- nothing -->')]]), { kind: 'html', engine: 'html', entry: 'lesson/start.html', issues: [], flags: {} } as DeckDetection, nodeVendorProvider(), { entry: 'lesson/start.html' });
+    assert.equal(nested.issues.find((item) => item.code === 'page-empty')?.message, 'lesson/start.html is empty. Ask your AI assistant for the presentation again.');
     const project = await openDeck(zipFile({ 'index.html': new Uint8Array() }));
     assert.ok(project);
     assert.equal(isPlayable(await buildPlayable(project, deps())), false);
