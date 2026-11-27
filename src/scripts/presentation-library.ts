@@ -3,6 +3,7 @@ import type { StoredPresentation, StoredPresentationInfo } from '../lib/presenta
 import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
 import { formatDeckReport, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../lib/load-failure';
 import {
   PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath,
 } from '../lib/presentation-messages';
@@ -45,8 +46,37 @@ function randomHex(bytes: number): string {
   return [...crypto.getRandomValues(new Uint8Array(bytes))].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-function severityLabel(severity: DeckIssue['severity']): string {
-  return severity === 'error' ? 'Needs a fix' : severity === 'warning' ? 'Check' : 'Note';
+/**
+ * An issue code for a problem on this site's side, not in the presentation:
+ * the converter could not be loaded. Opening the file again later may work.
+ */
+function siteSideCode(code: string): boolean {
+  return code === 'slidev-converter-unavailable';
+}
+
+function severityLabel(issue: DeckIssue): string {
+  if (issue.severity === 'error' && siteSideCode(issue.code)) return 'Try again';
+  return issue.severity === 'error' ? 'Needs a fix' : issue.severity === 'warning' ? 'Check' : 'Note';
+}
+
+/** True when the deck cannot play only because of a problem on this site's side. */
+function siteSideFailure(playable: PlayableDeck): boolean {
+  const errors = playable.issues.filter((issue) => issue.severity === 'error');
+  return errors.length > 0 && errors.every((issue) => siteSideCode(issue.code));
+}
+
+/**
+ * The converter's page script itself could not be fetched. deck-project
+ * treats an Error with a string `detail` as "converter unavailable", as it
+ * does SlidevConverterUnavailableError, so the same fixed message is shown:
+ * the converter's own sentence (slidev-convert-browser.ts), copied, because
+ * its module is the thing that failed to load.
+ */
+function converterUnavailable(): Error {
+  const error = new Error('The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.') as Error & { detail: string };
+  error.name = 'SlidevConverterUnavailableError';
+  error.detail = 'the converter script could not be loaded';
+  return error;
 }
 
 /** The deck on show and what the player plays for it. */
@@ -291,7 +321,8 @@ export class PresentationLibrary extends HTMLElement {
   /** Application messages only. Text supplied by a presentation goes to reportProblem. */
   private notice(value?: unknown): void {
     const area = this.q('[data-pres-notice]');
-    area.textContent = value === undefined ? '' : value instanceof Error ? value.message : String(value);
+    // A part of the site that could not be fetched gets one fixed sentence, never the browser's text.
+    area.textContent = value === undefined ? '' : value instanceof Error || isLoadFailure(value) ? errorMessage(value, 'Something went wrong. Close the presentations and try again.') : String(value);
     area.hidden = value === undefined;
   }
 
@@ -388,7 +419,7 @@ export class PresentationLibrary extends HTMLElement {
       const item = document.createElement('li');
       item.dataset.severity = issue.severity;
       const label = document.createElement('strong');
-      label.textContent = `${severityLabel(issue.severity)}: `;
+      label.textContent = `${severityLabel(issue)}: `;
       const message = document.createElement('span');
       message.textContent = issue.message;
       item.append(label, message);
@@ -450,9 +481,34 @@ export class PresentationLibrary extends HTMLElement {
         this.notice(`${listing.skipped} saved ${listing.skipped === 1 ? 'presentation' : 'presentations'} could not be read. ${listing.skipped === 1 ? 'It is' : 'They are'} kept in this browser unchanged.`);
       }
     } catch (error) {
+      // The list could not be read: say why in its place, rather than
+      // showing an empty library as if the presentations were gone.
+      if (isLoadFailure(error)) { this.renderLoadFailure(); return; }
       this.notice(error);
     }
     this.renderLibrary();
+  }
+
+  /** In place of the saved list: a part of the site could not be loaded, with a Reload button. */
+  private renderLoadFailure(): void {
+    const list = this.q('[data-pres-list]');
+    const box = document.createElement('div');
+    box.className = 'presentation-load-failed';
+    box.setAttribute('role', 'alert');
+    const text = document.createElement('p');
+    text.textContent = LOAD_FAILURE_TEXT;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'button-primary';
+    reload.dataset.presReload = '';
+    reload.textContent = 'Reload the page';
+    reload.addEventListener('click', () => location.reload());
+    box.append(text, reload);
+    list.replaceChildren(box);
+    list.removeAttribute('aria-busy');
+    const count = this.q('[data-pres-count]');
+    count.textContent = '';
+    count.hidden = true;
   }
 
   private renderLibrary(): void {
@@ -473,7 +529,9 @@ export class PresentationLibrary extends HTMLElement {
     for (const entry of all) titles.set(entry.title, (titles.get(entry.title) ?? 0) + 1);
     const entries = all.map((entry) => (titles.get(entry.title)! > 1 && entry.file
       ? { ...entry, detail: `${visiblePath(entry.file)} · ${entry.detail}` } : entry));
-    this.q('[data-pres-count]').textContent = String(entries.length);
+    const count = this.q('[data-pres-count]');
+    count.textContent = String(entries.length);
+    count.hidden = false;
     const rows = entries.map((entry) => {
       const row = document.createElement('div');
       row.className = 'presentation-saved-row';
@@ -525,11 +583,23 @@ export class PresentationLibrary extends HTMLElement {
     return {
       vendor: async () => (await import('../lib/deck-vendor-browser')).browserVendorProvider(),
       // The converter, its Worker and esbuild.wasm load only when a Slidev build is opened.
-      convertSlidev: async (files, detection, options) => (await import('../lib/slidev-convert-browser')).convertSlidevBuild(files, detection, options),
+      convertSlidev: async (files, detection, options) => {
+        let converter: typeof import('../lib/slidev-convert-browser');
+        try { converter = await import('../lib/slidev-convert-browser'); }
+        catch (error) { throw isLoadFailure(error) ? converterUnavailable() : error; }
+        return converter.convertSlidevBuild(files, detection, options);
+      },
       signal: operation === this.operation ? this.operationAbort.signal : AbortSignal.abort(),
       // The real preparation, discarded: a document the player would refuse is reported before saving.
       prepare: (html, profile) => { preparePresentationDocument(html, randomHex(18), randomHex(18), { profile }); },
-      ...(quiet ? {} : { onProgress: (message: string) => { if (operation === this.operation) this.notice(message); } }),
+      ...(quiet ? {} : {
+        onProgress: (message: string) => {
+          if (operation !== this.operation) return;
+          this.notice(message);
+          // While a file opens, the stage shows its progress too.
+          if (!this.active) this.q('[data-pres-start-message]').textContent = message;
+        },
+      }),
     };
   }
 
@@ -552,13 +622,15 @@ export class PresentationLibrary extends HTMLElement {
   }
 
   private async openRecord(record: LibraryRecord, operation: number, saved: boolean, temporaryKey?: string): Promise<void> {
-    this.openDialog();
-    this.notice('Opening the presentation…');
-    const deckProject = await import('../lib/deck-project');
-    const project = await deckProject.openStoredDeck(record);
-    if (operation !== this.operation) return;
-    const playable = await deckProject.buildPlayable(project, this.buildDeps(operation));
-    if (operation !== this.operation) return;
+    this.showOpening(record.title, 'Opening the presentation…');
+    const opened = await this.whileOpening(operation, async () => {
+      const deckProject = await import('../lib/deck-project');
+      const project = await deckProject.openStoredDeck(record);
+      if (operation !== this.operation) return undefined;
+      return { project, playable: await deckProject.buildPlayable(project, this.buildDeps(operation)) };
+    });
+    if (!opened || operation !== this.operation) return;
+    const { project, playable } = opened;
     this.showDeck(project, playable, saved ? 'saved' : 'unsaved', temporaryKey);
     if (saved && this.active?.project === project && record.updatedAt !== undefined) this.active.savedAt = record.updatedAt;
     if (record.editsUnreadable) this.notice('Your edits to this presentation could not be read, so the original is shown. The stored edits are kept unchanged.');
@@ -582,10 +654,10 @@ export class PresentationLibrary extends HTMLElement {
       const project = await deckProject.openDeck(file);
       if (!project) return false;
       if (operation !== this.operation) return true;
-      this.openDialog();
-      this.notice('Checking the presentation…');
-      const playable = await deckProject.buildPlayable(project, this.buildDeps(operation));
-      if (operation !== this.operation) return true;
+      // From here on the dialog shows this file, never the presentation shown before.
+      this.showOpening(project.title, 'Checking the presentation…');
+      const playable = await this.whileOpening(operation, () => deckProject.buildPlayable(project, this.buildDeps(operation)));
+      if (!playable || operation !== this.operation) return true;
       const input = deckProject.deckSaveInput(project);
       if (!deckProject.isPlayable(playable)) {
         // A copy in the library may play thanks to edits made here: open it
@@ -601,7 +673,8 @@ export class PresentationLibrary extends HTMLElement {
           return true;
         }
         this.showDeck(project, playable, 'new');
-        this.storage('Not saved. This file cannot be played here yet; see the notes from the check.');
+        this.storage(siteSideFailure(playable) ? 'Not saved. Open the file again once the page has been reloaded.'
+          : 'Not saved. This file cannot be played here yet; see the notes from the check.');
         return true;
       }
       this.showDeck(project, playable, 'new');
@@ -640,7 +713,7 @@ export class PresentationLibrary extends HTMLElement {
         if (operation === this.operation && this.active?.project === project) this.active.temporaryKey = key;
         if (operation === this.operation) {
           this.storage('Not saved in this browser. Download ZIP to keep a copy.');
-          this.notice(`${error instanceof Error ? error.message : String(error)}${evicted ? ' Older unsaved presentations can be reopened from their original files.' : ''}`);
+          this.notice(`${errorMessage(error, 'This presentation could not be saved in this browser.')}${evicted ? ' Older unsaved presentations can be reopened from their original files.' : ''}`);
         }
       }
       if (edited) {
@@ -666,6 +739,67 @@ export class PresentationLibrary extends HTMLElement {
     if (stored && operation === this.operation) await this.openRecord(stored, operation, true);
   }
 
+  /**
+   * A file starts opening: the dialog shows its name and progress, and
+   * nothing of the presentation shown before (no Start, no old problem, no
+   * old storage line) until the new result arrives.
+   */
+  private showOpening(title: string, progress: string): void {
+    this.exitFullscreen();
+    this.player?.destroy();
+    this.player = undefined;
+    this.replayPending = false;
+    this.active = undefined;
+    this.runtime = [];
+    this.slides = undefined;
+    this.sources?.clear();
+    this.openDialog();
+    this.notice(progress);
+    this.clearProblems();
+    this.clearPlaybackNotices();
+    this.renderSlides();
+    this.q('[data-pres-title]').textContent = title;
+    this.q('[data-pres-subtitle]').textContent = 'Opening…';
+    this.q('[data-pres-engine]').hidden = true;
+    this.q('[data-pres-start-title]').textContent = title;
+    this.q('[data-pres-start-message]').textContent = progress;
+    this.q('[data-pres-start-detail]').textContent = '';
+    this.q('[data-pres-start-button]').hidden = true;
+    for (const selector of ['[data-pres-present]', '[data-pres-html]', '[data-pres-zip]', '[data-pres-view="source"]']) this.q<HTMLButtonElement>(selector).disabled = true;
+    this.q('[data-pres-zip-original]').hidden = true;
+    this.q('[data-pres-keyboard-hint]').hidden = true;
+    this.q('[data-pres-start]').hidden = false;
+    this.q('[data-pres-stop]').hidden = true;
+    this.q('[data-pres-restart]').hidden = true;
+    this.q('[data-pres-player-status]').textContent = 'Opening…';
+    this.q('[data-pres-notes]').hidden = true;
+    this.q('[data-pres-report-text]').hidden = true;
+    this.storage('Opening the file…');
+    this.q('[data-pres-library]').hidden = true;
+    this.q('[data-pres-deck]').hidden = false;
+    this.q('[data-pres-back]').hidden = false;
+    this.setView('preview');
+  }
+
+  /**
+   * Run the slow part of opening a file. When it fails, the stage says so in
+   * place of the progress (and the error goes on to the notice), so nothing
+   * of the presentation shown before comes back.
+   */
+  private async whileOpening<T>(operation: number, work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      if (operation === this.operation && !this.active) {
+        this.q('[data-pres-start-message]').textContent = 'This file could not be opened.';
+        this.q('[data-pres-start-detail]').textContent = errorMessage(error, 'Close the presentations and open the file again.');
+        this.q('[data-pres-player-status]').textContent = 'Could not be opened';
+        this.storage('Not saved. Your original file is unchanged.');
+      }
+      throw error;
+    }
+  }
+
   private showDeck(project: DeckProject, playable: PlayableDeck, state: 'new' | 'saved' | 'unsaved', temporaryKey?: string): void {
     this.exitFullscreen();
     this.player?.destroy();
@@ -682,6 +816,9 @@ export class PresentationLibrary extends HTMLElement {
     const engine = engineLabel(project.engine);
     this.q('[data-pres-title]').textContent = project.title;
     this.q('[data-pres-engine]').textContent = engine;
+    this.q('[data-pres-engine]').hidden = false;
+    this.q<HTMLButtonElement>('[data-pres-zip]').disabled = false;
+    this.q<HTMLButtonElement>('[data-pres-view="source"]').disabled = false;
     this.q('[data-pres-start-title]').textContent = project.title;
     this.q('[data-pres-stage]').style.setProperty('--presentation-aspect', project.aspectRatio === '4:3' ? '4 / 3' : '16 / 9');
     this.storage(state === 'saved' ? (project.edits.size ? 'Saved in this browser with your edits. Your original file is unchanged.' : 'Saved in this browser. Keep the original file as your backup.')
@@ -719,10 +856,13 @@ export class PresentationLibrary extends HTMLElement {
     if (!active) return;
     const { project, playable } = active;
     const ready = canPlay(playable);
+    // A problem on this site's side (the converter could not load) is no fault of the presentation.
+    const siteSide = !ready && siteSideFailure(playable);
     this.q('[data-pres-start-message]').textContent = ready
       ? 'Slides and demonstrations run locally when you press Start.'
-      : 'This presentation cannot be played here yet.';
-    this.q('[data-pres-start-detail]').textContent = !ready ? 'The notes from the check below say what to change.'
+      : siteSide ? 'This presentation could not be opened this time.' : 'This presentation cannot be played here yet.';
+    this.q('[data-pres-start-detail]').textContent = siteSide ? 'The presentation itself may be fine: the message above says what to do.'
+      : !ready ? 'The notes from the check below say what to change.'
       : project.kind === 'qft-presentation' ? (project.source ? 'Editable source included in the ZIP' : 'Built presentation · source not included')
         : 'Prepared to play offline in this browser';
     this.q<HTMLButtonElement>('[data-pres-start-button]').hidden = !ready;
@@ -738,7 +878,7 @@ export class PresentationLibrary extends HTMLElement {
       this.q('[data-pres-start]').hidden = false;
       this.q('[data-pres-stop]').hidden = true;
       this.q('[data-pres-restart]').hidden = true;
-      this.q('[data-pres-player-status]').textContent = 'Cannot be played here yet';
+      this.q('[data-pres-player-status]').textContent = siteSide ? 'Could not be opened this time' : 'Cannot be played here yet';
       return;
     }
     if (this.player) return;
@@ -1037,7 +1177,7 @@ export class PresentationLibrary extends HTMLElement {
       shown('Your edits are not saved in this browser. Download ZIP to keep them.');
       return {
         storage: 'Your edits play here until you close the presentation; download the ZIP to keep them.',
-        problem: error instanceof Error ? error.message : String(error),
+        problem: errorMessage(error, 'Your edits could not be saved in this browser.'),
       };
     }
   }

@@ -40,6 +40,7 @@ import { EXAMPLES } from '../lib/examples';
 import { siteConfig } from '../config/site';
 import { scopedStorageKey } from '../lib/storage-scope';
 import { withBase } from '../lib/site-path';
+import { errorMessage, watchLoadFailures } from '../lib/load-failure';
 import type { PresentationLibrary } from './presentation-library';
 
 type ViewMode = 'editor' | 'split' | 'preview';
@@ -67,8 +68,9 @@ function readPreferences(): Preferences {
     };
   } catch { return { ...defaults }; }
 }
+/** A part of the site that could not be fetched (the site was updated while the tab was open) gets one fixed sentence. */
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : 'Something went wrong. Download your Markdown to keep a copy.';
+  return errorMessage(error, 'Something went wrong. Download your Markdown to keep a copy.');
 }
 function draftOptions(draft: DraftOptions): DraftOptions {
   return { images: draft.images, mode: draft.mode, slideTheme: draft.slideTheme, slideRatio: draft.slideRatio, project: draft.project };
@@ -193,6 +195,8 @@ class MarkdownWorkspace extends HTMLElement {
   connectedCallback(): void {
     if (this.initialized) return;
     this.initialized = true;
+    // The presentation library says it in its own dialog.
+    watchLoadFailures((text) => { if (!this.querySelector('[data-pres-dialog][open]')) this.notify(text, 15_000); });
     void this.initialize().catch((error) => {
       this.setSaveState('error', 'Unable to open workspace');
       this.notify(messageOf(error), 15_000);

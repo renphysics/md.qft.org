@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath } from '../src/lib/presentation-messages';
 import { EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError } from '../src/lib/presentation-store';
 import { formatDeckReport } from '../src/lib/deck-report';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../src/lib/load-failure';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -24,7 +25,14 @@ interface Dependencies {
   /** A stored record by id (getPresentation). */
   get?: (id: string) => Promise<unknown>;
   clipboard?: (text: string) => Promise<void>;
+  /** The saved list (listPresentationsDetailed). */
+  list?: () => Promise<unknown>;
+  /** Make loading these lazily loaded modules fail, as after a new release. */
+  unloadable?: string[];
 }
+
+/** Chrome's text for a lazily loaded part of the site that is gone. */
+const failedImport = (name: string) => new TypeError(`Failed to fetch dynamically imported module: https://md.qft.org/_astro/${name.replace(/^.*\//, '')}.B1x2y3.js`);
 
 function library(dependencies: Dependencies = {}) {
   const file = new URL('../src/scripts/presentation-library.ts', import.meta.url);
@@ -56,7 +64,7 @@ function library(dependencies: Dependencies = {}) {
   const sandbox: Record<string, any> = {
     // The host realm's Error, so errors from the real store module are recognised.
     exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
-    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT,
+    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure,
     formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
     Date: class extends Date { static now() { return clock.now; } },
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },
@@ -91,6 +99,8 @@ function library(dependencies: Dependencies = {}) {
     exportPresentationHtml(html: string, title: string, options: unknown) { calls.exports.push({ html, title, options }); return '<html></html>'; },
     preparePresentationDocument() { calls.prepared++; return ''; },
     require(name: string) {
+      if (dependencies.unloadable?.includes(name)) throw failedImport(name);
+      if (name === '../lib/slidev-convert-browser') return { convertSlidevBuild: async () => ({ html: '<p>converted</p>', issues: [] }) };
       if (name === '../lib/deck-project') {
         return {
           openDeck(input: File) { calls.open++; return dependencies.open?.(input) ?? Promise.resolve(null); },
@@ -106,6 +116,7 @@ function library(dependencies: Dependencies = {}) {
         return {
           saveDeck(input: any) { calls.save++; return dependencies.save?.(input) ?? Promise.resolve({ info: { id: 'saved', title: input.title, engine: input.engine }, existing: false }); },
           getPresentation: async (id: string) => dependencies.get?.(id),
+          listPresentationsDetailed: async () => dependencies.list?.() ?? { presentations: [], skipped: 0 },
           findSavedDeck: async (archive: Blob) => dependencies.find?.(archive),
           EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError,
           updateDeckEdits(id: string, edits: Map<string, string>, options?: { basedOn?: number }) {
@@ -978,4 +989,106 @@ test('library rows with the same title also name their file', () => {
   assert.match(details[0], /^small-reveal\.zip · Reveal\.js · 2 KB/);
   assert.match(details[1], /^small\ufffdgnp\.zip · /, 'invisible characters in the name are shown');
   assert.match(details[2], /^Reveal\.js · 2 KB/, 'a unique title needs no file name');
+});
+
+test('a library whose storage code cannot be loaded says so with Reload, and does not show 0 presentations', async () => {
+  const f = library({ unloadable: ['../lib/presentation-store'] });
+  await f.instance.refreshLibrary();
+  const list = f.control('[data-pres-list]');
+  assert.equal(list.children.length, 1);
+  const [box] = list.children;
+  assert.equal(box.children[0].textContent, LOAD_FAILURE_TEXT);
+  assert.match(LOAD_FAILURE_TEXT, /^A part of this site could not be loaded: the site was updated while this page was open, or the connection was lost\. Reload the page to continue\./);
+  assert.equal(box.children[1].textContent, 'Reload the page');
+  assert.equal(f.control('[data-pres-count]').hidden, true);
+  assert.equal(f.control('[data-pres-count]').textContent, '', 'no count of 0');
+  assert.deepEqual(f.calls.notices, [], 'the browser’s text is not shown');
+  // Read again later, the list and its count come back.
+  const g = library({ list: async () => ({ presentations: [{ id: 'a', title: 'Waves', fileName: 'w.zip', engine: 'reveal', archiveSize: 10, createdAt: 0 }], skipped: 0 }) });
+  await g.instance.refreshLibrary();
+  assert.equal(g.control('[data-pres-count]').textContent, '1');
+  assert.equal(g.control('[data-pres-count]').hidden, false);
+});
+
+test('a file that cannot be opened because a part of the site is gone gets the fixed sentence', async () => {
+  const f = library({ unloadable: ['../lib/deck-project'] });
+  // The workspace turns the rejection into its toast with the same helper.
+  await assert.rejects(f.instance.tryOpenFile(new File(['ZIP'], 'deck.zip')), (error: unknown) => errorMessage(error, '') === LOAD_FAILURE_TEXT);
+  assert.equal(f.instance.busy, false);
+});
+
+test('the library shows a load failure in its notice as the fixed sentence', () => {
+  const f = library();
+  const real = Object.getPrototypeOf(f.instance).notice;
+  real.call(f.instance, failedImport('../lib/deck-sources'));
+  assert.equal(f.control('[data-pres-notice]').textContent, LOAD_FAILURE_TEXT);
+  real.call(f.instance, new Error('Something else.'));
+  assert.equal(f.control('[data-pres-notice]').textContent, 'Something else.');
+});
+
+test('a Slidev converter whose page script cannot be fetched is reported as unavailable, not as a broken build', async () => {
+  const f = library({ unloadable: ['../lib/slidev-convert-browser'] });
+  const deps = f.instance.buildDeps(f.instance.operation);
+  await assert.rejects(deps.convertSlidev(new Map(), {}, {}), (error: any) => {
+    // deck-project recognises "converter unavailable" by an Error with a string detail.
+    assert.equal(error instanceof Error, true);
+    assert.equal(error.name, 'SlidevConverterUnavailableError');
+    assert.equal(typeof error.detail, 'string');
+    assert.equal(error.message, 'The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.');
+    return true;
+  });
+  const g = library();
+  assert.deepEqual(await g.instance.buildDeps(g.instance.operation).convertSlidev(new Map(), {}, {}), { html: '<p>converted</p>', issues: [] });
+});
+
+test('a converter that could not load is no fault of the presentation: Try again, and the stage says it could not be opened this time', () => {
+  const f = library();
+  const project = fixtureProject({ kind: 'slidev-build', engine: 'slidev', title: 'Waves', source: undefined });
+  const playable = fixturePlayable({ html: '', profile: 'tolerant', issues: [{ code: 'slidev-converter-unavailable', severity: 'error', where: 'Failed to fetch', message: 'The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.' }] });
+  f.show(project, playable, 'new');
+  assert.match(f.control('[data-pres-notes-list]').children[0].children[0].textContent, /^Try again: $/);
+  assert.equal(f.control('[data-pres-start-message]').textContent, 'This presentation could not be opened this time.');
+  assert.doesNotMatch(f.control('[data-pres-start-detail]').textContent, /what to change/);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Could not be opened this time');
+  assert.match(f.control('[data-pres-problem]').children[0].textContent, /converter could not be downloaded/);
+  // A real fault keeps its label.
+  const g = library();
+  g.show(project, fixturePlayable({ html: '', issues: [{ code: 'slidev-monaco-unsupported', severity: 'error', message: 'Monaco cannot run.' }] }), 'new');
+  assert.match(g.control('[data-pres-notes-list]').children[0].children[0].textContent, /Needs a fix/);
+  assert.equal(g.control('[data-pres-start-detail]').textContent, 'The notes from the check below say what to change.');
+});
+
+test('while another file opens, the dialog shows that file and its progress, never the previous presentation as ready', async () => {
+  const building = deferred<unknown>();
+  const next = revealProject({ title: 'Second deck' });
+  const f = library({ open: async () => next, build: () => building.promise });
+  f.show(revealProject({ title: 'First deck' }), revealPlayable(), 'saved');
+  assert.equal(f.control('[data-pres-start-button]').hidden, false);
+  f.control('[data-pres-problem]').hidden = false;
+  const opening = f.instance.tryOpenFile(new File(['<html>'], 'second.html'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.calls.build, 1, 'the second file is being built');
+  assert.equal(f.instance.active, undefined, 'the first deck is no longer active');
+  assert.equal(f.calls.destroyed, 1, 'its player is gone');
+  assert.equal(f.control('[data-pres-title]').textContent, 'Second deck');
+  assert.equal(f.control('[data-pres-start-title]').textContent, 'Second deck');
+  assert.equal(f.control('[data-pres-start-message]').textContent, 'Checking the presentation…');
+  assert.equal(f.control('[data-pres-start-button]').hidden, true, 'no Start for a deck that is not ready');
+  assert.equal(f.control('[data-pres-present]').disabled, true);
+  assert.equal(f.control('[data-pres-problem]').hidden, true, 'no problem of the previous deck');
+  assert.equal(f.control('[data-pres-storage]').textContent, 'Opening the file…');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Opening…');
+  // Progress from the build appears on the stage too.
+  const deps = (f.instance as any).buildDeps(f.instance.operation);
+  deps.onProgress('Bundling the presentation…');
+  assert.equal(f.control('[data-pres-start-message]').textContent, 'Bundling the presentation…');
+  // The new file fails: its own message, nothing of the old deck.
+  building.reject(new Error('This ZIP is damaged. Make the ZIP again.'));
+  await assert.rejects(opening, /damaged/);
+  assert.equal(f.control('[data-pres-title]').textContent, 'Second deck');
+  assert.equal(f.control('[data-pres-start-message]').textContent, 'This file could not be opened.');
+  assert.equal(f.control('[data-pres-start-detail]').textContent, 'This ZIP is damaged. Make the ZIP again.');
+  assert.equal(f.control('[data-pres-start-button]').hidden, true);
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Could not be opened');
+  assert.equal(f.instance.active, undefined);
 });
