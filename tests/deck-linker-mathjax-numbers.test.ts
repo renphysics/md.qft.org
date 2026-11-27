@@ -26,11 +26,14 @@ function mathJaxPage(before = '', version: 2 | 3 | 4 = 3) {
   const seen: Options[] = [];
   const rendered: string[] = [];
   const converted: Array<{ maxExpand?: number }> = [];
+  const statusClasses: string[] = [];
   let formulas: string[] = [];
   const body = element('body', []);
   const context: Record<string, any> = {
     setTimeout: (callback: () => void) => callback(),
-    document: { readyState: 'loading', body, addEventListener: () => {}, getElementById: () => null, querySelectorAll: () => [], createElement: () => ({}) },
+    document: { readyState: 'loading', body, addEventListener: () => {}, getElementById: () => null, createElement: () => ({}),
+      // Reveal.js's text copy of the current slide for screen readers.
+      querySelectorAll: (selector: string) => selector === '.reveal > .aria-status' ? [{ classList: { add: (name: string) => { statusClasses.push(name); } } }] : [] },
     renderMathInElement: (_root: unknown, options: Options) => { seen.push(options); for (const tex of formulas) rendered.push(options.preProcess(tex)); formulas = []; },
     katex: { render: (tex: string, _node: unknown, options: { maxExpand?: number }) => { rendered.push(tex); converted.push(options); } },
   };
@@ -39,7 +42,7 @@ function mathJaxPage(before = '', version: 2 | 3 | 4 = 3) {
   if (before) vm.runInContext(before, context);
   vm.runInContext(mathJaxStandInSource(version), context);
   const typeset = (...list: string[]) => { formulas = list; context.MathJax.typeset(); return rendered.splice(0); };
-  return { context, seen, converted, typeset };
+  return { context, seen, converted, statusClasses, typeset };
 }
 
 /** The rewrite of one configuration, for formulas given one by one. */
@@ -240,12 +243,13 @@ describe('what KaTeX makes of the rewritten formulas', () => {
 });
 
 describe('a long numbered environment (closing check Y1.1)', () => {
-  // 120 rows with five of the presentation's own macros each (600 expansions): MathJax typesets this with (1) to (120).
+  // 90 rows that use a macro of the presentation six times each (540 expansions): MathJax 3 typesets this with (1) to (90)
+  // (measured in the closing check and its re-check; 120 such rows pass MathJax's own limit on the expanded text).
   // In KaTeX the added \\tag costs about six more a row, which passes its limit of 1,000.
-  const rows = Array.from({ length: 120 }, (_, index) => `\\v{a}_{${index}} &= \\v{b} + \\v{c} + \\v{d} + \\v{e}`).join(' \\\\ ');
+  const rows = Array.from({ length: 90 }, (_, index) => `\\v{a}_{${index}} &= \\v{b} + \\v{c} + \\v{d} + \\v{e} + \\v{f}`).join(' \\\\ ');
   const long = `\\begin{align} ${rows} \\end{align}`;
   const config = "window.MathJax = { tex: { tags: 'ams', macros: { v: ['\\\\mathbf{#1}', 1] } } };";
-  const numbers = Array.from({ length: 120 }, (_, index) => `(${index + 1})`).join('');
+  const numbers = Array.from({ length: 90 }, (_, index) => `(${index + 1})`).join('');
 
   it('is typeset with its numbers: \\tag costs KaTeX macro expansions that MathJax does not count', () => {
     const { seen, typeset } = mathJaxPage(config);
@@ -282,6 +286,19 @@ describe('typesetting again (closing check Y1.3)', () => {
       typeset('x');
       for (const name of ['katex', 'katex-error', 'tex2jax_ignore', 'mathjax_ignore']) assert.ok(seen[0].ignoredClasses?.includes(name), `${before}: ${name}`);
     }
+  });
+});
+
+describe('Reveal.js\'s text copy of the current slide (re-check W1.1)', () => {
+  it('is marked as not to be typeset before each pass, so its equations never take numbers', () => {
+    const { statusClasses, seen, typeset } = mathJaxPage(ams);
+    typeset('x');
+    assert.deepEqual(statusClasses, ['tex2jax_ignore']);
+    assert.ok(seen[0].ignoredClasses?.includes('tex2jax_ignore'));
+    typeset('y');
+    assert.deepEqual(statusClasses, ['tex2jax_ignore', 'tex2jax_ignore'], 'again on a later pass: Reveal.js may have made the element since');
+    // A page's own element with that class name is not skipped as a class.
+    assert.equal(seen[0].ignoredClasses?.includes('aria-status'), false);
   });
 });
 

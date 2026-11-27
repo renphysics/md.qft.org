@@ -800,8 +800,13 @@ class MarkdownWorkspace extends HTMLElement {
     this.q('[data-save-label]').textContent = label;
   }
 
-  /** Hide the toast if it still shows this message. */
+  /**
+   * Hide the toast if it still shows this message, and remove its copy in an
+   * open dialog (re-check W2.1: "Opening NAME…" stayed at the top of the
+   * presentation dialog after a large file dropped on it had opened).
+   */
   private clearNotice(message: string): void {
+    for (const copy of this.querySelectorAll<HTMLElement>('[data-dialog-notice]')) if (copy.textContent === message) copy.remove();
     const toast = this.q('[data-toast]');
     if (toast.textContent !== message) return;
     clearTimeout(this.toastTimer);

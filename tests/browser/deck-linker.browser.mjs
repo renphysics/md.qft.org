@@ -250,8 +250,12 @@ export default async function run(t) {
   });
 
   await step('A long numbered environment is typeset with its numbers, and typesetting again leaves typeset formulas alone', async () => {
-    // 120 rows with five of the presentation's macros each: \tag costs KaTeX expansions that MathJax does not count (closing check Y1.1).
-    const rows = Array.from({ length: 120 }, (_, index) => `\\v{a}_{${index}} &= \\v{b} + \\v{c} + \\v{d} + \\v{e}`).join(' \\\\\n');
+    // 90 rows that use a macro of the presentation six times each, which MathJax 3 typesets with (1) to (90):
+    // \tag costs KaTeX expansions that MathJax does not count (closing check Y1.1).
+    const rows = Array.from({ length: 90 }, (_, index) => `\\v{a}_{${index}} &= \\v{b} + \\v{c} + \\v{d} + \\v{e} + \\v{f}`).join(' \\\\\n');
+    // Reveal.js's text copy of the current slide for screen readers, here already in the page and holding TeX: whether
+    // Reveal.js's own copy held raw TeX at the first typesetting pass depended on timing (re-check W1.1).
+    const status = '<div class="aria-status" aria-live="polite" style="position:absolute;height:1px;width:1px;overflow:hidden;clip:rect(1px,1px,1px,1px)">\\begin{equation} s = 1 \\end{equation}</div>';
     // Its own list of skipped tags (without annotation) and typesetting on every slide change (closing check Y1.3).
     const config = "{ tex: { tags: 'ams', macros: { v: ['\\\\mathbf{#1}', 1] } }, options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] } }";
     const files = new Map([['index.html', new TextEncoder().encode(`<!doctype html><html><head><meta charset="utf-8"><title>Long environment</title>
@@ -261,7 +265,7 @@ export default async function run(t) {
 </head><body><div class="reveal"><div class="slides">
 <section><h3>Long</h3>\\begin{align}\n${rows}\n\\end{align}<p>The last is \\eqref{eq:after} minus one.</p></section>
 <section><h3>After</h3>\\begin{equation} z = 1 \\label{eq:after} \\end{equation}<p>See \\eqref{eq:after}.</p></section>
-</div></div>
+</div>${status}</div>
 <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
 <script>Reveal.initialize({ hash: true }); Reveal.on('slidechanged', function () { MathJax.typesetPromise(); });</script></body></html>`)]]);
     const frame = await play(page, await linked(files, 'long'), 'long');
@@ -276,14 +280,18 @@ export default async function run(t) {
       tags: [...document.querySelectorAll('.reveal .slides section:first-child .katex-html .katex-tag')].map((tag) => tag.textContent.replace(/[\u200b\s]/g, '')).join(' '),
       text: document.querySelector('.reveal .slides section:first-child p').textContent,
     }));
-    assert.deepEqual(first, { tags: Array.from({ length: 120 }, (_, index) => `(${index + 1})`).join(''), text: 'The last is (121) minus one.' });
+    assert.deepEqual(first, { tags: Array.from({ length: 90 }, (_, index) => `(${index + 1})`).join(''), text: 'The last is (91) minus one.' });
     const before = await count();
     assert.deepEqual({ errors: before.errors, nested: before.nested }, { errors: 0, nested: 0 });
-    assert.deepEqual(await goTo(frame, 1), { tags: ['(121)'], text: 'See (121).' });
+    // The copy for screen readers is not typeset, so the equations of the slides are all that was counted.
+    const counted = () => frame.evaluate(() => ({ numbers: window.__qftEquations.count, inCopy: document.querySelectorAll('.aria-status .katex, .aria-status .katex-error').length }));
+    assert.deepEqual(await counted(), { numbers: 91, inCopy: 0 });
+    assert.deepEqual(await goTo(frame, 1), { tags: ['(91)'], text: 'See (91).' });
     await goTo(frame, 0);
     for (let pass = 0; pass < 3; pass += 1) await frame.evaluate(() => MathJax.typesetPromise());
     assert.deepEqual(await count(), before, 'five more typesetting passes add nothing');
-    assert.deepEqual(await goTo(frame, 1), { tags: ['(121)'], text: 'See (121).' });
+    assert.deepEqual(await counted(), { numbers: 91, inCopy: 0 }, 'also after Reveal.js has written the copy again');
+    assert.deepEqual(await goTo(frame, 1), { tags: ['(91)'], text: 'See (91).' });
   });
 
   await step('A plain page that loads MathJax 3 on its own is typeset with KaTeX, also text that MathJax.typesetPromise is asked for later', async () => {

@@ -191,9 +191,10 @@ const equationNumbersSource = String.raw`  var equations = window.__qftEquations
   }
   // KaTeX stops a formula after 1,000 macro expansions, and \tag is a macro
   // there (about six expansions), so the numbers added above made a long
-  // environment fail that MathJax typesets (closing check Y1.1: 167 plain
-  // rows, or 84 rows with five of the presentation's macros each). MathJax
-  // counts only the presentation's own macros; 10,000 is MathJax 2's limit.
+  // environment fail that MathJax typesets (closing check Y1.1: from 167
+  // plain rows, or 84 rows that use a macro of the presentation six times
+  // each). MathJax counts only the presentation's own macros (and limits
+  // the size of the text they expand to); 10,000 is MathJax 2's limit.
   var maxExpand = 10000;
 `;
 
@@ -402,6 +403,18 @@ ${mathHelpersSource()}
   // when the presentation gives its own list of skipped tags (closing check
   // Y1.3: each pass typeset the annotation once more, inside the last result).
   var ownOutput = ['tex2jax_ignore', 'mathjax_ignore', 'katex', 'katex-error'];
+  // Reveal.js keeps a hidden text copy of the current slide for screen
+  // readers (.aria-status, a child of .reveal). Whether it still held raw TeX
+  // at the first pass depended on timing, and then its equations took
+  // numbers: a formula added later was (5) in one run and (7) in the next
+  // (re-check W1.1). The copy is marked as not to be typeset, before every
+  // pass, because Reveal.js may make the element at any time.
+  function skipStatusCopy() {
+    try {
+      var copies = document.querySelectorAll('.reveal > .aria-status');
+      for (var index = 0; index < copies.length; index += 1) copies[index].classList.add('tex2jax_ignore');
+    } catch (error) {}
+  }
   var config = {};
   function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value) && !value.nodeType; }
   function merge(target, source, depth) {
@@ -455,6 +468,7 @@ ${mathHelpersSource()}
     try {
       if (typeof window.renderMathInElement !== 'function') return;
       var options = settings();
+      skipStatusCopy();
       roots(elements).forEach(function (root) {
         try { window.renderMathInElement(root, options); } catch (error) {}
         try { replaceReferences(root, options.ignoredTags); } catch (error) {}

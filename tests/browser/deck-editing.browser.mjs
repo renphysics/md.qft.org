@@ -360,6 +360,28 @@ export default async function run(t) {
     await dialog.waitFor({ state: 'hidden' });
   });
 
+  await t.step('A large presentation opened while the dialog is open leaves no "Opening…" at the top of the dialog', async () => {
+    await page.locator('[data-open-presentations]').click();
+    await page.locator('.presentation-saved-open', { hasText: 'Optics workshop' }).click();
+    await page.locator('[data-pres-start-button]').waitFor({ state: 'visible', timeout: 60_000 });
+    // From 2 MB the workspace says "Opening NAME…" at once: as its notice and, with a dialog open, as a copy at the top of the dialog.
+    const filler = new Uint8Array(2_200_000);
+    for (let index = 0; index < filler.length; index += 1) filler[index] = (index * 7919) % 251;
+    const large = Buffer.from(zipSync({
+      'index.html': strToU8('<!doctype html><html><head><title>Large lesson</title></head><body><h1>Large lesson</h1><p>One slide.</p></body></html>'),
+      'media/filler.bin': filler,
+    }, { level: 0 }));
+    // The workspace's own input, as for a file dropped on the page.
+    await page.locator('[data-file-input]').setInputFiles({ name: 'large-lesson.zip', mimeType: 'application/zip', buffer: large });
+    await until(async () => (await page.locator('[data-pres-title]').textContent()) === 'Large lesson', 'the large file to open');
+    await page.locator('[data-pres-start-button]').waitFor({ state: 'visible', timeout: 60_000 });
+    await until(async () => (await page.locator('[data-dialog-notice]').count()) === 0, 'the "Opening large-lesson.zip…" copy to go once the file has opened');
+    assert.equal(await page.locator('[data-toast]').isVisible(), false, 'and the notice itself');
+    assert.equal(await page.locator('[data-pres-title]').textContent(), 'Large lesson');
+    await page.locator('[data-pres-close]').click();
+    await dialog.waitFor({ state: 'hidden' });
+  });
+
   await t.step('After a reload the deck reopens from the library with its edit', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.locator('.cm-editor').waitFor();
