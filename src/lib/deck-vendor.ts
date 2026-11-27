@@ -259,6 +259,9 @@ export function mapLibraryUrl(url: string): LibraryReference | undefined {
   return { library, ...match, module: Boolean(match.module || location.module), requested: location.version, host };
 }
 
+/** Folders and file name of the deepest Reveal.js file a deck path can name (dist/theme/fonts/<font>/<file>, with room to spare). */
+const MAX_LIBRARY_DEPTH = 8;
+
 /**
  * The bundled equivalent of a deck path that the deck does not contain, such
  * as dist/reveal.js, plugin/notes/notes.js or vendor/katex/katex.min.js. Only
@@ -280,7 +283,10 @@ export function mapLibraryPath(path: string): LibraryReference | undefined {
   }
   // Reveal.js: try each tail of the path, longest first, so that
   // vendor/reveal/dist/theme/black.css matches as dist/theme/black.css.
-  for (let index = 0; index < parts.length; index += 1) {
+  // Every file of the package is at most a few folders deep: only the last
+  // MAX_LIBRARY_DEPTH tails are tried, so a path of thousands of folders
+  // costs linear time, not one join per folder.
+  for (let index = Math.max(0, parts.length - MAX_LIBRARY_DEPTH); index < parts.length; index += 1) {
     const rest = parts.slice(index).join('/');
     const lower = rest.toLowerCase();
     // Bare names are too generic, except those that name Reveal.js itself.

@@ -86,6 +86,7 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   { name: '60,000 sibling elements that the linker removes or replaces', run: () => link(deck({
     'index.html': reveal(`<section>${'<meta http-equiv="x-ua" content="1"><video><track src="a.vtt"></video><iframe src="https://x.example/"></iframe><script src="m.js"></script><link rel="preload" href="a.css">'.repeat(12_000)}</section>`),
   })) },
+  { name: 'a script path of 25,000 folders', run: () => link(deck({ 'index.html': page(`<script src="${'a/'.repeat(25_000)}reveal/x.js"></script><link rel="stylesheet" href="${'b/'.repeat(25_000)}theme/x.css">`) })) },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
   { name: 'a Slidev library chunk with 150,000 "export{"', run: () => detectDeck(slidevBuild({ vue: `/*${'export{'.repeat(150_000)}*/` })) },
