@@ -121,6 +121,24 @@ describe('portable interactive HTML exports', () => {
     for (const html of [await exported('document', '# Plain'), await exported('slides', '# Plain')]) assert.match(html, /<meta name="referrer" content="no-referrer">/);
   });
 
+  it('declares no-referrer exactly once in the export\'s own head, before any embedded runtime', async () => {
+    // The embedded runtimes carry their own frame documents with the same meta
+    // as text, so a match anywhere in the file would not prove that the
+    // exported page itself has the policy.
+    const referrer = /<meta name="referrer" content="no-referrer">/g;
+    const ownHead = (html: string) => {
+      const end = html.indexOf('<script');
+      return end < 0 ? html.slice(0, html.indexOf('</head>')) : html.slice(0, end);
+    };
+    const slides = await exported('slides', '# Plain');
+    assert.ok((slides.match(referrer) ?? []).length > 1, 'the slide export embeds a runtime that carries the meta as text');
+    for (const html of [slides, await exported('slides', interactiveFence({ preset: 'wave-packet' })), await exported('document', '# Plain')]) {
+      const head = ownHead(html);
+      assert.ok(head.includes('</title>'), 'the own head ends after the export\'s title');
+      assert.equal((head.match(referrer) ?? []).length, 1);
+    }
+  });
+
   it('keeps ordinary document exports script-free and ordinary JavaScript fences literal', async () => {
     const html = await exported('document', '# Code\n\n```javascript\nparent.__bad = true;\n```');
     assert.doesNotMatch(html, /<script\b/);
