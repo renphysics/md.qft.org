@@ -5,8 +5,11 @@
  * says so in a notice over the slides; one that cannot be started shows a
  * problem on the stage and the status line does not claim it plays; links to
  * websites open only from the page's own button, in a new tab, also in
- * Present; and applying an edit to a plain page says that it starts again
- * from the beginning. Every other request to another origin is blocked.
+ * Present; applying an edit to a plain page says that it starts again from
+ * the beginning; a button that sends the presentation to a website plays it
+ * again on the same slide, while a presentation that leaves by itself is
+ * stopped, each with the player's own sentence. Every other request to
+ * another origin is blocked.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -291,11 +294,11 @@ gtag('config', 'G-1');</script></body></html>`);
     assert.doesNotMatch(text, /same slide/);
   });
 
-  await t.step('A quiz form answers in the library; a button that sends the page to a website stops it with the player\'s own sentence', async () => {
+  await t.step('A quiz form answers in the library; a button that sends the page to a website plays it again, with the player\'s own sentence', async () => {
     await back(page);
     const lesson = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Quiz lesson</title></head><body>
 <form id="quiz" onsubmit="return check()"><label>2 + 2 = <input id="answer"></label> <button id="check-answer">Check</button></form><p id="feedback">-</p>
-<button id="go" type="button" onclick="window.location.href = 'https://phet.colorado.edu/sims/html/forces-and-motion-basics/latest/forces-and-motion-basics_en.html'">Open the simulation</button>
+<button id="go" type="button" onclick="const site = 'https://phet.colorado.edu/sims/html/forces-and-motion-basics/latest/forces-and-motion-basics_en.html'; window.location.href = site">Open the simulation</button>
 <script>function check() { document.getElementById('feedback').textContent = document.getElementById('answer').value === '4' ? 'Correct!' : 'Try again'; return false; }</script>
 </body></html>`);
     await page.locator('[data-pres-input]').setInputFiles({ name: 'quiz.html', mimeType: 'text/html', buffer: lesson });
@@ -311,12 +314,64 @@ gtag('config', 'G-1');</script></body></html>`);
     await until(async () => (await frame.locator('#feedback').textContent()) === 'Try again', 'Enter to check the answer');
     assert.equal(await status(page), 'Playing locally', 'the form was handled by the presentation: no problem');
     await frame.locator('#go').click();
-    await until(async () => (await status(page)) === 'Playback needs attention', 'the playback to stop');
+    await until(async () => (await status(page)) === 'Playing locally · 1 problem reported', 'the lesson to play again');
+    await deckFrame(page, '#quiz');
+    assert.equal(await page.locator('[data-pres-problem]').isVisible(), false);
+    assert.deepEqual(await page.locator('[data-pres-runtime-list] li').allTextContents(), [
+      'The presentation tried to replace its slides with a page from phet.colorado.edu, which the player cannot do. It was started again from the beginning. Ask your AI assistant to use an ordinary link for that page.',
+    ], 'a page without slide positions starts from the beginning, in the player\'s own words');
+    assert.equal(await page.locator('[data-pres-dialog]').evaluate((dialog) => /unsupported navigation/.test(dialog.textContent)), false);
+    await page.screenshot({ path: resolve(t.artifacts, 'deck-problems-left.png') });
+  });
+
+  await t.step('A Reveal.js button that goes to a website plays the presentation again on the same slide', async () => {
+    await back(page);
+    const deck = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Simulation lesson</title>
+<link rel="stylesheet" href="${REVEAL}/dist/reveal.css"></head><body><div class="reveal"><div class="slides">
+<section><h1>Forces</h1></section>
+<section><h2>Simulation</h2><button id="sim" type="button">Open the simulation</button></section>
+<section><h2>Third slide</h2></section>
+</div></div><script src="${REVEAL}/dist/reveal.js"></script><script>Reveal.initialize({ hash: false });
+document.getElementById('sim').addEventListener('click', () => { const site = 'https://phet.colorado.edu/sims/html/forces-and-motion-basics/latest/forces-and-motion-basics_en.html'; window.location.href = site; });</script></body></html>`);
+    await open(page, 'simulation-lesson.html', deck);
+    const frame = await start(page);
+    await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal?.isReady?.()), 'Reveal.js to be ready');
+    await frame.locator('h1').click();
+    await page.keyboard.press('ArrowRight');
+    await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h === 1), 'the second slide');
+    await frame.locator('#sim').click();
+    await until(async () => (await status(page)) === 'Playing locally · 1 problem reported', 'the presentation to play again');
+    const again = await until(async () => {
+      for (const candidate of page.frames()) {
+        if (!candidate.isDetached() && candidate.url().startsWith('blob:')
+          && await candidate.evaluate(() => /** @type {any} */ (window).Reveal?.isReady?.() === true).catch(() => false)) return candidate;
+      }
+      return false;
+    }, 'the new playback');
+    assert.equal(await again.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h), 1, 'on the same slide');
+    assert.deepEqual(await page.locator('[data-pres-runtime-list] li').allTextContents(), [
+      'The presentation tried to replace its slides with a page from phet.colorado.edu, which the player cannot do. It was started again at the same slide. Ask your AI assistant to use an ordinary link for that page.',
+    ]);
+    assert.equal(await page.locator('[data-pres-problem]').isVisible(), false);
+  });
+
+  await t.step('A presentation that goes to a website by itself, with no click, is stopped with the player\'s own sentence', async () => {
+    await back(page);
+    // Later than the browser's few seconds of activation after the click on Start.
+    const lesson = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Leaving lesson</title></head><body>
+<h1>Leaving lesson</h1><script>setTimeout(function () { var site = 'https://phet.colorado.edu/en/simulations'; location.href = site; }, 6500);</script></body></html>`);
+    await open(page, 'leaving-lesson.html', lesson);
+    await page.locator('[data-pres-start-button]').click();
+    // Wait without looking: Playwright's checks in the page count as the person's activity.
+    await page.waitForTimeout(11_000);
     const problem = page.locator('[data-pres-problem]');
-    assert.equal(await problem.textContent(), 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.');
+    assert.equal(await problem.isVisible(), true, 'stopped with a problem');
+    const sentence = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.';
+    assert.equal(await problem.textContent(), sentence);
     assert.equal(await problem.locator('strong').count(), 0, 'the player\'s own words, without the presentation\'s label');
     assert.equal(await page.locator('[data-pres-start-button]').isVisible(), true);
-    await page.screenshot({ path: resolve(t.artifacts, 'deck-problems-left.png') });
+    assert.equal(await page.locator('[data-pres-host] iframe').count(), 0, 'stopped');
+    assert.deepEqual(await page.locator('[data-pres-runtime-list] li').allTextContents(), [sentence]);
   });
 
   await t.step('Nothing else left the page', async () => {

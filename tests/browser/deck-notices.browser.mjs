@@ -4,8 +4,10 @@
  * the frame and the Reveal.js scale do not change when one shows or goes; one
  * shows at a time; each covers at most half of the stage with its buttons in
  * view and clickable; "Open link in a new tab" gives the keyboard back to the
- * slides. In Present, the notices and the "slides did not start" box keep
- * clear of the Exit fullscreen button.
+ * slides. A notice waits while the pointer or the keyboard is in it, and a
+ * click on its text leaves the keyboard with the slides. In Present, the
+ * notices and the "slides did not start" box keep clear of the Exit
+ * fullscreen button.
  */
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
@@ -105,6 +107,17 @@ export default async function run(t) {
       assert.match(await page.locator('[data-pres-player-status]').textContent(), /^Playing with basic settings/);
     });
 
+    if (size.width === 1280) await t.step(`${label}: the basic-settings notice stays while the pointer is on it, and closes 12 seconds after it left`, async () => {
+      const rescued = page.locator('[data-pres-rescued]');
+      await rescued.hover();
+      await page.waitForTimeout(13_000);
+      assert.equal(await rescued.isVisible(), true, 'it waits while the pointer is on it');
+      await page.mouse.move(5, 5);
+      const left = Date.now();
+      await rescued.waitFor({ state: 'hidden', timeout: 16_000 });
+      assert.ok(Date.now() - left >= 11_000, `it closes about 12 seconds after the pointer left (${Date.now() - left} ms)`);
+    });
+
     await t.step(`${label}: a link replaces that notice, the slides keep their size, and Open gives the keyboard back`, async () => {
       const frame = await deckFrame(page, '.reveal .slides');
       const before = await slideSize(page, frame);
@@ -131,6 +144,29 @@ export default async function run(t) {
       assert.equal(opened.url(), LONG_LINK);
       await opened.close();
       await until(() => page.evaluate(() => document.activeElement?.localName === 'iframe'), 'the keyboard to go back to the slides after Open');
+    });
+
+    if (size.width === 1280) await t.step(`${label}: a click on the link notice's text leaves the keyboard with the slides, and the notice waits while the keyboard is in it`, async () => {
+      const frame = await deckFrame(page, '.reveal .slides');
+      const link = page.locator('[data-pres-link]');
+      await frame.locator('#long').click();
+      await link.waitFor({ state: 'visible' });
+      await page.locator('[data-pres-link-text]').click();
+      await until(() => page.evaluate(() => document.activeElement?.localName === 'iframe'), 'the keyboard to stay with the slides');
+      await page.keyboard.press('ArrowRight');
+      await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h === 1), 'the arrow key to move the slides');
+      await page.keyboard.press('ArrowLeft');
+      await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h === 0), 'back to the first slide');
+      // The keyboard on its Dismiss button: the notice stays past its 20 seconds.
+      await frame.locator('#long').click();
+      await link.waitFor({ state: 'visible' });
+      await page.locator('[data-pres-link-dismiss]').focus();
+      await page.mouse.move(5, 5);
+      await page.waitForTimeout(21_000);
+      assert.equal(await link.isVisible(), true, 'it waits while the keyboard is in it');
+      await page.keyboard.press('Enter');
+      assert.equal(await link.isVisible(), false);
+      await until(() => page.evaluate(() => document.activeElement?.localName === 'iframe'), 'Dismiss to give the keyboard back');
     });
 
     await t.step(`${label}: in Present the link notice stays clear of Exit fullscreen and covers at most half`, async () => {
