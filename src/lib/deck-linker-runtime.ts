@@ -8,7 +8,7 @@
 export const LINKER_MARKER = 'data-qft-linker';
 
 /** Names of the inserted scripts, as the values of data-qft-linker. */
-export type LinkerScript = 'math' | 'mathjax' | 'mathjax-config' | 'dependencies' | 'media' | 'handlers' | 'plugins';
+export type LinkerScript = 'math' | 'mathjax' | 'mathjax-config' | 'dependencies' | 'media' | 'handlers' | 'plugins' | 'script-event';
 
 /**
  * The HTML tokenizer ends a script at "</script" and, after "<!--" followed
@@ -549,5 +549,20 @@ ${code}
   return `(function (element) {
   if (!element) return;
 ${registrations}
+})(${element});`;
+}
+
+/**
+ * The onload (or onerror) attribute of a script that the linker replaced or
+ * left out, run once where the browser would have run it: `this` is the
+ * element that `target` selects (the replacement), or this script itself when
+ * nothing replaced the original; `event` is an Event of that type.
+ */
+export function scriptEventSource(type: 'load' | 'error', code: string, target?: string): string {
+  const element = target === undefined ? 'document.currentScript' : `document.querySelector(${JSON.stringify(target)}) || document.currentScript`;
+  return `(function (element) {
+  (function (event) { with (document) with (this) {
+${code}
+} }).call(element, new Event(${JSON.stringify(type)}));
 })(${element});`;
 }

@@ -6,7 +6,7 @@ import {
 } from './deck-vendor';
 import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
-  mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
+  mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, scriptEventSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
 import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
@@ -576,6 +576,8 @@ class DeckLinker {
   private readonly bundled: string[] = [];
   private readonly versionNotes = new Set<string>();
   private readonly deferred: ChildNode[] = [];
+  /** The last classic script with a src could not be supplied (its onerror applies). */
+  private scriptLeftOut = false;
   private readonly handlerScripts: Element[] = [];
   private readonly importMap = new Map<string, string>();
   private readonly classicTexts: string[] = [];
@@ -1108,15 +1110,38 @@ class DeckLinker {
       return;
     }
     const replacement = await this.classicScript(src, element);
+    const elements = [...replacement, ...this.scriptEvent(element, replacement, this.scriptLeftOut)];
     const deferred = hasAttribute(element, 'defer') && !hasAttribute(element, 'async');
-    if (deferred && replacement.length) {
+    if (deferred && elements.length) {
       this.edits.remove(element);
-      this.deferred.push(...replacement);
-    } else this.edits.replace(element, replacement);
+      this.deferred.push(...elements);
+    } else this.edits.replace(element, elements);
   }
 
-  /** The inline elements that replace a classic script with a src. */
+  /**
+   * The element's onload code, run once right after its replacement, or its
+   * onerror code when the script was left out (review W3.1): KaTeX's own
+   * documentation starts auto-render from onload. Scripts never reach
+   * collectHandlers, so neither runs twice.
+   */
+  private scriptEvent(element: Element, replacement: Element[], leftOut: boolean): Element[] {
+    const type = leftOut ? 'error' : 'load';
+    const code = getAttribute(element, `on${type}`);
+    if (code === undefined || !code.trim()) return [];
+    this.classicTexts.push(code);
+    const last = replacement.at(-1);
+    let target: string | undefined;
+    if (last) {
+      const id = String(this.nextHandlerId++);
+      setAttribute(last, 'data-qft-on', id);
+      target = `[data-qft-on="${id}"]`;
+    }
+    return [scriptElement(scriptEventSource(type, code, target), { [LINKER_MARKER]: 'script-event' satisfies LinkerScript })];
+  }
+
+  /** The inline elements that replace a classic script with a src; sets scriptLeftOut. */
   private async classicScript(src: string, element: Element): Promise<Element[]> {
+    this.scriptLeftOut = false;
     const target = this.resolve(src, this.baseDir);
     const attributes: Record<string, string> = {};
     const id = getAttribute(element, 'id');
@@ -1140,6 +1165,7 @@ class DeckLinker {
         const reference = mapLibraryPath(target.path);
         if (reference) return this.vendorScripts(reference, target.path, attributes);
         this.reportMissing(target.path);
+        this.scriptLeftOut = true;
         return [];
       }
       case 'remote': {
@@ -1155,6 +1181,7 @@ class DeckLinker {
           return this.vendorScripts(reference, target.url, attributes);
         }
         this.reportRemote(target, 'script');
+        this.scriptLeftOut = true;
         return [];
       }
       case 'data': {
@@ -1164,10 +1191,12 @@ class DeckLinker {
           return [scriptElement(code, attributes, namespace)];
         }
         this.reportOther('a script written as a data: address');
+        this.scriptLeftOut = true;
         return [];
       }
       default:
         if (target.kind === 'other') this.reportOther(target.value);
+        this.scriptLeftOut = true;
         return [];
     }
   }
@@ -1272,14 +1301,15 @@ class DeckLinker {
       else if (target.kind === 'remote') reference = mapLibraryUrl(target.url);
       else if (target.kind === 'local') reference = mapLibraryPath(target.path);
       if (reference && reference.role !== 'not-needed') {
-        this.edits.replace(element, await this.vendorScripts(reference, src));
+        const replacement = await this.vendorScripts(reference, src);
+        this.edits.replace(element, [...replacement, ...this.scriptEvent(element, replacement, false)]);
         return;
       }
       if (target.kind !== 'local') {
         if (target.kind === 'missing') this.reportMissing(target.path);
         else if (target.kind === 'remote') this.reportRemote(target, 'script');
         else if (target.kind === 'other') this.reportOther(target.value);
-        this.edits.remove(element);
+        this.edits.replace(element, this.scriptEvent(element, [], true));
         return;
       }
       code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
@@ -1385,7 +1415,10 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    this.edits.replace(element, css ? [styleElement(css, attributes)] : []);
+    // Any other onload code runs once the style is in place; the two forms
+    // above only set what the style element already has.
+    const style = css ? [styleElement(css, attributes)] : [];
+    this.edits.replace(element, style.length ? [...style, ...this.scriptEvent(element, style, false)] : []);
   }
 
   /* --------------------------------------------------------- Markdown */
