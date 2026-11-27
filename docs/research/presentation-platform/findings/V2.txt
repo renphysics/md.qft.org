@@ -1,0 +1,110 @@
+
+##########################################################################################
+##### V2-reveal-pipeline
+
+SUMMARY:
+Out of sample, "Tier 1" works much less often than the published numbers suggest. I ran 8 testable decks with all external network blocked, through both the B7 harness player and the production site. B7 inline-deck fully passes 3 of 8, and 1 more works with a defect (an inline onclick button does nothing), so 4 of 8 are usable. A2 wrap-reveal passes 1 of 8. Both adapters handle the AI-made decks (n1, n2) well. They fail on ES modules, external Markdown (this deck reaches "ready" but is empty), 3.x plugin loading, and asset references they do not rewrite (an image in inline Markdown, data-src, data-background-image). The player treats any failed resource as fatal, which turns that last group into hard failures. A2 has no CDN mapping, so every CDN deck fails under it.
+
+Input problems: the baseline decks r1, r1b and r2 are empty folders, so I wrote two substitute CDN decks and used B1's extmd6/esm6 in place of r2. n3 is not a deck: it has no HTML file and its css/js/code folders are empty.
+
+Claims:
+- Confirmed, with caveats: V2.1, V2.2, V2.3.
+- Confirmed: V2.5, V2.7, V2.8 and V2.9. V2.7 and V2.8 also hold on new inputs.
+- Partly refuted: V2.4. The AI-made corpus deck does not use RevealMath with katex.local, and it plays fine when inlined by B7 or A2.
+- Partly reproduced: V2.6. My in-place swap timings agree with the claim; my reload timing probe failed, so that number is unverified.
+- Mixed: V2.10. B6's 13 cases pass, but only 5 of my 8 new sub-cases behave well. One of the failures loses data: a truncated whole file with a bare "..." line is applied.
+
+Browsers: H and S results were the same in full Chromium (channel 'chromium') and in chrome-headless-shell, except for one error message noted under V2.1. All servers I started are stopped. Another Chromium process that was already running is not mine and was left alone.
+
+
+[V2.1] CONFIRMED-WITH-CAVEATS — B7 inline-deck makes 3/3 real AI lecture decks and 5/5 Reveal ZIP shapes reach ready in the real player with zero network requests, navigation and interactions working.
+   DID: Copied play-test.mjs and play-zip-test.mjs, pointed outputs at proto/V2/out/b7rerun, used a copy of inline-deck.mjs, and ran both in full Chromium and in headless shell.
+   EVIDENCE: claude-lecture-1: ready, 6.0.2, 28 slides, 126 KaTeX, nav, canvas redrawn after slider. claude-lecture-2: 44 slides, 301 KaTeX. uchicago-lecture-07: 74 slides, 171 KaTeX, 5 hljs, 4/4 images. blockedRequests 0 in every case. Without the history shim it fails on replaceState. All 5 ZIP shapes reach ready with network 0. Files: proto/V2/out/b7rerun/play-test-results-{chromium,shell}.json and play-zip-*.log.
+   CAVEATS: (1) The 5 ZIP shapes are trivial: A and B have 2 slides, C, D and E have one 'Hello' slide. They test packaging, not features. (2) B7's own test set has a 4th real deck (ryanbbrown skill example) that fails: style-src-elem in full Chromium, 'RevealChart is not defined' in shell. So '3 of 3' is a subset of 4 real decks. (3) The interaction check is a single synthetic slider event. (4) Out of sample, B7 passes only 4 of 8 decks.
+
+[V2.2] CONFIRMED-WITH-CAVEATS — A2 wrap-reveal (five rewrites) makes a full-featured standard Reveal 6.0.2 project play in the existing player with vertical slides, fragments, auto-animate, backgrounds, highlight, Markdown, notes markup, search, overview.
+   DID: Regenerated reveal-wrapped*.zip with a copy of wrap-reveal.mjs; the output is byte-identical to A2's. Ran copies of the e5 and e5d scripts against an astro preview of the production dist, with external network blocked through a route in a copy of lib.cjs. Full Chromium and shell.
+   EVIDENCE: Status 'Playing locally'. 11 slides. Plugins markdown, highlight, notes, search, zoom. Vertical 1.0->1.1, fragments f0/f1, auto-animate h2 margin-top 200px, hljs with 3 line-number rows and step 2. Markdown slide with fragment and notes 'markdown notes'. r-fit-text 560px, r-stack, converted button reads Count: 2. Overview, pause and the search box all work. E5's own DOM probe reads background rgba(0,0,0,0) and image 'none' (A2's own JSON shows the same), but e5d via Reveal.getSlideBackground gives rgb(42,157,143) and a data: PNG. Keep-hash fails on replaceState and keep-attr-assets fails on an asset error, both as stated.
+   CAVEATS: S opens no speaker window (notes are present as markup only) and F does nothing (fullscreenEnabled is false). The math plugin is fatal. A2 does not map CDN URLs at all. The manifest has to claim engine 'slidev'. Out of sample, A2 passes 1 of 8 decks.
+
+[V2.3] CONFIRMED-WITH-CAVEATS — The 2.2 KB compat shim lets inlined 4.6.1, 5.2.1 and 6.0.2 decks without a first-slide id play in the sandbox chain and survive the F and S keys.
+   DID: Served B1's www with a copy of its static server on 4681; the runner is identical to dist/presentation-sandbox.html. Ran a copy of probe-site-chain2.mjs with the shim in full Chromium and shell.
+   EVIDENCE: 6.0.2, 5.2.1 and 4.6.1 (reports 4.6.0) without first-slide id and with the shim: ready, hash #/v1 after the arrow keys, no page errors after F, S and Home, player still running. 3.9.2 with the shim throws 'Cannot read properties of null (reading 'src')', as B1 reported. The shim file is 2,169 bytes.
+   CAVEATS: 'Survive' only means no error and no stop. In this chain F gives no fullscreen and S gives no speaker view. The decks are B1's own synthetic 9-slide decks, pre-inlined by B1's inliner.
+
+[V2.4] REFUTED — Inlining cannot run decks using reveal.js-menu, copycode, chalkboard or RevealMath with katex.local, while the service-worker player-origin prototype plays those same decks unmodified (13 decks including speaker popup and ?print-pdf).
+   DID: Ran a copy of probe-vfs.mjs, with the site on 4681 and the player origin on 4682 (via ?player=), external requests aborted, full Chromium. Played B1's inlined single/*.html through the real runtime and runner. Ran corpus-n1.zip through the B7 and A2 adapters into the real player.
+   EVIDENCE: Service worker: all 15 runs ready. Covered 3.9.2, 4.6.1 ?print-pdf (14 pages), 5.2.1, 6.0.2 ?print-pdf and #/3, extmd6 (4 slides), esm6, menu button, chalkboard (4 images), copycode (2 buttons), mermaid svg, corpus-n1 (36 KaTeX, 8 canvases), the 41-slide repo demo, a speaker popup with 2 ready iframes, F fullscreen, and postMessage from the site page. A sandbox of allow-scripts only gives a 404. Inlined: menu fails with 'Failed to construct URL', copycode with a script-src violation, chalkboard with a resource error, all reproduced. BUT corpus-n1 does not use RevealMath (it calls renderMathInElement on vendored KaTeX). It plays when inlined by B7 or A2: ready, 36 KaTeX, slider works. Only B1's own inliner output fails.
+   CAVEATS: The service-worker half and the menu/copycode/chalkboard half are confirmed. The SW player uses sandbox 'allow-scripts allow-same-origin allow-popups allow-modals allow-popups-to-escape-sandbox', which is much weaker than today's. math-katex-default reaches ready with 0 KaTeX (math silently missing).
+   CORRECTED: B1's inliner cannot run reveal.js-menu, copycode or chalkboard decks, but the AI-made corpus deck (vendored KaTeX auto-render, not RevealMath/katex.local) does play when inlined by the B7 or A2 adapters. The service-worker player origin plays all 13 tested decks unmodified, with a much weaker sandbox.
+
+[V2.5] CONFIRMED — Reveal postMessage API works across an opaque sandbox without injected code: after configure postMessageEvents the parent receives slidechanged and callback results for getTotalSlides/getSlideNotes/getState and can call slide().
+   DID: Wrote pm-reload.mjs. It starts the deck with the real runtime and runner, then posts JSON strings from inside the opaque runner frame to the blob deck frame. Tested n2, claude-lecture-2 and n1 after B7 inlining, in full Chromium.
+   EVIDENCE: 0 messages before configure. After configure: callback getTotalSlides = 9 / 44 / 9, getSlideNotes text, getState, beforeslidechange, slidechanged {h:3}, and the deck's indices become 3.0 after slide(3,0).
+   CAVEATS: The parent is the runner frame. Today's runner does not relay these messages to the top page.
+
+[V2.6] NOT-TESTABLE-HERE — Rebuilding the document and reloading the frame with position restored takes about 170-250 ms for 20-41 slide decks; in-place section swap + Reveal.sync() takes 20-30 ms; slide and fragment position restored correctly.
+   DID: Wrote pm-reload.mjs. It times an in-place swap (append to the current slide, then Reveal.sync and layout, 5 repetitions) and a reload (new blob plus #/h/v/f from inside the runner, with a readiness beacon). Ran it in full Chromium and shell.
+   EVIDENCE: Swap: n1 7-14 ms, n2 10-15 ms, 44-slide deck 16-25 ms (full) and 16-25 ms (shell); position unchanged. Reload: every run of my probe timed out at 8 s, so I have no reload timing and no fragment-restore check of my own.
+   CAVEATS: The swap figures agree with the claim. The reload timeout is most likely a flaw in my probe (blob navigation from inside the opaque runner), not evidence against the claim, but the 170-250 ms number remains unverified.
+
+[V2.7] CONFIRMED — Static slide mapper matches runtime slides 41/41 on demo.html and 12/12 on a mixed HTML/Markdown deck.
+   DID: Ran a copy of test-map.mjs (server on 4683, full Chromium) on B6's decks and on 6 new decks: n1, n2, r1sub and r1bsub as B7 inlined, B1 classic4, and extmd6 with external slides.md.
+   EVIDENCE: demo.html 41/41, md-deck 12/12, cursor-to-slide 10.0 correct. New decks: n1 9/9, n2 9/9, r1sub 7/7, r1bsub 4/4, classic4 9/9, extmd6 4/4. Slide counts equal everywhere.
+   CAVEATS: The test only checks that the runtime heading text lies inside the mapped source range; slides without a heading pass automatically.
+
+[V2.8] CONFIRMED — Detector recognises 36/36 Reveal decks with the right entry and rejects 3/3 non-Reveal inputs.
+   DID: Ran a copy of test-detect.mjs in full Chromium on 14 new samples. The original 36 were not rerun.
+   EVIDENCE: 10/10 new Reveal inputs recognised with the right entry and version: n1 nested (6.0.2), n2 (5.2.1 cdn), r1sub (4.6.1), r1bsub (5.1.0), hoyle-part1 (4.6.1), uchicago lecture-07/index.html (4.5.0), ryanbbrown (5.1.0), A2 standard folder my-deck/index.html (6.0.2). Rejected: the n3 unfinished folder (vendored reveal but no HTML), the empty r1 folder, a Slidev dist, a Markdown file and a non-Reveal HTML.
+   CAVEATS: The original 36-sample result was not re-executed.
+
+[V2.9] CONFIRMED — reveal.js 6 moved plugins to dist/plugin; unpinned jsDelivr with 4.x/5.x plugin paths mixes core 6.0.2 with plugins 5.2.1, while unpkg returns 404.
+   DID: Ran curl -sI -L on 15 URLs on jsDelivr, unpkg and cdnjs.
+   EVIDENCE: jsDelivr unversioned: dist/reveal.js has x-jsd-version 6.0.2; plugin/markdown, highlight and notes are 5.2.1; @latest/plugin/math/math.js is 5.2.1; dist/plugin/markdown.js is 6.0.2; @6.0.2/plugin/notes/notes.js is 404. unpkg unversioned plugin/markdown/markdown.js and plugin/notes/notes.js redirect to @6.0.2 and return 404; unpkg @6.0.2/plugin/markdown resolves to dist/plugin/markdown.js (200). cdnjs 6.0.2/plugin/markdown.min.js is 200.
+
+[V2.10] CONFIRMED-WITH-CAVEATS — Paste-in AI-answer importer handles its 13 test cases (plus 6 new messy cases requested).
+   DID: Ran a copy of B6's test.mjs, then wrote patch-new-cases.mjs with 8 sub-cases covering the 6 requested kinds plus a truncated SEARCH block and a with/without-hint pair.
+   EVIDENCE: 13/13 original cases pass. New cases: 5/8 behave as intended. Passes: smart quotes, en dash and apostrophe; truncated SEARCH/REPLACE refused; CRLF/LF mixes preserved; hint picks the right one of two candidates. Failures: (a) wrong indentation is applied with mixed tabs and spaces ('\t\t\t\t\t   <p>'); (b) a unified diff with wrong line numbers writes the answer's trailing-space context line into the file ('# Two' becomes '# Two  '); (c) a truncated whole file with a bare '...' line is ACCEPTED and deletes a slide. Two candidates with no hint: it silently edits the first and only notes the ambiguity in the report.
+   CAVEATS: The 13/13 claim holds, but the importer is not robust to bare-ellipsis truncation, which loses data, and it does not re-indent replacements.
+
+NEW INPUT RESULTS:
+ - [works] corpus/naive/n1-reveal-zip.zip | B7 inline-deck -> H harness + production site upload (full Chromium and shell), network blocked
+     Ready / Playing locally, 6.0.2, 9 slides, 36 KaTeX, 0 raw TeX, ArrowRight x2 goes 0.0->2.0, the wavelength slider changes the readout 550->700 and the canvas. 0 blocked requests.
+ - [works] corpus/naive/n1-reveal-zip.zip | A2 wrap-reveal -> H + site
+     Same as B7. hash:true is stripped by A2. KaTeX .woff/.ttf are reported missing (only woff2 shipped), which is harmless.
+ - [works] corpus/naive/n2-reveal-chat-nonet.zip | B7 inline-deck -> H + site
+     reveal.js 5.2.1 coerced to 6.0.2, RevealMath shim, 36 KaTeX, nav 0.0->1.0f0, the speed slider updates the readouts (beta 0.600->0.995, gamma 1.25->10.01). 0 network requests.
+ - [fails] corpus/naive/n2-reveal-chat-nonet.zip | A2 wrap-reveal -> H + site
+     CDN URLs are left untouched. Player: 'This presentation has separate JavaScript files. Create a portable ZIP with the Slidev packaging tool'. Cause: unknown/unresolved CDN library (A2 has no CDN map).
+ - [fails] corpus/naive/n3-reveal-offline/entropy-second-law | inspection + B1 detector
+     Not a usable deck: no HTML file, and the css/js/code folders are empty; only vendored reveal.js 6 dist, KaTeX and fonts. Not zipped. The detector rejects it.
+ - [fails] corpus/baseline/r1-single-html-cdn, r1b-single-html-cdn-5x, r2-multifile-local | inspection
+     The folders are empty (no files; r2 has only empty subfolders), so they could not be tested. I substituted proto/V2/inputs/r1sub, proto/V2/inputs/r1bsub and B1's extmd6/esm6.
+ - [works] proto/V2/inputs/r1sub.zip (substitute for r1: jsDelivr 4.6.1 + RevealMath.KaTeX + highlight + notes, hash:true) | B7 -> H + site
+     Coerced 4.6.1->6.0.2. All 4 well-formed math expressions typeset; the one left raw is an authoring artifact of mine (TeX split by a span). Nav 0.0->2.0, counter button works.
+ - [fails] proto/V2/inputs/r1sub.zip | A2 -> H + site
+     'separate JavaScript files': CDN not resolved.
+ - [works-with-defects] proto/V2/inputs/r1bsub.zip (substitute for r1b: cdnjs 5.1.0 flattened + jsDelivr KaTeX CSS + inline Markdown + slider/canvas + onclick) | B7 -> H + site
+     Coerced reveal 5.1.0->6.0.2 and KaTeX 0.16.9->0.19.1, 4 slides from Markdown, 2 KaTeX, nav, slider redraws the canvas. The inline onclick= button is dead: no error, nothing happens.
+ - [fails] proto/V2/inputs/r1bsub.zip | A2 -> H + site
+     CDN not resolved.
+ - [fails] proto/B1/zips/extmd6.zip (stand-in for r2: external slides.md) | B7 and A2 -> H + site
+     Silent failure: ready / 'Playing locally' with 1 empty slide instead of 4, because the fetch of slides.md is blocked. Cause: external Markdown fetch.
+ - [fails] proto/B1/zips/esm6.zip (stand-in for r2: ES module) | B7 and A2 -> H + site
+     'Failed to resolve module specifier ./dist/reveal.mjs. Invalid relative url or base scheme isn't hierarchical'. Cause: ES modules.
+ - [fails] proto/B1/zips/classic3.zip (3.9.2) | B7 and A2 -> H + site
+     'A presentation resource could not be loaded'. The 3.x dependencies loader fetches plugin/*.js, and css/print/paper.css is injected at runtime (B7 also leaves a theme font @import). Cause: plugin loading siblings.
+ - [fails] proto/B1/zips/classic4.zip (4.6.1 local dist) | B7 and A2 -> H + site
+     'A presentation resource could not be loaded'. Both adapters miss an image inside the inline Markdown textarea; B7 also misses data-src, data-background-image and the relative @import in the local theme CSS. Cause: other (unrewritten asset references, made fatal by the player's error policy).
+ - [works] proto/B1/zips/corpus-n1.zip (extra) | B7 and A2 -> H harness
+     Ready, 36 KaTeX, nav, slider readout changes. This contradicts B1-F5's statement that this deck cannot be inlined.
+
+EXTRA FINDINGS:
+ - The corpus baseline decks corpus/baseline/r1-single-html-cdn, r1b-single-html-cdn-5x and r2-multifile-local are empty folders, and corpus/naive/n4-reveal-markdown is empty too. Any report figure that claims to use them should be checked.
+ - Treating 'ready' as a pass criterion is unsafe: extmd6 reaches 'ready' and 'Playing locally' with an empty deck when the external Markdown is blocked. B1's SW run of math-katex-default reaches ready with 0 KaTeX.
+ - The player's rule that any failed resource is fatal turns a single unresolved image (for example one inside an inline Markdown textarea) into a whole-deck failure. Both adapters hit this on classic4.
+ - B7 inline-deck does not convert inline on* handlers; it only reports the hazard. A2 converts them but has no CDN map. A merged adapter would need both, plus rewriting of data-src, data-background-image and Markdown-embedded images, and url()/@import in local CSS.
+ - A2's E5 feature probe reads slide backgrounds wrongly (rgba(0,0,0,0) and none, also in A2's own JSON). The backgrounds do work, as shown by e5d through Reveal.getSlideBackground.
+ - B1 notes describe corpus-n1 as 'RevealMath.KaTeX with katex.local'. The deck actually calls renderMathInElement on vendored KaTeX.
+ - The SW player-origin prototype needs sandbox 'allow-scripts allow-same-origin allow-popups allow-modals allow-popups-to-escape-sandbox' on a second origin. That is a significant security trade-off compared with today's opaque allow-scripts sandbox, and the report should say so.
+ - Scripts and outputs: prototypes/V2/scripts/oos.mjs, prototypes/V2/out/oos-chromium.json, prototypes/V2/out/oos-shell.json, prototypes/V2/scripts/patch-new-cases.mjs, prototypes/V2/scripts/pm-reload.mjs

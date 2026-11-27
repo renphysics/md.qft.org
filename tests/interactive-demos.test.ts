@@ -206,6 +206,26 @@ it('a standalone Run creates an opaque frame with intersecting nonce and inline-
   controller.destroy();
 });
 
+it('a demo frame keeps its exact sandbox, permissions, referrer and Content Security Policies', () => {
+  // Changing any of these is a decision about the security model: update
+  // docs/ARCHITECTURE.md with it, then this test.
+  const { controller, slot, parentNonce, click } = standaloneHarness();
+  click();
+  const frame = slot.children[0];
+  assert.deepEqual(Object.fromEntries(frame.attributes), {
+    sandbox: 'allow-scripts',
+    referrerpolicy: 'no-referrer',
+    allow: "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'",
+  });
+  const policies = [...frame.srcdoc.matchAll(/http-equiv="Content-Security-Policy" content="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(policies, [
+    `default-src 'none'; script-src 'nonce-${parentNonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src 'none'; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`,
+    "script-src 'unsafe-inline'; script-src-attr 'none'",
+  ]);
+  assert.match(frame.srcdoc, /<meta name="referrer" content="no-referrer">/);
+  controller.destroy();
+});
+
 it('demo errors remain visible through ready and pause/resume events until an explicit restart', () => {
   const app = standaloneHarness();
   app.click();

@@ -18,7 +18,7 @@ describe('deployment URLs', () => {
   });
 
   it('rejects values that are not deployment locations', () => {
-    for (const value of ['file:///tmp/site', 'javascript:alert(1)', 'https://user:password@example.org', 'https://example.org/?q=1', 'https://example.org/#section']) {
+    for (const value of ['file:///srv/site', 'javascript:alert(1)', 'https://user:password@example.org', 'https://example.org/?q=1', 'https://example.org/#section']) {
       assert.throws(() => resolveSiteUrl(value), /SITE_URL/);
     }
   });

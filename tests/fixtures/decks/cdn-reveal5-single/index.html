@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Damped oscillator</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reset.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/theme/white.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/highlight/monokai.css">
+  <style>
+    .demo { display: flex; flex-direction: column; align-items: center; gap: 0.4em; }
+    .demo canvas { border: 1px solid #ccc; background: #fafafa; }
+    .demo label { font-size: 0.6em; }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section id="title">
+        <h1>Damped oscillator</h1>
+        <p>A five-minute tour</p>
+        <aside class="notes">Welcome everyone. Ask who has seen a pendulum slow down.</aside>
+      </section>
+
+      <section id="equation">
+        <h2>Equation of motion</h2>
+        <p>$$m\ddot{x} + b\dot{x} + kx = 0$$</p>
+        <p class="fragment">Natural frequency \(\omega_0 = \sqrt{k/m}\)</p>
+        <p class="fragment">Damping ratio $\zeta = \frac{b}{2\sqrt{mk}}$</p>
+        <aside class="notes">Point out that the equation is linear.</aside>
+      </section>
+
+      <section>
+        <section id="regimes">
+          <h2>Three regimes</h2>
+          <p>Press down for details.</p>
+        </section>
+        <section id="underdamped">
+          <h3>Underdamped</h3>
+          <ul>
+            <li class="fragment">$\zeta &lt; 1$: it oscillates</li>
+            <li class="fragment">The envelope decays as $e^{-\zeta\omega_0 t}$</li>
+          </ul>
+        </section>
+        <section id="overdamped">
+          <h3>Critical and overdamped</h3>
+          <p>No oscillation when $\zeta \ge 1$.</p>
+        </section>
+      </section>
+
+      <section id="demo">
+        <h2>Try it</h2>
+        <div class="demo">
+          <canvas id="plot" width="480" height="200"></canvas>
+          <label>Damping ratio <input id="zeta" type="range" min="0" max="2" step="0.05" value="0.2"></label>
+          <p>ζ = <output id="zeta-value">0.20</output></p>
+        </div>
+        <aside class="notes">Drag the slider past one and watch the oscillation vanish.</aside>
+      </section>
+
+      <section id="code">
+        <h2>The same in code</h2>
+        <pre><code class="language-js" data-trim>
+function position(t, zeta, omega) {
+  return Math.exp(-zeta * omega * t) * Math.cos(omega * Math.sqrt(1 - zeta * zeta) * t);
+}
+        </code></pre>
+      </section>
+
+      <section id="end">
+        <h2>Questions?</h2>
+      </section>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/notes/notes.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/math/math.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/highlight/highlight.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      slideNumber: true,
+      katex: { version: 'latest', delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+      ] },
+      plugins: [RevealNotes, RevealMath.KaTeX, RevealHighlight],
+    });
+
+    const canvas = document.getElementById('plot');
+    const slider = document.getElementById('zeta');
+    const readout = document.getElementById('zeta-value');
+    function draw() {
+      const zeta = Number(slider.value);
+      readout.textContent = zeta.toFixed(2);
+      const context = canvas.getContext('2d');
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.beginPath();
+      for (let x = 0; x < canvas.width; x += 1) {
+        const t = x / 30;
+        const damped = zeta < 1
+          ? Math.exp(-zeta * t) * Math.cos(Math.sqrt(1 - zeta * zeta) * t)
+          : Math.exp(-zeta * t);
+        const y = canvas.height / 2 - damped * (canvas.height / 2 - 10);
+        if (x === 0) context.moveTo(x, y); else context.lineTo(x, y);
+      }
+      context.strokeStyle = '#2a76dd';
+      context.lineWidth = 2;
+      context.stroke();
+    }
+    slider.addEventListener('input', draw);
+    draw();
+  </script>
+</body>
+</html>

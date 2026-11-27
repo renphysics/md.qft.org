@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entropy in one picture</title>
+  <link rel="stylesheet" href="https://unpkg.com/reveal.js@6.0.2/dist/reset.css">
+  <link rel="stylesheet" href="https://unpkg.com/reveal.js@6.0.2/dist/reveal.css">
+  <link rel="stylesheet" href="https://unpkg.com/reveal.js@6.0.2/dist/theme/serif.css">
+  <link rel="stylesheet" href="https://unpkg.com/reveal.js@6.0.2/dist/plugin/highlight/zenburn.css">
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section>
+        <h1>Entropy in one picture</h1>
+        <aside class="notes">Start with the image of a melting ice cube.</aside>
+      </section>
+      <section>
+        <h2>Boltzmann</h2>
+        <p>$$S = k_B \ln \Omega$$</p>
+      </section>
+      <section>
+        <h2>Counting states</h2>
+        <p class="fragment">Two coins: four arrangements.</p>
+        <p class="fragment">One hundred coins: about $10^{30}$.</p>
+      </section>
+      <section>
+        <h2>Summary</h2>
+        <pre><code class="language-python" data-trim>
+from math import comb, log
+print(log(comb(100, 50)))
+        </code></pre>
+      </section>
+    </div>
+  </div>
+  <script src="https://unpkg.com/reveal.js@6.0.2/dist/reveal.js"></script>
+  <script src="https://unpkg.com/reveal.js@6.0.2/dist/plugin/notes.js"></script>
+  <script src="https://unpkg.com/reveal.js@6.0.2/dist/plugin/math.js"></script>
+  <script src="https://unpkg.com/reveal.js@6.0.2/dist/plugin/highlight.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      plugins: [RevealNotes, RevealMath.KaTeX, RevealHighlight],
+    });
+  </script>
+</body>
+</html>

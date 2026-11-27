@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLesson, formatLessonReport } from '../src/lib/lesson-check.ts';
+import { checkLesson, findRevealSyntaxLine, formatLessonReport } from '../src/lib/lesson-check.ts';
 import { createLessonProject } from '../src/lib/lesson-project.ts';
 import { imageReference } from '../src/lib/image-assets.ts';
 
@@ -87,3 +87,61 @@ test('checks bound oversized sources and excessive diagnostics and explain a cle
   assert.equal(report.issues.at(-1)?.code, 'issue-limit');
   assert.match(formatLessonReport(checkLesson('# Lesson\n\nA clear explanation.')), /No structural compatibility issues were found/);
 });
+
+test('slides written for Slidev are named as such, with what plays instead, and no longer pass as a lesson', () => {
+  const slidev = '---\ntheme: seriph\ntitle: Photosynthesis\nlayout: cover\ntransition: slide-left\n---\n\n# Photosynthesis\n\n<v-click>\n\n- Light reactions\n\n</v-click>\n\n---\nlayout: two-cols\n---\n\n# Calvin cycle\n\n::right::\n\n<Tweet id="20" />\n';
+  const report = checkLesson(slidev);
+  const found = report.issues.filter((issue) => issue.code === 'slidev-source');
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, 'warning');
+  assert.equal(found[0].line, 1);
+  assert.match(found[0].message, /looks like the source of a Slidev presentation/);
+  assert.match(found[0].message, /npx slidev build/);
+  assert.match(found[0].message, /dist\/ inside/);
+  const text = formatLessonReport(report);
+  assert.match(text, /1 warning/);
+  assert.match(text, /WARNING \[slidev-source\] line 1: This looks like the source of a Slidev presentation\./);
+  assert.equal(report.issues.some((issue) => issue.code === 'reveal-syntax'), false);
+});
+
+test('Reveal.js conventions in Markdown are named at their first line, and not when a lesson only shows them as code', () => {
+  const markdown = '# Waves\n\n<!-- .slide: data-background="#000" -->\n\n- First <!-- .element: class="fragment" -->\n- Second <!-- .element: class="fragment" -->\n\n---\n\n## End\n';
+  const found = checkLesson(markdown).issues.filter((issue) => issue.code === 'reveal-syntax');
+  assert.equal(found.length, 1, 'one line for the whole document');
+  assert.equal(found[0].severity, 'warning');
+  assert.equal(found[0].line, 3);
+  assert.match(found[0].message, /Reveal\.js conventions/);
+  assert.match(found[0].message, /ask your AI assistant for the complete presentation as one HTML file or a ZIP, and open that file here\.$/);
+
+  const sections = '<section>\n<h2>Slide one</h2>\n<p class="fragment">Appears later</p>\n</section>\n<section data-markdown>\n## Slide two\n</section>\n';
+  assert.equal(checkLesson(sections).issues.find((issue) => issue.code === 'reveal-syntax')?.line, 1);
+  assert.equal(checkLesson('# Setup\n\nText.\n\n<script>Reveal.initialize({ hash: true });</script>\n').issues.find((issue) => issue.code === 'reveal-syntax')?.line, 5);
+  assert.equal(checkLesson('# Slide\n\n<p class="big fragment fade-up">Later</p>\n').issues.some((issue) => issue.code === 'reveal-syntax'), true);
+
+  const shown = '# How Reveal.js writes slides\n\n```html\n<section data-background="#000">\n  <p class="fragment">Later</p>\n</section>\n<script>Reveal.initialize();</script>\n```\n\nThe tag `<section>` holds one slide, and `<!-- .slide: data-background="#000" -->` sets its background.\n\n    <section data-markdown>\n';
+  assert.deepEqual(checkLesson(shown).issues, []);
+  const slidevShown = '# How Slidev writes slides\n\n```md\n---\ntheme: seriph\nlayout: cover\ntransition: slide-left\nmdc: true\n---\n\n<v-click>\n\n::right::\n```\n';
+  assert.deepEqual(checkLesson(slidevShown).issues, []);
+});
+
+test('the examples of this site and an ordinary lesson get neither line', async () => {
+  const { EXAMPLES } = await import('../src/lib/examples.ts');
+  assert.ok(EXAMPLES.length > 3);
+  for (const example of EXAMPLES) {
+    const codes = checkLesson(example.source).issues.map((issue) => issue.code);
+    assert.equal(codes.includes('slidev-source') || codes.includes('reveal-syntax'), false, example.id);
+  }
+  const lesson = '# Pendulum\n\nPredict the period, then measure it.\n\n---\n\n## The section on energy\n\nA fragment of the argument: $T = 2\\pi\\sqrt{L/g}$.\n\nThe data-background of this experiment is in the appendix.\n';
+  assert.deepEqual(checkLesson(lesson).issues, []);
+});
+
+test('the scan for Reveal.js conventions stays fast on one very long awkward line', () => {
+  const awkward = ['<section'.repeat(48_000), '<a data-x '.repeat(39_000), ('<a ' + 'x'.repeat(299)).repeat(1300), '`'.repeat(390_000),
+    ('class="' + 'f'.repeat(199)).repeat(1900), 'Reveal '.repeat(55_000), '<!--  .'.repeat(55_000)];
+  for (const line of awkward) assert.ok(line.length > 380_000);
+  const started = performance.now();
+  assert.equal(findRevealSyntaxLine(awkward), -1);
+  assert.ok(performance.now() - started < 1500, `took ${Math.round(performance.now() - started)} ms`);
+  assert.equal(findRevealSyntaxLine(['text', '<a data-x ' .repeat(1000) + '<section>']), 1);
+});
+

@@ -23,6 +23,17 @@ test('the AI brief is complete and grounded in the supported portable format', (
   assert.match(prompt, /lesson-format-v2\.md/);
 });
 
+test('every prompt carries its own new projectId instead of a shared placeholder', () => {
+  const ids = [generateLessonPrompt(input), generateLessonPrompt(input)].map((prompt) => JSON.parse(prompt.match(/"projectId": ("[^"]+")/)![1]));
+  assert.notEqual(ids[0], ids[1]);
+  for (const id of ids) {
+    assert.match(id, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+    assert.notEqual(id, 'REPLACE-WITH-A-NEW-UUID');
+  }
+  assert.match(generateLessonPrompt(input, 'lesson-fixed-id'), /"projectId": "lesson-fixed-id"/);
+  assert.doesNotMatch(generateLessonPrompt(input), /REPLACE-WITH/);
+});
+
 test('starter projects have stable source paths, fresh identity, working demo source, and license notices', async () => {
   const starter = createStarterLesson(input);
   assert.equal(starter.mode, 'slides');

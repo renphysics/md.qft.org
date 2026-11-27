@@ -1,5 +1,6 @@
 qft-presentation-library { display: contents; }
-.app-dialog.presentation-dialog { width: min(1280px, calc(100vw - 48px)); max-width: none; height: min(900px, calc(100dvh - 48px)); max-height: none; padding: 0; overflow: hidden; border-radius: 12px; }
+/* overflow: clip, not only hidden: a focused control (the editor's cursor) must not scroll the whole dialog sideways. */
+.app-dialog.presentation-dialog { width: min(1280px, calc(100vw - 48px)); max-width: none; height: min(900px, calc(100dvh - 48px)); max-height: none; padding: 0; overflow: hidden; overflow: clip; border-radius: 12px; }
 .app-dialog.presentation-dialog[open] { display: flex; flex-direction: column; }
 .presentation-dialog .presentation-topbar { display: flex; align-items: center; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .presentation-dialog .presentation-mark { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
@@ -34,8 +35,12 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-saved-row > button { font-size: 11px; color: var(--muted); background: transparent; padding: 6px; }
 .presentation-dialog .presentation-saved-row > button[data-pres-confirm-delete] { color: var(--accent); font-weight: 600; }
 .presentation-dialog .presentation-empty { border: 1px dashed var(--border); padding: 26px 16px; text-align: center; color: var(--muted); font-size: 12px; border-radius: 7px; }
+/* A part of the site could not be loaded: said in place of the list, with Reload. */
+.presentation-dialog .presentation-load-failed { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid #c98b97; border-left-width: 4px; border-radius: 7px; background: #fbeef1; color: #6f2435; font-size: 12px; line-height: 1.6; }
+html[data-theme='dark'] .presentation-dialog .presentation-load-failed { background: #3f262c; color: #f4c6cf; border-color: #a5636f; }
+.presentation-dialog .presentation-load-failed p { flex: 1 1 260px; margin: 0; }
 .presentation-dialog .presentation-library-note { font-size: 11px; color: var(--muted); line-height: 1.8; }
-.presentation-dialog .presentation-deck { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.presentation-dialog .presentation-deck { min-height: 0; min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .presentation-dialog .presentation-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--border); }
 .presentation-dialog .presentation-view-switch { display: flex; gap: 3px; }
 .presentation-dialog .presentation-view-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 5px; padding: 7px 10px; font-size: 11px; color: var(--muted); background: transparent; }
@@ -44,27 +49,128 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-deck-actions .button-secondary, .presentation-dialog .presentation-deck-actions .button-primary { font-size: 11px; padding: 6px 11px; min-height: 32px; }
 .presentation-dialog .presentation-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--sidebar); padding: 16px 16px 0; }
 .presentation-dialog .presentation-stage { flex: 1; min-height: 160px; position: relative; background: #172127; border-radius: 7px; overflow: hidden; }
-.presentation-dialog .presentation-frame-host { position: absolute; inset: 0; }
+.presentation-dialog .presentation-stage { display: flex; flex-direction: column; }
+.presentation-dialog .presentation-frame-host { position: relative; flex: 1; min-height: 0; }
+/*
+ * The notices lie over the top of the slides, so the frame keeps its size
+ * (and Reveal.js its scale) when one shows or goes. The library shows one at a
+ * time. The area is the top half of the stage (its empty part lets clicks
+ * through), so a notice covers at most half: a long text scrolls inside its
+ * paragraph while the buttons beside it stay in view.
+ */
+.presentation-dialog .presentation-strips { position: absolute; top: 0; left: 0; right: 0; z-index: 5; height: 50%; display: flex; flex-direction: column; overflow: hidden; pointer-events: none; }
+.presentation-dialog .presentation-strip { flex: 0 1 auto; min-height: 0; display: flex; align-items: stretch; gap: 6px 14px; padding: 7px 12px; background: #f6efdc; color: #4a3a14; border-bottom: 1px solid #d6c08f; box-shadow: 0 4px 14px #0004; font-size: 12px; line-height: 1.5; pointer-events: auto; }
+.presentation-dialog .presentation-strip[hidden] { display: none; }
+.presentation-dialog .presentation-strip p { flex: 1 1 auto; min-width: 0; min-height: 0; margin: 0; overflow-y: auto; overflow-wrap: anywhere; align-self: center; max-height: 100%; }
+.presentation-dialog .presentation-strip-actions { flex: none; display: flex; gap: 8px; align-items: center; align-self: center; }
+.presentation-dialog .presentation-strip button { font-size: 11px; min-height: 28px; padding: 4px 10px; border: 1px solid #b9a26c; border-radius: 5px; background: #fffaf0; color: inherit; }
+.presentation-dialog .presentation-strip button.button-primary { background: #773b49; border-color: #773b49; color: #fff; }
+.presentation-dialog .presentation-strip button:focus-visible { outline: 3px solid #b17683; outline-offset: 2px; }
+/* In fullscreen the Exit fullscreen button sits at the top right: keep the notices' buttons clear of it. */
+.presentation-dialog .presentation-stage:fullscreen .presentation-strip, .presentation-dialog .presentation-stage.presentation-fallback-fullscreen .presentation-strip { padding-right: 150px; }
 .presentation-dialog .presentation-frame-host iframe { display: block; width: 100%; height: 100%; border: 0; }
-.presentation-dialog .presentation-start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px; text-align: center; color: #f5f2ee; background: radial-gradient(ellipse at 70% 20%, #33514c 0, transparent 65%), #1d282e; }
-.presentation-dialog .presentation-engine { color: #b8d3c9; font-size: 10px; letter-spacing: 2.5px; padding: 6px 11px; border: 1px solid #b8d3c950; border-radius: 20px; }
+.presentation-dialog .presentation-start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: safe center; overflow-y: auto; padding: 28px; text-align: center; color: #f5f2ee; background: radial-gradient(ellipse at 70% 20%, #33514c 0, transparent 65%), #1d282e; }
+.presentation-dialog .presentation-engine { color: #b8d3c9; font-size: 10px; letter-spacing: 2.5px; text-transform: uppercase; padding: 6px 11px; border: 1px solid #b8d3c950; border-radius: 20px; }
 .presentation-dialog .presentation-start h3 { font: 500 clamp(24px, 3vw, 38px)/1.3 var(--font-prose); letter-spacing: -.7px; margin: 20px 0 12px; max-width: 700px; }
 .presentation-dialog .presentation-start p { color: #c2ceca; font-size: 12px; line-height: 1.8; margin: 0 0 22px; }
 .presentation-dialog .presentation-start .button-primary { background: #e9ddd0; color: #302e2a; }
 .presentation-dialog .presentation-start .button-primary:hover { background: #fff2e4; }
 .presentation-dialog .presentation-start p.presentation-start-detail { font-size: 10px; color: #90a6a1; margin: 15px 0 0; }
+/* Several problems stay readable: one paragraph each, never squeezed; when they do not fit, the start panel scrolls inside the stage. */
+.presentation-dialog .presentation-problem { flex: none; width: min(640px, 100%); max-height: none; overflow: auto; margin: 0 0 22px; padding: 12px 16px; border: 1px solid #c98b97; border-left-width: 4px; border-radius: 6px; background: #fbeef1; color: #6f2435; text-align: left; overflow-wrap: anywhere; }
+.presentation-dialog .presentation-problem[hidden] { display: none; }
+.presentation-dialog .presentation-start .presentation-problem p { color: inherit; font-size: 13px; line-height: 1.6; margin: 0; }
+.presentation-dialog .presentation-start .presentation-problem p + p { margin-top: 8px; }
+.presentation-dialog .presentation-problem q { font-family: var(--font-code); font-size: 12px; }
+/* The start-up problem sits over the slides; it follows the problem rules above so its own size and place win. */
+.presentation-dialog .presentation-stalled { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); width: min(640px, calc(100% - 32px)); max-height: calc(100% - 32px); margin: 0; z-index: 4; box-shadow: 0 8px 28px #0003; }
+.presentation-dialog .presentation-stalled p { margin: 0; font-size: 13px; line-height: 1.6; }
+/* In fullscreen the start-up problem starts below the Exit fullscreen button. */
+.presentation-dialog .presentation-stage:fullscreen .presentation-stalled, .presentation-dialog .presentation-stage.presentation-fallback-fullscreen .presentation-stalled { top: 48px; max-height: calc(100% - 64px); }
+.presentation-dialog .presentation-stalled p + p { margin-top: 8px; }
 .presentation-dialog .presentation-player-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 2px; min-height: 37px; font-size: 10px; color: var(--muted); }
 .presentation-dialog .presentation-player-bar > div { display: flex; gap: 12px; align-items: center; }
 .presentation-dialog .presentation-player-bar button { display: inline-flex; gap: 5px; align-items: center; padding: 2px 0; font-size: 10px; background: transparent; }
 .presentation-dialog .presentation-player-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.presentation-dialog .presentation-source { min-height: 0; flex: 1; display: flex; flex-direction: column; padding: 16px; }
-.presentation-dialog .presentation-source-heading { display: flex; align-items: flex-end; gap: 15px; margin-bottom: 12px; }
-.presentation-dialog .presentation-source-heading label { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
-.presentation-dialog .presentation-source-heading select { display: block; width: 100%; margin-top: 5px; height: 34px; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 0 8px; color: var(--text); font: 11px var(--font-code); }
-.presentation-dialog .presentation-source .button-secondary { min-height: 34px; font-size: 11px; padding: 6px 11px; }
-.presentation-dialog .presentation-source textarea { min-height: 160px; max-height: none; flex: 1; width: 100%; resize: none; white-space: pre; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 15px; font: 12px/1.7 var(--font-code); background: var(--code-bg); color: var(--text); }
-.presentation-dialog .presentation-source p { font-size: 11px; margin: 7px 0 0; line-height: 1.7; color: var(--muted); }
-.presentation-dialog .presentation-source-note { padding-top: 6px; }
+.presentation-dialog .presentation-slide-count { color: var(--muted); }
+.presentation-dialog .presentation-notes { flex-shrink: 0; max-height: min(38%, 260px); overflow: auto; margin: 0 2px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--paper); font-size: 12px; }
+.presentation-dialog .presentation-notes > summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; list-style: none; font-weight: 600; font-size: 11px; position: sticky; top: 0; background: var(--paper); }
+.presentation-dialog .presentation-notes > summary::-webkit-details-marker { display: none; }
+.presentation-dialog .presentation-notes > summary svg { margin-left: auto; transition: transform .15s; }
+.presentation-dialog .presentation-notes[open] > summary svg { transform: rotate(180deg); }
+.presentation-dialog .presentation-notes-count { font-weight: 400; color: var(--muted); }
+.presentation-dialog .presentation-notes-body { padding: 0 12px 12px; }
+.presentation-dialog .presentation-notes-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.presentation-dialog .presentation-notes-list li { line-height: 1.55; padding-left: 10px; border-left: 3px solid var(--border); overflow-wrap: anywhere; }
+.presentation-dialog .presentation-notes-list li[data-severity='error'] { border-left-color: #c98b97; }
+.presentation-dialog .presentation-notes-list li[data-severity='warning'] { border-left-color: #d6b072; }
+.presentation-dialog .presentation-notes-list li strong { font-weight: 600; }
+.presentation-dialog .presentation-notes-list li small { display: block; color: var(--muted); font: 10px/1.5 var(--font-code); }
+.presentation-dialog .presentation-notes-list q { font-family: var(--font-code); font-size: 11px; }
+.presentation-dialog .presentation-notes-label { margin: 12px 0 6px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.presentation-dialog .presentation-notes-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.presentation-dialog .presentation-notes-actions .button-secondary { font-size: 11px; padding: 6px 11px; min-height: 32px; }
+.presentation-dialog .presentation-report-text { display: block; width: 100%; min-height: 120px; margin-top: 10px; resize: vertical; white-space: pre; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font: 11px/1.6 var(--font-code); background: var(--code-bg); color: var(--text); }
+.presentation-dialog { --deck-code-keyword: #8a3552; --deck-code-string: #4c7a5c; --deck-code-comment: #968e86; --deck-code-number: #96561c; --deck-code-tag: #793c46; --deck-code-attribute: #62558e; --deck-code-name: #2e6480; --deck-code-invalid: #b3261e; --deck-pending: #f4e6c8; --deck-pending-text: #6b4a12; }
+html[data-theme='dark'] .presentation-dialog { --deck-code-keyword: #e5a5af; --deck-code-string: #9cc3a9; --deck-code-comment: #8a807a; --deck-code-number: #e2b27a; --deck-code-tag: #eaa6b1; --deck-code-attribute: #bcaee6; --deck-code-name: #8fc3d8; --deck-code-invalid: #ff8a80; --deck-pending: #4a3c22; --deck-pending-text: #f0d59c; }
+.presentation-dialog .presentation-source { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(170px, 240px) minmax(0, 1fr); gap: 16px; padding: 14px 16px 12px; }
+.presentation-dialog .presentation-files { min-height: 0; overflow: auto; padding: 2px 4px 2px 2px; font-size: 11px; }
+.presentation-dialog .presentation-files ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.presentation-dialog .presentation-files-summary { margin: 0 0 8px; padding: 0 8px; color: var(--muted); font-size: 10px; }
+.presentation-dialog .presentation-files-empty { color: var(--muted); padding: 0 8px; }
+.presentation-dialog .presentation-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 6px; width: 100%; padding: 6px 8px; border-radius: 5px; background: transparent; color: var(--text); text-align: left; }
+.presentation-dialog .presentation-file:hover { background: var(--hover); }
+.presentation-dialog .presentation-file:focus-visible { outline-offset: -2px; }
+.presentation-dialog .presentation-file[aria-current='true'] { background: var(--accent-soft); color: var(--accent); }
+.presentation-dialog .presentation-file-name { grid-column: 1; font: 11px/1.5 var(--font-code); overflow-wrap: anywhere; }
+.presentation-dialog .presentation-file-meta { grid-column: 1; color: var(--muted); font-size: 9px; }
+.presentation-dialog .presentation-file-badge { grid-column: 2; grid-row: 1 / span 2; align-self: center; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.presentation-dialog .presentation-file[aria-current='true'] .presentation-file-badge { background: var(--surface); }
+.presentation-dialog .presentation-file-badge[data-state='pending'] { background: var(--deck-pending); color: var(--deck-pending-text); }
+.presentation-dialog .presentation-library-files { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.presentation-dialog .presentation-library-files > summary { padding: 4px 8px; color: var(--muted); font-size: 10px; font-weight: 600; cursor: pointer; border-radius: 4px; }
+.presentation-dialog .presentation-library-files > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.presentation-dialog .presentation-library-files > ul { margin-top: 4px; }
+.presentation-dialog .presentation-source-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.presentation-dialog .presentation-source-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px 14px; flex-wrap: wrap; margin-bottom: 10px; }
+.presentation-dialog .presentation-file-title { min-width: 0; }
+.presentation-dialog .presentation-file-title h3 { margin: 0; font: 600 12px/1.5 var(--font-code); overflow-wrap: anywhere; }
+.presentation-dialog .presentation-file-title p { margin: 1px 0 0; color: var(--muted); font-size: 10px; }
+.presentation-dialog .presentation-source-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.presentation-dialog .presentation-source .button-secondary, .presentation-dialog .presentation-source .button-primary { min-height: 32px; font-size: 11px; padding: 6px 11px; }
+.presentation-dialog .presentation-source button:disabled { cursor: default; }
+.presentation-dialog .presentation-source[aria-busy] .presentation-source-actions .button-primary { cursor: progress; }
+.presentation-dialog .presentation-code { flex: 1; min-height: 180px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--code-bg); }
+.presentation-dialog .presentation-code:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.presentation-dialog .presentation-code .cm-editor { height: 100%; background: var(--code-bg); color: var(--text); font-size: 12px; }
+.presentation-dialog .presentation-code .cm-editor.cm-focused { outline: none; }
+.presentation-dialog .presentation-code .cm-scroller { font-family: var(--font-code); line-height: 1.7; overflow: auto; }
+.presentation-dialog .presentation-code .cm-content { padding: 12px 0 40px; caret-color: var(--accent); }
+.presentation-dialog .presentation-code .cm-line { padding-inline: 8px 18px; }
+.presentation-dialog .presentation-code .cm-gutters { background: transparent; color: var(--faint); border: 0; font-size: 10px; }
+.presentation-dialog .presentation-code .cm-activeLine, .presentation-dialog .presentation-code .cm-activeLineGutter { background: #b899730f; }
+.presentation-dialog .presentation-code .cm-selectionBackground, .presentation-dialog .presentation-code .cm-focused .cm-selectionBackground, .presentation-dialog .presentation-code .cm-content ::selection { background: #b47d8740 !important; }
+.presentation-dialog .presentation-code .cm-cursor { border-left-color: var(--accent); }
+.presentation-dialog .presentation-code .cm-matchingBracket { background: #5c816e33; outline: 1px solid #5c816e80; }
+.presentation-dialog .presentation-code .cm-nonmatchingBracket { background: #b3261e2a; }
+.presentation-dialog .presentation-code .cm-searchMatch { background: #cca35555; }
+.presentation-dialog .presentation-code .cm-searchMatch-selected { background: #cca35599; }
+.presentation-dialog .presentation-code .cm-panels { background: var(--surface); color: var(--text); border-color: var(--border); font-size: 11px; }
+.presentation-dialog .presentation-code .cm-textfield { background: var(--paper); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+.presentation-dialog .presentation-code .cm-button { background: var(--sidebar); background-image: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text); font: inherit; }
+.presentation-dialog .presentation-code .cm-panel button[name='close'] { color: var(--muted); }
+.presentation-dialog .presentation-code .cm-tooltip { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+.presentation-dialog .presentation-code .cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--accent-soft); color: var(--text); }
+.presentation-dialog .presentation-code .cm-foldPlaceholder { background: var(--hover); border-color: var(--border); color: var(--muted); }
+.presentation-dialog .presentation-file-message { flex: 1; min-height: 120px; margin: 0; display: grid; place-content: center; padding: 24px; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.7; text-align: center; }
+.presentation-dialog .presentation-edit-problem { margin-top: 10px; padding: 10px 14px; border: 1px solid #c98b97; border-left-width: 4px; border-radius: 6px; background: #fbeef1; color: #6f2435; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+html[data-theme='dark'] .presentation-dialog .presentation-edit-problem { background: #3f262c; color: #f4c6cf; border-color: #a5636f; }
+.presentation-dialog .presentation-edit-problem p { margin: 0; }
+.presentation-dialog .presentation-edit-problem p + p { margin-top: 6px; }
+.presentation-dialog .presentation-source-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px 14px; flex-wrap: wrap; margin-top: 8px; min-height: 32px; }
+.presentation-dialog .presentation-edit-status { flex: 1; min-width: 200px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.presentation-dialog .presentation-source-note { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.presentation-confirm { width: min(440px, calc(100vw - 32px)); }
 .presentation-dialog .presentation-dialog-footer { flex-shrink: 0; display: flex; justify-content: space-between; gap: 15px; align-items: center; padding: 10px 20px; border-top: 1px solid var(--border); font-size: 10px; color: var(--muted); }
 .presentation-dialog .presentation-dialog-footer > span, .presentation-dialog .presentation-dialog-footer a { display: inline-flex; align-items: center; gap: 7px; }
 .presentation-dialog .presentation-local-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
@@ -72,7 +178,7 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-stage.presentation-fallback-fullscreen { position: fixed; inset: 0; z-index: 5; }
 .presentation-dialog .presentation-exit-fullscreen { position: absolute; top: 10px; right: 12px; z-index: 10; display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border-radius: 5px; color: #eee; background: #172127dc; font-size: 11px; opacity: .6; }
 .presentation-dialog .presentation-exit-fullscreen:hover, .presentation-dialog .presentation-exit-fullscreen:focus-visible { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .presentation-example { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .presentation-example, .presentation-dialog .presentation-notes > summary svg { transition: none; } }
 @media (max-width: 700px) {
   .app-dialog.presentation-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); border-radius: 8px; }
   .presentation-dialog .presentation-topbar { padding: 11px 12px; gap: 8px; }
@@ -85,7 +191,9 @@ qft-presentation-library { display: contents; }
   .presentation-dialog .presentation-example > svg { height: 75px; margin-bottom: 12px; }
   .presentation-dialog .presentation-example-caption strong { font-size: 18px; }
   .presentation-dialog .presentation-library-heading { align-items: flex-start; flex-direction: column; gap: 7px; }
-  .presentation-dialog .presentation-toolbar { padding: 7px; gap: 4px; }
+  /* On a phone the toolbar wraps, so every button, Present included, stays inside the dialog. */
+  .presentation-dialog .presentation-toolbar { padding: 7px; gap: 4px; flex-wrap: wrap; }
+  .presentation-dialog .presentation-deck-actions { flex-wrap: wrap; }
   .presentation-dialog .presentation-view-switch button { padding: 7px; gap: 4px; font-size: 10px; }
   .presentation-dialog .presentation-deck-actions { gap: 4px; }
   .presentation-dialog .presentation-deck-actions .button-secondary, .presentation-dialog .presentation-deck-actions .button-primary { padding: 6px; font-size: 10px; gap: 4px; }
@@ -93,8 +201,29 @@ qft-presentation-library { display: contents; }
   .presentation-dialog .presentation-stage { flex: 0 0 auto; min-height: 0; aspect-ratio: var(--presentation-aspect, 16 / 9); }
   .presentation-dialog .presentation-stage:has([data-pres-start]:not([hidden])) { min-height: 300px; }
   .presentation-dialog .presentation-keyboard-hint { display: none; }
+  /* On a phone the status wraps, so the problem count stays readable. */
+  .presentation-dialog .presentation-player-status { min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+  .presentation-dialog .presentation-player-bar > div { flex: none; white-space: nowrap; }
+  .presentation-dialog .presentation-notes { max-height: 40%; margin-bottom: 8px; }
   .presentation-dialog .presentation-dialog-footer { padding: 9px 12px; font-size: 9px; }
   .presentation-dialog .presentation-dialog-footer a { white-space: nowrap; }
   .presentation-dialog .presentation-start { padding: 20px; }
+  .presentation-dialog .presentation-strip { gap: 8px; padding: 5px 8px; font-size: 10px; line-height: 1.4; }
+  .presentation-dialog .presentation-strip-actions { flex-direction: column; align-items: stretch; gap: 4px; }
+  .presentation-dialog .presentation-strip button { font-size: 10px; min-height: 24px; padding: 2px 8px; }
+  /* In fullscreen on a phone there is no room beside Exit fullscreen: the notices go below it. */
+  .presentation-dialog .presentation-stage:fullscreen .presentation-strips, .presentation-dialog .presentation-stage.presentation-fallback-fullscreen .presentation-strips { top: 48px; height: calc(50% - 48px); }
+  .presentation-dialog .presentation-stage:fullscreen .presentation-strip, .presentation-dialog .presentation-stage.presentation-fallback-fullscreen .presentation-strip { padding-right: 8px; }
   .presentation-dialog .presentation-start h3 { font-size: 24px; }
+  /*
+   * The Source files view is one column that scrolls as a whole: the file
+   * list, the editor at a fixed height, then the problems, the status with
+   * Restore original, and the note, each in its own place.
+   */
+  .presentation-dialog .presentation-source { display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow-x: hidden; overflow-y: auto; }
+  .presentation-dialog .presentation-files { flex: none; max-height: 132px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .presentation-dialog .presentation-source-main { flex: none; min-height: auto; }
+  .presentation-dialog .presentation-code { flex: none; height: min(320px, 55dvh); min-height: 140px; }
+  .presentation-dialog .presentation-file-message { flex: none; }
+  .presentation-dialog .presentation-edit-status { min-width: 0; flex-basis: 100%; }
 }

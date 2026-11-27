@@ -6,9 +6,29 @@ licensed. The included example explains coherent-wave interference with a
 Vue component whose phase slider, animation, and intensity readout run in the
 browser.
 
+## Packager or an ordinary build?
+
+You do not need this packager to play Slidev on md.qft.org. The site's
+**Create with AI → Slidev** instructions ask an AI assistant that can run
+commands for an ordinary Slidev project and one ZIP of the project folder with
+the built `dist/` inside and without `node_modules`; a ZIP of the `dist`
+folder alone opens too. The site converts the build in the browser each time
+it is opened, leaves out remote resources such as Google Fonts, and plays it
+with a player profile that reports script errors as notes instead of
+stopping. Builds that use live code editors (Monaco code blocks) or Web
+Workers are refused, a picture or file that the build lacks is named in the
+notes, and conversion depends on the build output of recent Slidev releases
+(checked with 52 and 53).
+
+Use this starter and packager when you want more than that: a package that
+carries its editable source, plays exactly the compiled HTML you checked
+(nothing is converted when it opens), and stops at the first error so a
+broken build is noticed before class. Both kinds are read-only on the site;
+edit the project, build again, and open the new ZIP.
+
 ## Make a presentation
 
-Use Node.js 22.12 or newer. In this directory:
+Use Node.js 22.22 or newer (Slidev 53.1.0 requires it). In this directory:
 
 ```sh
 npm ci
@@ -51,7 +71,9 @@ original source remains available for your next revision.
 
 This player intentionally runs the presentation in an isolated iframe. It
 does not give imported JavaScript access to the editor's drafts, filesystem,
-or browser storage.
+or browser storage, and it blocks ordinary network requests, so a package must
+work offline. That block is a privacy default rather than a guarantee: code
+written to get around it can still make limited outbound connections.
 
 - Keep `routerMode: memory`. Normal history routing expects a hosted origin.
 - Keep `fonts.provider: none`. Use system fonts or locally bundled fonts.
@@ -94,7 +116,9 @@ md.qft.org website itself offline is a separate application-caching feature.
 
 ## Instructions to give an AI coding tool
 
-Use this starter as the project template. Create the requested lesson in
+For an ordinary build, use the instructions from **Create with AI → Slidev**
+on the site. For a portable package made with this starter, give these
+instructions instead: use this starter as the project template. Create the requested lesson in
 `slides.md` and use Vue components for interactive demonstrations. Keep the
 portable playback profile. Include all required libraries and assets locally;
 do not use CDN links or runtime network calls. Preserve the package manifest

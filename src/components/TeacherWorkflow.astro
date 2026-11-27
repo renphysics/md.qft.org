@@ -8,7 +8,7 @@ import { withBase } from '../lib/site-path';
   <p>Use your preferred AI assistant to create slides, pictures, and interactive demos. Bring the lesson back here to make it yours.</p>
   <div class="ai-lesson-layout">
     <form data-ai-form>
-      <label for="ai-format">Presentation format<select id="ai-format" data-ai-format><option value="qft">Markdown — edit directly in this workspace</option><option value="slidev">Slidev — build interactive Vue slides with Codex</option></select></label>
+      <label for="ai-format">Presentation format<select id="ai-format" data-ai-format><option value="qft">Markdown — edit directly in this workspace</option><option value="reveal">Reveal.js — interactive slides from any AI</option><option value="slidev">Slidev — Vue slides built by a coding assistant</option></select></label>
       <p class="lesson-inline-status" data-ai-format-help>Markdown lessons can be revised directly in the editor.</p>
       <label for="ai-topic">What will you teach?</label>
       <textarea id="ai-topic" data-ai-topic required maxlength="3000" placeholder="For example: wave packets and the uncertainty principle, based on chapter 3 of my course notes."></textarea>
@@ -30,7 +30,7 @@ import { withBase } from '../lib/site-path';
     <aside class="ai-lesson-steps" aria-label="Create a lesson in three steps">
       <ol>
         <li><span>1</span><div><strong>Describe your lesson</strong><p>Choose the topic and the students you’re teaching.</p></div></li>
-        <li><span>2</span><div><strong>Ask your AI assistant</strong><p>Paste the instructions into Codex or another assistant. Attach the chapter or notes you want it to use.</p></div></li>
+        <li><span>2</span><div><strong>Ask your AI assistant</strong><p>Paste the instructions into your AI assistant. Attach the chapter or notes you want it to use.</p></div></li>
         <li><span>3</span><div><strong>Open, revise, present</strong><p data-ai-workflow-help>Ask for a lesson ZIP. Open it here, check it, and make your final edits.</p></div></li>
       </ol>
       <button type="button" class="button-secondary" data-ai-open><Icon name="upload" size={15} /> Open AI lesson</button>

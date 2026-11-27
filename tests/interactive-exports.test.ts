@@ -40,7 +40,7 @@ async function exported(kind: 'slides' | 'document', source: string, options: Re
   let html = '';
   const dependencies = { ...defaults, download: (content: string) => { html = content; } };
   const module = kind === 'slides'
-    ? functionsFrom('export-slides.ts', ['staticSlideCss', 'exportSlidesHtml'], dependencies)
+    ? functionsFrom('export-slides.ts', ['staticSlideCss', 'overflowingSlides', 'exportSlidesHtml'], dependencies)
     : functionsFrom('export-document.ts', ['exportPortableHtml'], dependencies);
   await (kind === 'slides' ? module.exportSlidesHtml : module.exportPortableHtml)(source, 'A <safe> title', options);
   return html;
@@ -64,6 +64,7 @@ async function executeParent(script: string): Promise<Record<string, unknown>> {
   let frames = 0;
   const context = {
     AbortController, Map, Element: class {}, setTimeout, clearTimeout,
+    getComputedStyle: (element: { overflow?: string }) => ({ overflowX: element.overflow ?? 'visible', overflowY: element.overflow ?? 'visible' }),
     document: {
       querySelector: () => root, getElementById: getControl, addEventListener: noop,
       body: { dataset: {} }, activeElement: null,
@@ -104,6 +105,40 @@ describe('portable interactive HTML exports', () => {
     });
   }
 
+  it('keeps the exact Content Security Policy of slide and document exports, with and without demos', async () => {
+    // Changing any of these is a decision about the security model: update
+    // docs/ARCHITECTURE.md with it, then this test.
+    const policies = (html: string) => [...html.matchAll(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g)].map((match) => match[1]);
+    const documentPolicy = (script: string) => `default-src 'none'; script-src ${script}; script-src-attr 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; frame-src 'self' blob:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'`;
+    const slidePolicy = "default-src 'none'; script-src 'nonce-test-export-nonce'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src 'self' blob:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'";
+    const demo = interactiveFence({ preset: 'wave-packet' });
+    assert.deepEqual(policies(await exported('document', '# Plain')), [documentPolicy("'none'")]);
+    // With demos the export also carries the demo runtime's source, whose frame policies are pinned in interactive-demos.test.ts.
+    assert.deepEqual(policies(await exported('document', demo))[0], documentPolicy("'nonce-test-export-nonce'"));
+    // A slide export always carries the demo runtime's source after its own policy.
+    assert.deepEqual(policies(await exported('slides', '# Plain'))[0], slidePolicy);
+    assert.deepEqual(policies(await exported('slides', demo))[0], slidePolicy);
+    for (const html of [await exported('document', '# Plain'), await exported('slides', '# Plain')]) assert.match(html, /<meta name="referrer" content="no-referrer">/);
+  });
+
+  it('declares no-referrer exactly once in the export\'s own head, before any embedded runtime', async () => {
+    // The embedded runtimes carry their own frame documents with the same meta
+    // as text, so a match anywhere in the file would not prove that the
+    // exported page itself has the policy.
+    const referrer = /<meta name="referrer" content="no-referrer">/g;
+    const ownHead = (html: string) => {
+      const end = html.indexOf('<script');
+      return end < 0 ? html.slice(0, html.indexOf('</head>')) : html.slice(0, end);
+    };
+    const slides = await exported('slides', '# Plain');
+    assert.ok((slides.match(referrer) ?? []).length > 1, 'the slide export embeds a runtime that carries the meta as text');
+    for (const html of [slides, await exported('slides', interactiveFence({ preset: 'wave-packet' })), await exported('document', '# Plain')]) {
+      const head = ownHead(html);
+      assert.ok(head.includes('</title>'), 'the own head ends after the export\'s title');
+      assert.equal((head.match(referrer) ?? []).length, 1);
+    }
+  });
+
   it('keeps ordinary document exports script-free and ordinary JavaScript fences literal', async () => {
     const html = await exported('document', '# Code\n\n```javascript\nparent.__bad = true;\n```');
     assert.doesNotMatch(html, /<script\b/);
@@ -143,9 +178,12 @@ describe('portable interactive HTML exports', () => {
     const context = await executeParent(mainScript(html));
     let backgroundsRemoved = false;
     let printCopyRemoved = false;
+    // A display equation that paints a few pixels of glyph overhang
+    // (overflow: visible) is not clipped; a clipping code block is.
+    const overhang = { overflow: 'visible', clientHeight: 97, scrollHeight: 102, clientWidth: 900, scrollWidth: 900 };
     const content = (overflows: boolean) => ({
       clientHeight: 720, scrollHeight: overflows ? 850 : 720,
-      clientWidth: 1280, scrollWidth: 1280, querySelectorAll: () => [],
+      clientWidth: 1280, scrollWidth: 1280, querySelectorAll: () => [overhang],
     });
     const sections = [false, true].map((overflows) => ({ querySelector: () => content(overflows) }));
     // Reveal copies qft-slide onto its generated background elements. They
@@ -168,6 +206,28 @@ describe('portable interactive HTML exports', () => {
     await assert.rejects((context.checkPrintLayout as () => Promise<void>)(), /Slide 2 contains too much content/);
     assert.equal(backgroundsRemoved, true, 'generated backgrounds are absent from the static copy');
     assert.equal(printCopyRemoved, true, 'overflow cleans up the detached print copy');
+  });
+});
+
+describe('print overflow measurement', () => {
+  const { overflowingSlides: measure } = functionsFrom('export-slides.ts', ['overflowingSlides'], {
+    getComputedStyle: (element: { overflowX?: string; overflowY?: string }) => ({ overflowX: element.overflowX ?? 'visible', overflowY: element.overflowY ?? 'visible' }),
+  });
+  // The function runs in another realm; copy its array for deepEqual.
+  const overflowingSlides = (root: unknown): number[] => [...measure(root)];
+  const box = (patch: Record<string, unknown> = {}) => ({ clientHeight: 100, scrollHeight: 100, clientWidth: 500, scrollWidth: 500, ...patch });
+  const deck = (...slides: Record<string, unknown>[][]) => ({
+    querySelectorAll: () => slides.map((inner) => ({ querySelector: () => ({ ...box({ clientHeight: 600, scrollHeight: 600 }), querySelectorAll: () => inner }) })),
+  });
+
+  it('ignores painted overhang of an unclipped display equation', () => {
+    assert.deepEqual(overflowingSlides(deck([box({ scrollHeight: 105 })])), []);
+  });
+
+  it('reports content that a nested element really clips, on the axis it clips', () => {
+    assert.deepEqual(overflowingSlides(deck([box({ overflowX: 'auto', overflowY: 'hidden', scrollWidth: 700 })])), [1]);
+    assert.deepEqual(overflowingSlides(deck([box({ overflowX: 'auto', overflowY: 'visible', scrollHeight: 140 })])), []);
+    assert.deepEqual(overflowingSlides(deck([], [box({ overflowY: 'auto', scrollHeight: 300 })])), [2]);
   });
 });
 

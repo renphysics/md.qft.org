@@ -1,0 +1,98 @@
+
+##########################################################################################
+##### V3-slidev-pipeline
+
+SUMMARY:
+I tried to refute the Slidev pipeline claims (B2, B6, B7) with a new 7-slide deck written from scratch, a Mermaid variant of it, and the same deck built with @slidev/cli 52.11.5. Playback used the real md.qft.org production build (dist), with ZIPs uploaded through the presentation library's file input. Mostly full Chromium (channel 'chromium'); the headless shell was used where stated.
+
+The build-conversion route (B2-F2) held up. None of the six patches broke on 53.1.0 default, 53.1.0 with Mermaid, or 52.11.5 (Vite 7, where the router call is minified with double quotes). The Node converter and the esbuild-wasm Worker converter (1.5 s cold, 0.9 s warm; 7.9 s with Mermaid) both produced decks that reach ready on the real site. In them, navigation, v-clicks, code-line steps, KaTeX, the public image, scoped CSS, the slider and the Mermaid diagram all work, with 0 external requests.
+
+The in-browser compiler route (B2-F3) is DOM-identical on the new deck (7/7) but only 4/7 pixel-identical:
+- **Slide 2:** frontmatter `class: pt-6` gets no CSS rule.
+- **Slide 6:** Shiki token colours differ.
+- **Mermaid:** flagged as unsupported.
+
+B2's fidelity tool compares normalised DOM only, outside the sandbox. "DOM-identical" must not be read as "pixel-identical".
+
+Other findings:
+- **B7-F6 ("0 external requests"):** wrong in full Chromium. The jsDelivr favicon link survives `fonts.provider: none` and is fetched.
+- **detect.mjs router mode:** it labels the 52.11.5 default (history) build as hash.
+- **Test harness:** B2's harness sends keys with `frame.locator('body').press()`, which does not reach the nested opaque frame on the real site; keys only arrived after a real click in the deck.
+
+
+[V3.1] CONFIRMED-WITH-CAVEATS — B2-F2: an ordinary slidev 53.1.0 build converts without rebuilding (six patches plus bundling) into one HTML that plays in the current sandbox, for all 7 router/base variants; the same conversion runs in the browser with esbuild-wasm in a same-origin Worker under the site's CSP in about 0.7-1.7 s.
+   DID: Copied convert-dist.mjs and the wasmtest site into V3. Re-ran the Node converter on all 7 B2 variants and played them on the REAL production site (upload via data-pres-input, full Chromium). Ran both converters on 3 new builds (new deck 53.1.0, Mermaid variant, 52.11.5) and played all of them on the real site, the wasm output after swapping it into the portable ZIP.
+   EVIDENCE: All 7 variants converted (router patched once, mapDeps 3). 6/7 replayed on the real site: 'Playing locally', slides 1-5, 0 external requests. The memory-rel replay was cut off when I stopped my servers. New deck: Node and wasm both ready, every slide, clicks, slider, image, KaTeX, 0 external. Wasm: init 171-210 ms; conversion 1.50 s cold / 0.88 s warm for the 2 MB deck, 1.79 s for 52.11.5, 7.86 s for the Mermaid deck (9.96 MB HTML). The wasm page carries the site's exact meta CSP. Results are in V3/out/real-*.json.
+   CAVEATS: The 0.7-1.7 s figure holds only for small decks; with one Mermaid block the wasm conversion takes 7.9 s and the HTML is 10 MB. Keyboard input reaches the deck only after the user clicks inside it; synthetic body.press does not. Console always shows a 'focus-without-user-activation' permissions-policy error (not fatal). Fonts fall back because Google Fonts are dropped. Only Chromium 158 was tested.
+
+[V3.2] CONFIRMED-WITH-CAVEATS — B2-F3: a prebuilt generic Slidev client plus an in-browser compiler re-renders a deck from edited source without Node; 5-slide deck DOM- and pixel-identical to the real build; 5/5 on the richer deck; 7/16 on the official template; compile 0.07-1.4 s; no eval or WebAssembly.
+   DID: Copied B2's in-browser site and test-fidelity-slides.mjs (ports and browser channel changed). Compiled my new deck's SOURCE and compared every slide with the real build (DOM), and added a canvas pixel diff of the screenshots. Packed the compiled HTML into a portable ZIP and played it on the real site. Repeated with the Mermaid variant. I did not re-run B2's own decks.
+   EVIDENCE: New deck: compile 278-353 ms, 0 diagnostics. DOM identical 7/7. Pixels identical 4/7: slide 2 differs by 35,432 px because frontmatter 'class: pt-6' gets no CSS (reference CSS has .pt-6{padding-top:1.5rem}; the compiled HTML has none); slide 6 differs by 6,037 px from different Shiki token colours; slide 5 differed by 12 px in one run only. On the real site the compiled deck reached ready, all slides, clicks, code steps and slider worked. Mermaid deck: compiler reports unsupported mermaid; DOM 7/8, pixels 5/8.
+   CAVEATS: B2's fidelity tool compares normalised DOM with style, src, id and url() stripped, and plays the compiled HTML at top level with page.setContent, not in the sandbox. It cannot detect missing CSS utilities or colour differences, so 'DOM-identical' overstates fidelity. On a new realistic deck, a frontmatter 'class:' utility was silently lost. Mermaid is not supported.
+
+[V3.3] CONFIRMED — B2-F1: an unmodified ordinary build is blank from file://, in a blob: document, in an opaque sandbox, and under a sub-path with the default base.
+   DID: Opened my new default build (53.1.0) in full Chromium: from file://, under /sub/deck/, in a sandbox='allow-scripts' iframe (both sub-path and served at an origin root), and as a blob: document. Control: the same build at an HTTP origin root.
+   EVIDENCE: file://: CORS block on file:///assets/index-*.js, #app empty. Sub-path: 404 for /assets/modules/shiki-*.css and /sun.png, #app empty. Sandbox: 'blocked by CORS policy: No Access-Control-Allow-Origin', #app empty. blob: document: #app empty. Control renders 'The Simple Pendulum'. (V3/tools/hosting-v3.mjs)
+   CAVEATS: The sandbox case failed on CORS. I did not repeat B2's ACAO-enabled sandbox run, which fails later on localStorage.
+
+[V3.4] CONFIRMED — B2-F5: a Worker loaded from a same-origin URL is not bound by the page's meta CSP; WebAssembly, new Function and import(blob:) work there but not on the main thread or in blob: Workers.
+   DID: Re-ran a copy of run-csptest.mjs on a copy of csptest/ in full Chromium (B2 used the headless shell).
+   EVIDENCE: Main thread: wasm CompileError for unsafe-eval, EvalError, blob module import failed. workerSelfUrl and workerSelfUrlModule: wasm allowed, new Function -> 42, import(blob) -> 42. workerBlobUrl: wasm CompileError. The esbuild-wasm converter also worked this way under the site CSP.
+   CAVEATS: Chromium only; Firefox and Safari not tested.
+
+[V3.5] CONFIRMED-WITH-CAVEATS — B2-F6: only routerMode memory works in an opaque frame; the memory router exists only since @slidev/cli 52.17.0.
+   DID: Ran npm pack on @slidev/cli 52.16.0 and 52.17.0 and grepped for __SLIDEV_MEMORY_ROUTE__ / createMemoryHistory. I did not test whether hash or history builds can play in an opaque frame without conversion.
+   EVIDENCE: 52.16.0: 0 files reference the memory route; 52.17.0: 1 file.
+   CAVEATS: The 'only memory works' half was not re-run by me. It matters only for unconverted builds: the converter swaps any router for an in-memory history, and hash and history builds played fine after conversion.
+
+[V3.6] REFUTED — B7-F6: a stock Slidev project plus routerMode hash (or memory), fonts provider none and 'slidev build --base ./' works offline from any HTTP sub-folder with 0 external requests.
+   DID: Applied exactly those settings to my new deck, built it with --base ./, served it from /decks/talk/ with all non-localhost traffic aborted and logged, full Chromium.
+   EVIDENCE: The deck renders, navigates (#/1 -> #/2), shows the public image and KaTeX, $router.push('/5') works, and the slider computes 2.837. But index.html still contains https://cdn.jsdelivr.net/gh/slidevjs/slidev/assets/favicon.png, and Chromium requested it 4 times.
+   CORRECTED: These settings give a build that works from any HTTP sub-folder without network. It still makes one external request type: the default favicon on cdn.jsdelivr.net (non-essential; failure is harmless). Truly 0 external requests also needs a local favicon or removal of that link. The '0 requests' observation probably came from the headless shell, which does not fetch favicons.
+
+[V3.7] CONFIRMED-WITH-CAVEATS — B2-F9/F10: small default build about 106 files / 1.9-2.1 MB, references Google Fonts and a jsDelivr favicon; @slidev/cli 53.1.0 requires Node >= 22.22.0; cold install about 110 MB tarballs / about 500 MB on disk.
+   DID: Counted files and grepped index.html of my new build; ran npm view for engines; timed a cold install of 52.11.5 with an empty cache (not 53.1.0).
+   EVIDENCE: New 7-slide build: 109 files, 2.2 MB (du) / 1.93 MB of content (detect), links to fonts.googleapis.com and the jsDelivr favicon. npm view @slidev/cli@53.1.0 engines.node = >=22.22.0. 52.11.5 cold install: 36 s, 622 packages, 425 MB node_modules, 407 MB npm cache.
+   CAVEATS: Size scales with content: one Mermaid block raises the build to 199 files / 7.5 MB. The 53.1.0 tarball size was not re-measured.
+
+[V3.8] CONFIRMED-WITH-CAVEATS — B2-F7: the official create-slidev template built unchanged is about 314 files / 37 MB, creates Web Workers and references external scripts.
+   DID: Inspected B2's existing starter-deck/dist statically (file count, byte size, script tags, grep for new Worker). I did not rebuild it or check worker creation at runtime.
+   EVIDENCE: 314 files, 37,354,226 bytes; script tags for platform.twitter.com/widgets.js and embed.bsky.app/static/embed.js; 7 JS files contain 'new Worker'.
+   CAVEATS: Static check only; that a worker is created on every slide was not re-observed.
+
+[V3.9] CONFIRMED — B6-F7: in a built Slidev client window.__slidev__ is undefined, but the router is reachable via document.querySelector('#app').__vue_app__.config.globalProperties.$router and $router.push('/3') navigates.
+   DID: Evaluated this in my hash build served from a sub-folder, and inside the converted decks on the real site (memory-patched router).
+   EVIDENCE: typeof window.__slidev__ === 'undefined'. $router present. push('/5') moved location to #/5 with the 'Try it' slide shown; in converted decks currentRoute became /5 and slidev-page-5 became visible.
+   CAVEATS: Tested on 53.1.0 and on a converted 52.11.5 deck, not on a plain history build.
+
+[V3.10] CONFIRMED-WITH-CAVEATS — B2-F18: the upload classifier detect.mjs classifies its 17 fixtures correctly.
+   DID: Ran a copy of run-detect.mjs on the original 17 fixtures plus 5 new inputs: new source, new 53.1.0 dist, Mermaid dist, 52.11.5 dist and the converted portable ZIP.
+   EVIDENCE: The 17 original fixtures got plausible kinds and attributes: sources, dists with base and router, the 37 MB starter with Monaco, workers and external scripts, portable, reveal.js, Marp, plain Markdown. On the new inputs all kinds were right and Mermaid was flagged. But the default 52.11.5 build (history router, since routerMode was not set) was reported as routerMode 'hash'.
+   CAVEATS: Router-mode detection reads minified code and fails on at least one older version. Treat it as a hint, as B2 itself warned.
+
+NEW INPUT RESULTS:
+ - [works] New 7-slide Pendulum deck (v-clicks, two-cols plus pt-6, public image, Vue slider component, {2-3|5} code, KaTeX, frontmatter, notes), default 'slidev build' 53.1.0 | Node convert-dist.mjs copy, then real md.qft.org production player via ZIP upload; full Chromium and headless shell
+     Ready in about 1.3 s; slides 1-7; v-clicks 1-4; code highlight 2 lines to 1 line; slider 1.00/2.006 to 4.00/4.012, mouse click works; image as data: URI; KaTeX; scoped CSS; 0 external requests. Only error: focus-without-user-activation (non-fatal). Keys need a real click into the deck first.
+ - [works] Same deck, default build | esbuild-wasm Worker converter (wasmtest copy, site CSP), HTML swapped into the portable ZIP, real site player
+     Init 171-210 ms; conversion 1.50 s cold, 0.88 s warm; 1.46 MB HTML; same walk results as the Node version.
+ - [works-with-defects] Same deck, SOURCE | B2 in-browser compiler plus generic client, fidelity tool copy (DOM) plus a new canvas pixel diff; compiled HTML also played on the real site
+     Compile 278-353 ms. DOM 7/7, pixels 4/7: slide 2 lacks the .pt-6 rule from frontmatter 'class:' (35k px), slide 6 Shiki token colours differ (6k px). Plays fully on the real site.
+ - [works] Deck plus Mermaid graph slide, 53.1.0 default build (199 files, 7.5 MB) | Node and wasm converters, real site player
+     Node: 7.77 MB HTML. Wasm: 7.86 s, 9.96 MB HTML. Both ready; all 8 slides; Mermaid SVG rendered inside the .mermaid shadow root, as in the reference; slider works.
+ - [works-with-defects] Deck plus Mermaid graph slide, SOURCE | In-browser compiler plus fidelity tool
+     Compiler reports unsupported mermaid; leaves an unknown <mermaid code-lz> element. DOM 7/8, pixels 5/8.
+ - [works] Same deck built with @slidev/cli 52.11.5 (Vite 7), cold install 36 s | Node and wasm converters, real site player
+     Both regexes matched (mapDeps 3, router To("/") with double quotes). Ready; full walk; slider works. The 'Failed to patch FloatingVue ... Popper' console error is upstream: it appears in the unconverted 52.11.5 build too.
+ - [works-with-defects] Same deck with routerMode hash, fonts provider none, --base ./ (B7 recipe) | Served from /decks/talk/ with network blocked, full Chromium
+     Renders, navigates, image, KaTeX, slider. The jsDelivr favicon is still requested (4 times), so it is not 0 external requests.
+ - [fails] New default build, unmodified | file://, /sub/deck/ sub-path, sandbox iframe, blob: document; full Chromium
+     Blank in all four, as B2-F1 says: CORS on file://, 404 /assets, CORS null origin, blob blank. The control at an origin root works.
+
+EXTRA FINDINGS:
+ - No converter patch broke on any new input (53.1.0 default, 53.1.0 plus Mermaid, 52.11.5 / Vite 7). The router regex handles both backtick and double-quote minification.
+ - B2's in-browser fidelity verdict 'identical' is DOM-only and taken outside the sandbox. A pixel diff on a new deck found a lost frontmatter 'class: pt-6' utility (the UnoCSS pass does not scan per-slide frontmatter class) and different Shiki token colours, both invisible to the DOM comparison.
+ - Slidev renders Mermaid inside a ShadowRoot; probes using document.querySelectorAll('svg') report a false 'Mermaid did not render'.
+ - On the real site, Playwright's frame.locator('body').press() (used in B2's tests) does not deliver keys to the nested opaque-origin deck. Keys arrive only after a real pointer click in the deck. Real users must click the deck before arrow keys work.
+ - Wasm conversion time scales with the module graph: 7.9 s and a 10 MB HTML for a deck with one Mermaid block, against 0.9-1.8 s for small decks.
+ - detect.mjs reports routerMode 'hash' for a default (history) 52.11.5 build.
+ - B7-F6's '0 external requests' misses the default jsDelivr favicon link, which full Chromium fetches; chrome-headless-shell does not fetch favicons.

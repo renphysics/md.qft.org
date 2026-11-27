@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { DraftConflictError, isDraftConflict, type Draft, type DraftOptions } from '../src/lib/draft-store.ts';
 import type { DraftImage } from '../src/lib/image-assets.ts';
 import { scopedStorageKey } from '../src/lib/storage-scope.ts';
+import { errorMessage, watchLoadFailures } from '../src/lib/load-failure.ts';
 import { siteConfig } from '../src/config/site.ts';
 import { DEFAULT_DOCUMENT_SETTINGS, type DocumentSettings } from '../src/lib/document-presentation.ts';
 import { appendDocumentSection, suggestDocumentTitle, applyCleanup } from '../src/lib/document-tools.ts';
@@ -110,7 +111,7 @@ function workspace(storage: Partial<Storage> = {}, browserDependencies: Record<s
     Compartment: class {}, HighlightStyle: { define: () => ({}) }, tags: {},
     matchMedia: () => ({ matches: false, addEventListener: noop }),
     document: { addEventListener: noop, getElementById: (id: string) => id === 'workspace-exports' ? headerExports : null }, window: { addEventListener: noop },
-    createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig,
+    createDraftId: () => 'memory-draft', isDraftConflict, scopedStorageKey, siteConfig, errorMessage, watchLoadFailures,
     DEFAULT_DOCUMENT_SETTINGS, appendDocumentSection, suggestDocumentTitle, applyCleanup,
     cleanupOptions, reviewCleanup, cleanupDiff,
     renderMarkdown, EXAMPLES, cloneLessonProject,

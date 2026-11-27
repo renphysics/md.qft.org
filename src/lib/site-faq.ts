@@ -9,7 +9,7 @@ export interface SiteFaq {
 export const siteFaqs: readonly SiteFaq[] = [
   {
     question: `Is ${siteConfig.name} free to use? Do I need an account?`,
-    answer: `${siteConfig.name} is a free, open-source Markdown editor with math preview, local images, interactive slides, and document exports. You can edit notes, organize sections, present a slide deck with physics demonstrations, and prepare a PDF without creating an account. The editor runs in your browser.`,
+    answer: `${siteConfig.name} is a free, open-source Markdown editor with math preview, local images, interactive slides, and document exports. You can edit notes, organize sections, present slides with physics demonstrations, and prepare a PDF without creating an account. The editor runs in your browser.`,
   },
   {
     question: 'Which mathematical notation does the editor support?',
@@ -21,27 +21,27 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Where are my drafts saved? Can I open them on another device?',
-    answer: 'Drafts, imported pictures, and lesson source files are saved in this browser. They do not automatically synchronize between browsers, profiles, devices, or website addresses. Clearing site data or using private browsing can remove them. Download Project ZIP for a lesson with separate demo files, Markdown + images for drafts with local pictures, or Slide bundle to retain a deck’s slide settings, then use Open file to import the ZIP elsewhere. Plain Markdown downloads contain source text and references. Document PDF-style preferences are stored separately.',
+    answer: 'Drafts, imported pictures, and lesson source files are saved in this browser. They do not automatically synchronize between browsers, profiles, devices, or website addresses. Clearing site data or using private browsing can remove them. Download Project ZIP for a lesson with separate demo files, Markdown + images for drafts with local pictures, or Slide bundle to retain the slide settings, then use Open file to import the ZIP elsewhere. Plain Markdown downloads contain source text and references. Document PDF-style preferences are stored separately.',
   },
   {
     question: 'Does the website upload my text or load external images?',
-    answer: 'The application processes document text and imported pictures in your browser and does not upload them to a rendering or AI service. The site host still receives ordinary requests needed to load the website. Remote images are off by default; enabling them contacts their image hosts, and opening an external link visits that website. HTML export embeds enabled remote images only when they can be downloaded successfully.',
+    answer: 'The application processes document text, imported pictures, and presentations in your browser and does not upload them to a rendering or AI service. The site host still receives ordinary requests needed to load the website. Remote images are off by default; enabling them contacts their image hosts, and opening an external link visits that website. HTML export embeds enabled remote images only when they can be downloaded successfully.',
   },
   {
     question: 'How do I insert a picture into Markdown?',
-    answer: 'Choose Insert image, paste an image into the editor, or drop image files onto the workspace. PNG, JPEG, WebP, and GIF are supported, with limits of 8 MiB per image, 24 MiB in total, and 50 local images per document. Images are saved with the draft in this browser. Download Markdown + images to move the editable document and its pictures together; importing a plain Markdown file does not import neighboring image files.',
+    answer: 'Choose Insert image, paste an image into the editor, or drop image files onto the workspace. PNG, JPEG, WebP, and GIF are supported, with limits of 8 MB per image, 24 MB in total, and 50 local images per document. Images are saved with the draft in this browser. Download Markdown + images to move the editable document and its pictures together; importing a plain Markdown file does not import neighboring image files.',
   },
   {
     question: 'Can I make and present Markdown slides with mathematical equations?',
-    answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. This Reveal.js format does not interpret Marp directives or Slidev components; prepared Slidev ZIPs use a separate player.',
+    answer: 'Yes. Choose Slides in the Document / Slides selector, then separate slides with a line containing --- and blank lines on either side. The Markdown and KaTeX renderer handles text, equations, images, lists, and code. Choose Paper, Midnight, or Academic styling and 16:9 or 4:3 proportions. Present opens fullscreen playback. Save PDF prepares one page per slide, and HTML export creates a standalone interactive presentation. This Reveal.js format does not interpret Marp directives or Slidev components; Reveal.js presentations and Slidev builds made elsewhere open in a separate presentation library.',
   },
   {
-    question: 'Can I open an interactive Slidev presentation ZIP?',
-    answer: 'Yes. Use Open file for a Slidev ZIP prepared with the supplied portable packager, or choose Slidev presentations in the sidebar to try the quantum interference example. The ZIP contains a compiled presentation with embedded libraries, images, and fonts, plus optional editable source. Start runs it locally in an isolated player; Present opens fullscreen. Packages can be saved in this browser, downloaded unchanged, or exported to a standalone HTML player. No server upload or runtime CDN is required. A source-only Slidev project or an ordinary dist ZIP must be built and packaged first.',
+    question: 'Can I open a Reveal.js or Slidev presentation that an AI made?',
+    answer: 'Yes. Use Open file, or Presentations in the sidebar, for a Reveal.js presentation saved as one HTML file or as a ZIP with index.html at the top, another web page, a ZIP of a Slidev project with its built dist folder (or of the dist folder alone), or a portable Slidev package. The file is prepared in your browser so it plays offline: Reveal.js and KaTeX from a CDN are replaced by the copies that come with this site, MathJax formulas are typeset with KaTeX, and Google Fonts, other libraries from the internet, remote pictures, and embedded web pages are left out. Notes from the check list every change, and Copy report for AI gives your AI assistant a short report to fix the presentation. It plays in an isolated player that cannot read your documents and blocks ordinary network requests; links to websites, also from a button you click, open in a new tab only after you confirm the address shown. Pop-up questions, new windows, printing and sending forms do not work in the player (a quiz form whose script checks the answers does), and data a presentation saves in the browser lasts only until it stops. ZIPs made on Windows with file names in an old code page, such as GBK, are read in the code page that the slides, or the ZIP’s own name, show. An unbuilt Slidev project must be built first; a Slidev slides.md opened on its own opens as a Markdown document, with a notice that it has to be built to play as slides. In presentations that use MathJax, equations are numbered as the presentation’s MathJax settings ask, and \\eqref and \\ref show those numbers.',
   },
   {
-    question: 'How do I revise a Slidev presentation made by AI?',
-    answer: 'Choose Create with AI and select Slidev. Copy the instructions and attach the matching starter ZIP to a coding tool such as Codex. Ask it to revise the source, build the presentation, and return a new portable ZIP. Source files can be viewed and copied here; they are not compiled in the browser. Updating slides.md or a Vue component requires rebuilding before the playable presentation changes. Keep the ZIP as your editable backup. Network services, workers, nested frames, and arbitrary dynamic code evaluation are outside the portable playback profile.',
+    question: 'Can I edit a presentation in the browser?',
+    answer: 'Reveal.js presentations and other web pages, yes. Open Source files, change a text file, and choose Apply changes: a Reveal.js presentation replays on the same slide, and other pages start again from the beginning. Edits are saved in this browser beside the original file, which is never changed; Discard changes to this file removes typing that is not applied yet, ZIP downloads the edited presentation, and Original the file as imported. Text files up to 2 MB can be edited, with 8 MB of edited text in total. Slidev builds and portable Slidev packages are read-only: change the Slidev project, build it again, and open the new ZIP. Choose Create with AI and then Reveal.js or Slidev for instructions to give your AI assistant.',
   },
   {
     question: 'Can a slide contain a working JavaScript demonstration?',
@@ -49,7 +49,7 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'How do I ask AI to create slides with pictures and interactive demos?',
-    answer: 'Choose Create with AI, enter the class topic and teaching details, then copy the generated instructions into your AI tool. A downloadable starter project provides a working example. Ask the AI for the complete project ZIP and open it here. The website itself does not upload a chapter or call an AI service. Use Check lesson to find compatibility issues, then run each demo and rehearse the presentation before class.',
+    answer: 'Choose Create with AI, pick a format, enter the class topic and teaching details, then copy the generated instructions into your AI assistant. Markdown gives a lesson ZIP that you edit in this workspace, with a starter ZIP as a working example; use Check lesson to find compatibility issues. Reveal.js works with any AI: it returns one index.html, and no starter is needed. Slidev needs an assistant that can run commands, or a computer with Node.js: it returns one ZIP of the Slidev project with its built dist folder, and its starter ZIP is an optional example. Open what the AI returns here and read the notes from the check; Copy report for AI helps the AI fix a presentation. The website itself does not upload a chapter or call an AI service. Run each demo and rehearse the presentation before class.',
   },
   {
     question: 'Can I revise an AI lesson without losing its images and demo files?',
@@ -77,7 +77,7 @@ export const siteFaqs: readonly SiteFaq[] = [
   },
   {
     question: 'Can I download editable Markdown or standalone HTML?',
-    answer: 'Yes. Markdown download preserves source text. With local pictures, the download becomes Markdown + images, an editable ZIP bundle. Slide bundle retains a deck’s slide settings even without pictures. For a lesson project, Project ZIP keeps its Markdown, separate demo files, pictures, and other supported source files together. Standalone HTML includes rendered content, fonts, images, and supported interactive demos, and opens independently of this editor. Document HTML includes the source in a disclosure; slide HTML also includes presentation playback. Enabled remote images must be embedded successfully, or export reports the problem. Reopening the editor website itself offline is not guaranteed.',
+    answer: 'Yes. Markdown download preserves source text. With local pictures, the download becomes Markdown + images, an editable ZIP bundle. Slide bundle retains the slide settings even without pictures. For a lesson project, Project ZIP keeps its Markdown, separate demo files, pictures, and other supported source files together. Standalone HTML includes rendered content, fonts, images, and supported interactive demos, and opens independently of this editor. Document HTML includes the source in a disclosure; slide HTML also includes presentation playback. Enabled remote images must be embedded successfully, or export reports the problem. Reopening the editor website itself offline is not guaranteed.',
   },
   {
     question: 'Can I reuse the source and host my own version?',

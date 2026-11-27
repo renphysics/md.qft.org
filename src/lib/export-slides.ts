@@ -17,6 +17,32 @@ import { siteConfig } from '../config/site';
 
 let printing = false;
 
+/**
+ * One-based numbers of the fixed-size print slides whose content is clipped.
+ * The slide's content box always counts. A nested code block, display
+ * equation, or table counts only on an axis where it clips its own overflow:
+ * with `overflow: visible` the overflow is painted (a KaTeX display reports
+ * a few pixels of glyph overhang this way) and any part that leaves the slide
+ * is already measured by the content box. Self-contained: it is also
+ * serialized into the exported HTML.
+ */
+export function overflowingSlides(root: ParentNode, tolerance = 3): number[] {
+  const overflowing: number[] = [];
+  root.querySelectorAll<HTMLElement>('.slides > section.qft-slide').forEach((slide, index) => {
+    const content = slide.querySelector<HTMLElement>('.qft-slide-content');
+    if (!content) return;
+    const clipped = [content, ...content.querySelectorAll<HTMLElement>('pre,.katex-display,table')].some((element) => {
+      const style = getComputedStyle(element);
+      const clipsX = element === content || style.overflowX !== 'visible';
+      const clipsY = element === content || style.overflowY !== 'visible';
+      return (clipsY && element.scrollHeight > element.clientHeight + tolerance)
+        || (clipsX && element.scrollWidth > element.clientWidth + tolerance);
+    });
+    if (clipped) overflowing.push(index + 1);
+  });
+  return overflowing;
+}
+
 function staticSlideCss(settings: SlideSettings, prefix: string): string {
   const { width, height } = slideDimensions(settings);
   return `
@@ -44,6 +70,7 @@ export async function exportSlidesHtml(
   const scriptNonce = exportScriptNonce();
   const script = `${revealRuntime}\n
 const makePrintCopy = (${makeInteractivePrintCopy.toString()});
+const overflowingSlides = (${overflowingSlides.toString()});
 const namespacePrintIds = (${namespacePrintIds.toString()});
 const deck = new Reveal(document.querySelector('.reveal'), {
   width:${width},height:${height},margin:0.04,minScale:0.05,maxScale:2,
@@ -107,12 +134,7 @@ async function checkPrintLayout(){
       Promise.all([document.fonts.ready,...[...measureDeck.querySelectorAll('img')].map(image=>image.decode())]),
       new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Images or fonts are taking too long to load. Please try again.')),20000);})
     ]);
-    const overflow=[];
-    measureDeck.querySelectorAll('.slides > section.qft-slide').forEach((slide,index)=>{
-      const content=slide.querySelector('.qft-slide-content');
-      if(content&&[content,...content.querySelectorAll('pre,.katex-display,table')].some(element=>
-        element.scrollHeight>element.clientHeight+3||element.scrollWidth>element.clientWidth+3))overflow.push(index+1);
-    });
+    const overflow=overflowingSlides(measureDeck);
     if(overflow.length)throw new Error('Slide'+(overflow.length===1?' ':'s ')+overflow.slice(0,12).join(', ')+(overflow.length>12?', …':'')+(overflow.length===1?' contains':' contain')+' too much content for this slide size. Shorten or split the content in the editor, then export again.');
   }catch(error){clearPrintCopy();throw error;}
   finally{clearTimeout(timeout);}
@@ -267,14 +289,7 @@ export async function printSlides(
     document.head.append(style);
     document.body.append(root);
     await waitForPrintAssets(root);
-    const overflow: number[] = [];
-    root.querySelectorAll<HTMLElement>('.slides > section.qft-slide').forEach((slide, index) => {
-      const content = slide.querySelector<HTMLElement>('.qft-slide-content');
-      if (!content) return;
-      const candidates = [content, ...content.querySelectorAll<HTMLElement>('pre,.katex-display,table')];
-      if (candidates.some((element) => element.scrollHeight > element.clientHeight + 3
-        || element.scrollWidth > element.clientWidth + 3)) overflow.push(index + 1);
-    });
+    const overflow = overflowingSlides(root);
     if (overflow.length) {
       throw new Error(`Slide${overflow.length === 1 ? '' : 's'} ${overflow.slice(0, 12).join(', ')}${overflow.length > 12 ? ', …' : ''} ${overflow.length === 1 ? 'contains' : 'contain'} too much content for the selected slide size. Split the content across slides or choose 4:3 before saving the PDF.`);
     }

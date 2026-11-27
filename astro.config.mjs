@@ -10,5 +10,7 @@ export default defineConfig({
   build: { inlineStylesheets: 'never' },
   vite: {
     build: { assetsInlineLimit: 0 },
+    // The Slidev converter runs as a module Worker (src/workers/slidev-convert.worker.ts).
+    worker: { format: 'es' },
   },
 });

@@ -6,6 +6,7 @@ import { MAX_SOURCE_LENGTH, type RenderOptions } from './render-markdown';
 import { findInteractiveFences, MAX_INTERACTIVE_DEMOS, MAX_INTERACTIVE_CODE_LENGTH } from './interactive-demos';
 import { projectFilePath } from './lesson-project';
 import { imageReference } from './image-assets';
+import { looksLikeSlidevSource, SLIDEV_SOURCE_CHECK_TEXT } from './slidev-source';
 
 export interface LessonIssue {
   severity: 'error' | 'warning' | 'info';
@@ -21,6 +22,25 @@ const parser = new MarkdownIt({ html: false, linkify: false, typographer: false 
   .use(mathPlugin, { delimiters: 'all', mathFence: false, allowInlineWithSpace: false })
   .use(footnote);
 const MAX_ISSUES = 100;
+
+/**
+ * Reveal.js conventions that the Markdown slides of this site do not read:
+ * attribute comments of its Markdown plugin, slides written as sections,
+ * fragments, data- attributes inside a tag, and the start-up call. Every
+ * pattern is bounded, so one long line cannot make the scan slow.
+ */
+const REVEAL_SYNTAX = [/<!--\s*\.(?:slide|element)\s*:/i, /<section[\s>]/i, /\bclass\s*=\s*["'][^"'<>\n]{0,200}\bfragment\b/i,
+  /<[a-z][^<>\n]{0,300}\sdata-(?:markdown|separator|background(?:-[a-z-]{1,30})?|auto-animate|transition|fragment-index)\b/i, /\bReveal\s{0,20}\.\s{0,20}initialize\s{0,20}\(/];
+
+/** The first line (from 0) that uses one of them outside inline code, or -1. */
+export function findRevealSyntaxLine(lines: string[]): number {
+  return lines.findIndex((line) => {
+    const text = line.includes('`') ? line.replace(/`[^`]*`/g, '') : line;
+    return REVEAL_SYNTAX.some((pattern) => pattern.test(text));
+  });
+}
+
+export const REVEAL_SYNTAX_CHECK_TEXT = 'This text uses Reveal.js conventions (such as <section>, fragments or <!-- .slide: … --> comments), which the Markdown slides of this site do not read: they show as text. To play it as a Reveal.js presentation, ask your AI assistant for the complete presentation as one HTML file or a ZIP, and open that file here.';
 
 function issueCode(message: string): string {
   if (/KaTeX|formula|Undefined control sequence|ParseError/i.test(message)) return 'math';
@@ -80,7 +100,23 @@ export function checkLesson(source: string, options: RenderOptions = {}): Lesson
       if (token.children) walk(token.children, line);
     }
   };
-  walk(parser.parse(source, {}));
+  const tokens = parser.parse(source, {});
+  walk(tokens);
+
+  // Slides written for another tool open as a Markdown document and would
+  // pass every check above, although much of them shows as plain text.
+  // Syntax that a lesson only shows inside code is not counted.
+  if (looksLikeSlidevSource(source)) add({ severity: 'warning', code: 'slidev-source', line: 1, message: SLIDEV_SOURCE_CHECK_TEXT });
+  const lines = source.split('\n');
+  const coded = (tokenList: Token[]): void => {
+    for (const token of tokenList) {
+      if ((token.type === 'fence' || token.type === 'code_block') && token.map) for (let index = token.map[0]; index < token.map[1]; index += 1) lines[index] = '';
+      if (token.children) coded(token.children);
+    }
+  };
+  coded(tokens);
+  const revealLine = findRevealSyntaxLine(lines);
+  if (revealLine >= 0) add({ severity: 'warning', code: 'reveal-syntax', line: revealLine + 1, message: REVEAL_SYNTAX_CHECK_TEXT });
 
   report.demos = demos.length;
   for (const demo of demos.slice(0, MAX_INTERACTIVE_DEMOS)) {

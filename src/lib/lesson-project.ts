@@ -14,6 +14,26 @@ export const MAX_PROJECT_FILE_BYTES = 2 * 1024 * 1024;
 export const MAX_PROJECT_TEXT_BYTES = 6 * 1024 * 1024;
 export const MAX_PROJECT_ENTRIES = 150;
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+/**
+ * Earlier AI prompts showed this placeholder in their qft.json example. It is
+ * a syntactically valid id, so lessons that kept it would all look like
+ * revisions of one another; an import treats it as "no id".
+ */
+export const PLACEHOLDER_PROJECT_ID = 'REPLACE-WITH-A-NEW-UUID';
+
+export function isPlaceholderProjectId(id: unknown): boolean {
+  return typeof id === 'string' && id.trim().toUpperCase() === PLACEHOLDER_PROJECT_ID;
+}
+
+/** A new random lesson identifier. */
+export function newProjectId(): string {
+  const crypto = globalThis.crypto;
+  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+  if (typeof crypto?.getRandomValues === 'function') {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error('This browser cannot create a lesson identifier. Open the site in a current browser.');
+}
 
 export function safeProjectPath(path: string): boolean {
   return typeof path === 'string' && path.length > 0 && path.length <= 240
@@ -97,13 +117,7 @@ export function validateLessonProject(value: unknown): LessonProject {
 }
 
 export function createLessonProject(document = 'slides.md', id?: string): LessonProject {
-  if (!id) {
-    const crypto = globalThis.crypto;
-    if (typeof crypto?.randomUUID === 'function') id = crypto.randomUUID();
-    else if (typeof crypto?.getRandomValues === 'function') {
-      id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
-    } else throw new Error('This browser cannot create a lesson identifier. Open the site in a current browser.');
-  }
+  if (!id || isPlaceholderProjectId(id)) id = newProjectId();
   return validateLessonProject({ version: 2, id, document, files: [], imagePaths: [] });
 }
 

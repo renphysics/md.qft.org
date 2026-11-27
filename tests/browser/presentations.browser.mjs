@@ -1,42 +1,11 @@
-/** End-to-end checks for real Slidev playback. Run after npm run build. */
+/** End-to-end checks for real Slidev playback in the isolated presentation player. */
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { chromium } from 'playwright';
+import { strToU8, zipSync } from 'fflate';
+import { until } from './harness.mjs';
 
-const artifacts = resolve('artifacts');
-await mkdir(artifacts, { recursive: true });
-const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4322/';
-let server;
-let serverOutput = '';
-let browser;
-let page;
-const checks = [];
-const pageErrors = [];
-const consoleErrors = [];
-const failedRequests = [];
-const externalRequests = [];
-const observedPages = [];
-const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-
-async function until(check, label, timeout = 30_000) {
-  const deadline = Date.now() + timeout;
-  let last;
-  while (Date.now() < deadline) {
-    try { const value = await check(); if (value) return value; }
-    catch (error) { last = error; }
-    await sleep(100);
-  }
-  throw new Error(`Timed out: ${label}${last ? ` (${last.message})` : ''}`);
-}
-
-async function step(name, action) {
-  await action();
-  checks.push(name);
-  console.log(`PASS ${name}`);
-}
+export const title = 'Slidev presentation player';
 
 async function presentationFrame(targetPage) {
   return until(async () => {
@@ -52,14 +21,19 @@ async function heading(frame, name) {
   await frame.getByRole('heading', { name }).waitFor({ state: 'visible', timeout: 20_000 });
 }
 
-async function goToDemo(frame) {
+/** The player hands keyboard focus to the deck itself; a presenter must not need to click first. */
+async function deckHasFocus(frame) {
+  await until(() => frame.evaluate(() => document.hasFocus()), 'keyboard focus to reach the deck without a click', 10_000);
+}
+
+async function goToDemo(targetPage, frame) {
   await heading(frame, /Phase makes\s*the difference/);
-  await frame.getByRole('heading', { name: /Phase makes\s*the difference/ }).click();
-  // Focus an actual slide, not the outer player controls. Using press rather
-  // than a synthetic KeyboardEvent exercises Slidev's real keyboard handlers.
-  await frame.locator('body').press('ArrowRight');
+  await deckHasFocus(frame);
+  // Keys go to whatever the browser focused, exactly as for a presenter who
+  // has not clicked inside the slide.
+  await targetPage.keyboard.press('ArrowRight');
   await heading(frame, 'Amplitudes add.');
-  await frame.locator('body').press('ArrowRight');
+  await targetPage.keyboard.press('ArrowRight');
   await heading(frame, 'Change the relative phase.');
   return frame.getByRole('slider', { name: 'Relative phase in degrees' });
 }
@@ -76,7 +50,7 @@ async function setDestructiveInterference(frame) {
   return slider;
 }
 
-async function capturePresentation(targetPage, frame, name) {
+async function capturePresentation(t, targetPage, frame, name) {
   // Let Vue finish its natural slide fade and the nested frames publish their
   // resize paints. Forcing animations to finish during a full-page capture can
   // capture an empty compositor surface even after a successful interaction.
@@ -89,53 +63,25 @@ async function capturePresentation(targetPage, frame, name) {
     assert.ok(bounds && bounds.width > 250 && bounds.height > 100, 'The isolated slide and both frames must have usable painted dimensions');
   }
   await targetPage.waitForTimeout(350);
-  await targetPage.screenshot({ path: resolve(artifacts, name) });
+  await targetPage.screenshot({ path: resolve(t.artifacts, name) });
 }
 
-function observe(targetPage) {
-  observedPages.push(targetPage);
-  targetPage.on('pageerror', error => pageErrors.push({ page: targetPage.url(), message: error.message }));
-  targetPage.on('console', message => {
-    if (message.type() === 'error') consoleErrors.push({ page: targetPage.url(), message: message.text() });
-  });
-  targetPage.on('requestfailed', request => failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
+/** A minimal portable package whose deck fails while it is being presented. */
+function failingPackage(message) {
+  const html = `<!doctype html><html><body><main><h1>Failing lesson</h1></main><script>setTimeout(function () { throw new Error(${JSON.stringify(message)}); }, 1500);</script></body></html>`;
+  return Buffer.from(zipSync({
+    'qft-presentation.json': strToU8(JSON.stringify({ format: 'qft-presentation', version: 1, engine: 'slidev', title: 'Failing lesson', entry: 'presentation.html' })),
+    'presentation.html': strToU8(html),
+  }));
 }
 
-try {
-  if (!process.env.BASE_URL) {
-    server = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'preview', '--', '--port', '4322'], {
-      stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32',
-    });
-    const capture = chunk => { serverOutput = (serverOutput + String(chunk)).slice(-12_000); };
-    server.stdout.on('data', capture);
-    server.stderr.on('data', capture);
-    server.on('error', error => { serverOutput += `\n${error.message}`; });
-  }
-  await until(async () => {
-    const response = await fetch(baseUrl, { signal: AbortSignal.timeout(1000) });
-    return response.ok;
-  }, 'the production preview server');
-
-  browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+export default async function run(t) {
+  const { context, page } = await t.newPage({ acceptDownloads: true });
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  const allowedOrigin = new URL(baseUrl).origin;
-  // Fail closed if the application or any Slidev code tries to use a CDN.
-  await context.route('**/*', route => {
-    const url = route.request().url();
-    if (/^https?:/.test(url) && new URL(url).origin !== allowedOrigin) {
-      externalRequests.push(url);
-      return route.abort();
-    }
-    return route.continue();
-  });
-  page = await context.newPage();
-  observe(page);
-  await page.goto(baseUrl, { waitUntil: 'networkidle' });
-  await page.locator('.cm-editor').waitFor();
+  await t.openWorkspace(page);
   const dialog = page.locator('[data-pres-dialog]');
 
-  await step('Open the Slidev library and load a genuine, initially inert package', async () => {
+  await t.step('Open the Slidev library and load a genuine, initially inert package', async () => {
     await page.locator('[data-open-presentations]').click();
     await page.locator('[data-pres-library]').waitFor({ state: 'visible' });
     await page.locator('[data-pres-example]').click();
@@ -148,45 +94,57 @@ try {
   });
 
   let frame;
-  await step('Start all-local Slidev, navigate, and operate the actual Vue component', async () => {
+  await t.step('Start all-local Slidev, navigate with the keyboard at once, and operate the actual Vue component', async () => {
     await page.locator('[data-pres-start-button]').click();
     frame = await presentationFrame(page);
     await until(async () => (await page.locator('[data-pres-player-status]').textContent()) === 'Playing locally', 'playback readiness');
     assert.equal(await frame.getByRole('button', { name: 'Enter fullscreen', exact: true }).count(), 0, 'The isolated deck must not offer an unavailable inner fullscreen control');
-    await goToDemo(frame);
+    await goToDemo(page, frame);
     const slider = await setDestructiveInterference(frame);
     await frame.getByRole('button', { name: 'Animate phase', exact: true }).click();
     await until(async () => Number(await slider.inputValue()) > 181, 'the phase animation to advance');
     await frame.getByRole('button', { name: 'Pause animation', exact: true }).click();
     await setDestructiveInterference(frame);
-    await capturePresentation(page, frame, 'presentation-desktop.png');
-    assert.equal(externalRequests.length, 0, 'Playback must not request external resources');
+    await capturePresentation(t, page, frame, 'presentation-desktop.png');
+    assert.equal(t.externalRequests.length, 0, 'Playback must not request external resources');
   });
 
-  await step('Source remains accessible and fullscreen preserves the live slide state', async () => {
+  await t.step('Source remains accessible and read-only; Present keeps the live slide state and the keyboard', async () => {
     await page.locator('[data-pres-view="source"]').click();
-    const source = page.locator('[data-pres-source-text]');
-    assert.match(await source.inputValue(), /Quantum interference/);
-    assert.equal(await source.getAttribute('readonly'), '');
-    await page.locator('[data-pres-file]').selectOption('source/components/QuantumInterference.vue');
-    assert.match(await source.inputValue(), /onSlideLeave\(pause\)/);
+    const source = page.locator('[data-pres-code] .cm-content');
+    await until(async () => /Quantum interference/.test(await source.textContent()), 'the main source in the viewer');
+    assert.equal(await source.getAttribute('aria-readonly'), 'true');
+    assert.equal(await source.getAttribute('contenteditable'), 'false');
+    assert.match(await page.locator('[data-pres-source-note]').textContent(), /read-only here/);
+    await page.locator('.presentation-file[data-pres-file-path="source/components/QuantumInterference.vue"]').click();
+    await until(async () => (await page.locator('[data-pres-file-name]').textContent()) === 'source/components/QuantumInterference.vue', 'the component to be selected');
     await page.locator('[data-pres-copy]').click();
-    await until(async () => /Source copied|Source selected/.test(await page.locator('[data-pres-notice]').textContent()), 'copy action feedback');
+    await until(async () => /^Copied /.test(await page.locator('[data-pres-edit-status]').textContent()), 'copy action feedback');
+    assert.match(await page.evaluate(() => navigator.clipboard.readText()), /onSlideLeave\(pause\)/);
     await page.locator('[data-pres-present]').click();
     await page.locator('[data-pres-exit-fullscreen]').waitFor({ state: 'visible' });
     const fullscreenFrame = await presentationFrame(page);
     assert.equal(fullscreenFrame, frame, 'Present must reuse the running application');
     await heading(frame, 'Change the relative phase.');
     assert.equal(await frame.getByRole('slider', { name: 'Relative phase in degrees' }).inputValue(), '180');
+    // Hiding the frame for the source view released the slider's focus, so
+    // the arrow keys now belong to slide navigation. They must reach the deck
+    // after Present without a click on the slide.
+    assert.equal(await frame.evaluate(() => document.activeElement === document.body), true);
+    await deckHasFocus(frame);
+    await page.keyboard.press('ArrowLeft');
+    await heading(frame, 'Amplitudes add.');
+    await page.keyboard.press('ArrowRight');
+    await heading(frame, 'Change the relative phase.');
     await page.locator('[data-pres-exit-fullscreen]').click();
   });
 
   let offlineFile;
-  await step('Download a standalone player and verify stop, restart, and close lifecycle', async () => {
+  await t.step('Download a standalone player and verify stop, restart, and close lifecycle', async () => {
     const downloading = page.waitForEvent('download');
     await page.locator('[data-pres-html]').click();
     const download = await downloading;
-    offlineFile = resolve(artifacts, 'slidev-offline-player.html');
+    offlineFile = resolve(t.artifacts, 'slidev-offline-player.html');
     await download.saveAs(offlineFile);
     await page.locator('[data-pres-stop]').click();
     await page.locator('[data-pres-start-button]').waitFor({ state: 'visible' });
@@ -194,12 +152,19 @@ try {
     await page.locator('[data-pres-start-button]').click();
     frame = await presentationFrame(page);
     await heading(frame, /Phase makes\s*the difference/);
+    await page.locator('[data-pres-restart]').click();
+    await until(async () => (await page.locator('[data-pres-player-status]').textContent()) === 'Playing locally', 'readiness after Restart');
+    frame = await presentationFrame(page);
+    await heading(frame, /Phase makes\s*the difference/);
+    await deckHasFocus(frame);
+    await page.keyboard.press('ArrowRight');
+    await heading(frame, 'Amplitudes add.');
     await page.locator('[data-pres-close]').click();
     await dialog.waitFor({ state: 'hidden' });
     await until(async () => (await page.locator('[data-pres-host] iframe').count()) === 0, 'close event to remove every playback frame');
   });
 
-  await step('Reload the page, reopen the saved ZIP, and render the mobile layout', async () => {
+  await t.step('Reload the page, reopen the saved ZIP, and render the mobile layout', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.locator('.cm-editor').waitFor();
     await page.locator('[data-open-presentations]').click();
@@ -208,14 +173,14 @@ try {
     await page.locator('.presentation-saved-open').first().click();
     await page.locator('[data-pres-start-button]').click();
     frame = await presentationFrame(page);
-    await goToDemo(frame);
+    await goToDemo(page, frame);
     await page.setViewportSize({ width: 390, height: 844 });
     await until(async () => {
       const bounds = await dialog.boundingBox();
       return bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391;
     }, 'the responsive dialog layout');
     await frame.evaluate(() => document.fonts.ready);
-    await capturePresentation(page, frame, 'presentation-mobile.png');
+    await capturePresentation(t, page, frame, 'presentation-mobile.png');
     const bounds = await dialog.boundingBox();
     assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391, 'The mobile dialog must fit the viewport');
     await page.locator('[data-pres-close]').click();
@@ -224,7 +189,7 @@ try {
     await page.setViewportSize({ width: 1440, height: 1000 });
   });
 
-  await step('Existing Markdown and Reveal.js remain editable and playable', async () => {
+  await t.step('Existing Markdown and Reveal.js remain editable and playable', async () => {
     await page.locator('[data-file-input]').setInputFiles({
       name: 'reveal-regression.md', mimeType: 'text/markdown',
       buffer: Buffer.from('# Reveal still works\n\nA familiar editable workflow.\n\n---\n\n# Mathematics\n\n$$E=mc^2$$\n'),
@@ -237,47 +202,48 @@ try {
     assert.ok(await page.locator('[data-slide-host] .katex').count() > 0, 'Reveal should still render mathematics');
   });
 
-  await step('Downloaded HTML opens and runs its Vue interaction with networking disabled', async () => {
-    const offlineContext = await browser.newContext({ viewport: { width: 1280, height: 900 }, offline: true });
-    const offlinePage = await offlineContext.newPage();
-    observe(offlinePage);
+  await t.step('Downloaded HTML opens, takes the keyboard, and runs its Vue interaction with networking disabled', async () => {
+    const offlineContext = await t.newContext({ viewport: { width: 1280, height: 900 }, offline: true });
+    const offlinePage = t.observe(await offlineContext.newPage());
     await offlinePage.goto(pathToFileURL(offlineFile).href, { waitUntil: 'load' });
     assert.equal(offlinePage.frames().length, 1, 'The downloaded presentation is inert until Start');
+    const notices = offlinePage.locator('#notices');
+    assert.equal(await notices.evaluate((element) => element.open), false, 'The notices start collapsed');
+    assert.ok(await offlinePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'No sideways scrolling');
+    await notices.locator('summary').click();
+    assert.match(await notices.textContent(), /Copyright \(c\) 2026 Jie Ren/, 'The application notice is in the copy');
+    await notices.locator('summary').click();
     await offlinePage.getByRole('button', { name: 'Start presentation', exact: true }).click();
     const offlineFrame = await presentationFrame(offlinePage);
-    await goToDemo(offlineFrame);
+    await goToDemo(offlinePage, offlineFrame);
     await setDestructiveInterference(offlineFrame);
-    await capturePresentation(offlinePage, offlineFrame, 'presentation-offline.png');
+    await capturePresentation(t, offlinePage, offlineFrame, 'presentation-offline.png');
     await offlineContext.close();
   });
 
-  assert.deepEqual(pageErrors, [], 'Browser JavaScript errors');
-  assert.deepEqual(consoleErrors, [], 'Browser console errors, including CSP violations');
-  assert.deepEqual(externalRequests, [], 'External network requests');
-  assert.deepEqual(failedRequests, [], 'Failed resource requests');
-  const result = { passed: checks.length, checks, pageErrors, consoleErrors, failedRequests, externalRequests };
-  await writeFile(resolve(artifacts, 'presentation-browser-results.json'), JSON.stringify(result, null, 2));
-  console.log(JSON.stringify(result, null, 2));
-} catch (error) {
-  if (page) await page.screenshot({ path: resolve(artifacts, 'presentation-failure.png') }).catch(() => {});
-  const frames = await Promise.all(observedPages.filter(targetPage => !targetPage.isClosed()).flatMap(targetPage => targetPage.frames()).map(async frame => {
-    try {
-      return await frame.evaluate(() => ({
-        url: location.href,
-        app: document.getElementById('app')?.outerHTML.slice(0, 40_000),
-        visibleText: document.body?.innerText.slice(0, 4_000),
-        scripts: [...document.scripts].map(script => ({ type: script.type, src: script.getAttribute('src'), length: script.textContent?.length })),
-      }));
-    } catch { return { url: frame.url(), detached: true }; }
-  }));
-  const result = { failed: error.stack || String(error), passed: checks, pageErrors, consoleErrors, failedRequests, externalRequests, frames, serverOutput };
-  await writeFile(resolve(artifacts, 'presentation-browser-results.json'), JSON.stringify(result, null, 2));
-  console.error(JSON.stringify(result, null, 2));
-  process.exitCode = 1;
-} finally {
-  await browser?.close();
-  if (server?.pid) {
-    try { process.kill(process.platform === 'win32' ? server.pid : -server.pid, 'SIGTERM'); }
-    catch { server.kill('SIGTERM'); }
-  }
+  await t.step('Text from a failing presentation is attributed to it and stays visible in fullscreen', async () => {
+    const forged = 'Your session expired. Sign in again at https://example.invalid/restore';
+    // The deck's own uncaught error is the point of this check.
+    t.allowConsoleError(/Your session expired/);
+    t.allowPageError(/Your session expired/);
+    const { page: failing } = await t.newPage();
+    await t.openWorkspace(failing);
+    await failing.locator('[data-file-input]').setInputFiles({ name: 'failing.zip', mimeType: 'application/zip', buffer: failingPackage(forged) });
+    await failing.locator('[data-pres-start-button]').waitFor({ state: 'visible', timeout: 30_000 });
+    await failing.locator('[data-pres-present]').click();
+    await failing.locator('[data-pres-exit-fullscreen]').waitFor({ state: 'visible' });
+    const problem = failing.locator('[data-pres-problem]');
+    await problem.waitFor({ state: 'visible', timeout: 20_000 });
+    assert.match(await problem.textContent(), /The presentation reported/);
+    assert.ok((await problem.textContent()).includes('Your session expired'), 'The reported text is shown, as text');
+    assert.ok(await failing.evaluate(() => {
+      const stage = document.querySelector('[data-pres-stage]');
+      const problemArea = document.querySelector('[data-pres-problem]');
+      const fullscreen = document.fullscreenElement === stage || stage.classList.contains('presentation-fallback-fullscreen');
+      return fullscreen && stage.contains(problemArea);
+    }), 'The failure is shown inside the fullscreen stage');
+    const notice = await failing.locator('[data-pres-notice]').textContent();
+    assert.ok(!notice.includes('Your session expired'), 'Presentation text never appears in the application notice');
+    await failing.locator('[data-pres-exit-fullscreen]').click();
+  });
 }

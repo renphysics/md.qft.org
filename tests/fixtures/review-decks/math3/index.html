@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Math MJ3</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
+</head><body><div class="reveal"><div class="slides">
+<section><h2>Inline</h2><p id="m1">Inline $a^2+b^2=c^2$ and \(\RR^n\) and price is 5 dollars.</p></section>
+<section><h2>Align</h2><div id="m2">\[\begin{align} E &= mc^2 \label{eq:emc} \\ F &= ma \tag{N2} \end{align}\]<p>See \eqref{eq:emc} and \ref{eq:emc}.</p></div></section>
+<section><h2>Macros</h2><p id="m3">$\vect{v} \cdot \RR$ and $\abs{x}$ and $\bm{x}$ and $\boldsymbol{\mu}$ and $\require{cancel}\cancel{x}$ and $\ce{H2O}$</p></section>
+<section><h2>Env</h2><p id="m4">$$\begin{equation} \int_0^1 x\,dx = \frac12 \end{equation}$$ $$\begin{eqnarray} a &=& b \end{eqnarray}$$ $$\begin{gather} x \\ y \end{gather}$$ $\unicode{x2192}$ $\color{red}{x}$ $\href{https://x.org}{link}$ $\mathbb{1}$</p></section>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/math/math.js"></script>
+<script>Reveal.initialize({hash:true, mathjax3:{ tex:{ inlineMath:[['$','$'],['\\(','\\)']], macros:{ RR:'\\mathbb{R}', vect:['\\mathbf{#1}',1], abs:['\\left|#1\\right|',1] }, tags:'ams', packages:{'[+]':['cancel','boldsymbol','mhchem']} }, loader:{load:['[tex]/cancel','[tex]/mhchem']} }, plugins:[RevealMath.MathJax3]});</script>
+</body></html>

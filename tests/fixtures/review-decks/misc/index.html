@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Misc deck</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/sky.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js-menu@2.1.0/menu.css">
+</head><body><div class="reveal"><div class="slides">
+<section><h1>Misc</h1></section>
+<section data-markdown="slides.md" data-separator="^\n---\n$" data-separator-notes="^Note:"></section>
+<section data-background-image="img/bg.png"><h2>Image bg</h2></section>
+<section data-background-gradient="linear-gradient(to bottom, #283b95, #17b2c3)"><h2>Gradient</h2></section>
+<section data-background-iframe="https://phet.colorado.edu/sims/html/projectile-motion/latest/projectile-motion_en.html" data-background-interactive><h2>Iframe bg</h2></section>
+<section><h2>Chart</h2><canvas id="c" width="300" height="150"></canvas></section>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/markdown/markdown.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js-menu@2.1.0/menu.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js-plugins@4.2.5/chalkboard/plugin.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+Reveal.initialize({ hash: true, plugins: [RevealMarkdown, RevealMenu, RevealChalkboard] }).then(function(){ new Chart(document.getElementById('c'), {type:'bar', data:{labels:['a','b'], datasets:[{data:[1,2]}]}}); });
+</script></body></html>

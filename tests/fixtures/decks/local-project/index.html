@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Optics workshop</title>
+  <link rel="stylesheet" href="dist/reset.css">
+  <link rel="stylesheet" href="dist/reveal.css">
+  <link rel="stylesheet" href="dist/theme/black.css" id="theme">
+  <link rel="stylesheet" href="css/custom.css">
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section data-markdown="slides.md" data-separator="^\n---\n$" data-separator-vertical="^\n--\n$" data-separator-notes="^Note:"></section>
+      <section data-background-image="assets/pic.png" data-background-size="contain">
+        <h2 class="on-picture">A picture behind the slide</h2>
+      </section>
+      <section>
+        <h2>Lazy image</h2>
+        <img data-src="assets/pic.png" alt="A small test pattern" width="64" height="64">
+      </section>
+      <section>
+        <h2>Refraction counter</h2>
+        <p>Rays traced: <span id="ray-count">0</span></p>
+        <button id="trace" type="button">Trace a ray</button>
+      </section>
+    </div>
+  </div>
+  <script src="dist/reveal.js"></script>
+  <script src="plugin/markdown/markdown.js"></script>
+  <script src="js/demo.js"></script>
+  <script>
+    Reveal.initialize({ hash: true, plugins: [RevealMarkdown] });
+  </script>
+</body>
+</html>

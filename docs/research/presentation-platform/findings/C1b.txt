@@ -1,0 +1,135 @@
+
+####################################################################################################
+##### C1b-player-origin-security
+
+SUMMARY:
+The B1 player-origin prototype is not safe as written, but a hardened variant held against every attack I tried except denial of service and the two egress channels already open today. Tested in full Chromium 158 with third-party storage partitioning re-enabled (Playwright switches it off by default, which hid two results).
+
+- **Prototype breaks:** a deck with only `allow-scripts allow-same-origin` used the unsandboxed bootstrap iframe to show dialogs, open a popup, download a file and replace the editor page. It also read and rewrote other decks in Cache Storage and trojaned every later deck of the page session.
+- **Hardened variant:** one sandboxed frame (boot page, then deck), files only in worker memory under unguessable path tokens, and a fixed path-restricted policy on every response. All of those attacks failed, and 9 of 9 real Reveal packages still played.
+- **Hosting:** the player must be cross-site. A same-site subdomain shares the editor's process, so a looping deck froze the app and Stop never ran. Cross-site (including a `*.github.io` stand-in) gave a separate process and Stop in 64–78 ms.
+- **Cost of cross-site:** storage is partitioned, so Reveal's popup speaker view breaks.
+- **Egress:** under the policy only script-inserted `<link rel=prerender>` and WebRTC STUN reach an attacker, the same as today's opaque sandbox. Self-navigation is stopped only by the editor's own `frame-src`.
+- **Network mode:** an allow-listed CDN cannot be made leak-free.
+
+Firefox and Safari are from documentation only; worker idle lifetime could not be measured.
+
+FINDINGS (19):
+
+[F1] (critical; verified-empirically) The B1 prototype's hidden, unsandboxed bootstrap iframe is a full sandbox escape for any deck on the player origin.
+   EVIDENCE: q5.cjs v1: a deck in sandbox="allow-scripts allow-same-origin" reached the sibling via parent.frames. boot.alert() showed a dialog (own alert ignored), boot.open() opened a popup and the attacker received the GET, an <a download> created in the boot document downloaded via-boot.txt, and boot.eval('top.location=...') replaced the editor page (attacker got boot-topnav). None of those tokens was granted. Outputs: out/q5-v1-with-topnav.json, out/q5-v1.json.
+   SOURCES: prototypes/C1b/q5.cjs
+
+[F2] (critical; verified-empirically) In the prototype a hostile deck can read, rewrite and persistently trojan other decks, because all decks share Cache Storage and the bootstrap frame.
+   EVIDENCE: q5.cjs v1: caches.keys() listed the victim's cache; its content (VICTIM A-SECRET-SLIDES) was read from the cache and via fetch('/vfs/<victim>/index.html') -> 200; cache.put made the worker serve '<title>POISONED</title>'. A listener planted with boot.eval rewrote later vfs-put messages: the next two decks loaded as 'TROJANED Victim C/D' with window.__trojan set, and their text was copied to localStorage.loot. After reload, localStorage, 6 caches and a planted registration '/vfs/ <- /sw.js?planted=1' remained (genuine script, so state persists but not attacker code).
+   SOURCES: prototypes/C1b/out/q5-v1.json
+
+[F3] (critical; verified-empirically) A same-site player origin (subdomain of the app's registrable domain) shares the editor's renderer process in desktop Chromium: a looping deck freezes the app and Stop is never handled. This is a regression against today's opaque sandbox.
+   EVIDENCE: q1q2.cjs same and q8.cjs (md.qft.test + player.qft.test): no iframe CDP target; during for(;;){} the app's requestAnimationFrame gave no answer in 4-5 s and the Stop click timed out. The opaque sandbox comparison in the same run had its own iframe target, 90 frames per 1.5 s and Stop in 73-88 ms. Sending Origin-Agent-Cluster: ?1 from the worker changed nothing (q7.cjs).
+   SOURCES: prototypes/C1b/out/q8.json | prototypes/C1b/out/q7.json
+
+[F4] (critical; verified-empirically) A cross-site player origin (different registrable domain, or a *.github.io host) gets its own process in desktop Chromium, and service-worker registration and control work inside the sandboxed iframe, including with third-party cookies blocked.
+   EVIDENCE: q1q2.cjs cross real and q8.cjs (player.example-player.test and qft-player.github.io under md.qft.test): CDP target 'iframe http://<player>/vfs/...'; app kept 60 frames/s during the deck loop; Stop handled in 64-78 ms. boot and deck were controlled; with --test-third-party-cookie-phaseout hasStorageAccess=false but Cache, localStorage, IndexedDB and the worker still worked. github.io is in the Public Suffix List.
+   SOURCES: prototypes/C1b/out/q8.json | https://publicsuffix.org/list/public_suffix_list.dat
+
+[F5] (critical; verified-empirically) Under a fixed policy sent by the worker on every response, only script-inserted <link rel=prerender> and WebRTC STUN still reach an attacker. That is the same two channels as today's opaque sandbox, identical for same-site and cross-site.
+   EVIDENCE: q4.cjs, 45 probes. Control without policy: 36 channels reached the attacker (harness valid). With the path-restricted policy: attacker HTTP log contained only 'link-prerender: GET dest=document sec-purpose=prefetch' with no Referer, plus 3 STUN packets on UDP 4631; 28 CSP violation events covered fetch, XHR, beacon, fetchLater, WebSocket, EventSource, WebTransport, img, script, import(), CSS, fonts, media, object, frames, prefetch, preload, a-ping and workers. preconnect, dns-prefetch, manifest and speculation rules produced no request even in the control, so they are inconclusive.
+   SOURCES: prototypes/C1b/out/q4-cross.json | prototypes/C1b/out/q4-same.json
+
+[F6] (critical; verified-empirically) The hardened variant defeated cross-deck read, overwrite, poisoning, sandbox escape and persistent state; real Reveal packages still play under it.
+   EVIDENCE: Design: one sandboxed frame loads boot.html then the deck; files only in worker memory; 128-bit path tokens; control only over the app's MessagePort; path-restricted CSP. q5.cjs v2: caches, IndexedDB and localStorage empty; parent.frames.length=1; fetch of another token (even the victim's real one) and of /boot.html -> 'Failed to fetch'; overwriting own or victim session -> 'refused'; register('/sw.js?planted=1') -> SecurityError (worker-src); leftovers (evil-cache, evil-db, persist) removed by the next boot. q9.cjs: 9/9 Reveal packages (6.0.2, 4.6, external Markdown, ES modules, menu, chalkboard, copycode, mermaid, AI deck) ready with 0 CSP violations and 0 failed requests.
+   SOURCES: prototypes/C1b/player2/sw.js | prototypes/C1b/out/q5-v2.json | prototypes/C1b/out/q9.json
+
+[F7] (high; verified-empirically) The deck frame can navigate itself to an attacker URL, or to an app URL; no policy inside the deck stops this. Only the embedding page's frame-src does.
+   EVIDENCE: q3.cjs: location.href and <meta refresh> to the attacker -> GET received when the app page had no frame-src; with meta CSP 'frame-src <player>' -> 'Framing ... violates ... frame-src', nothing received. Navigating the frame to an app URL loaded the app page inside the deck's frame with the app's origin (its own code read APP-LOCALSTORAGE-SECRET). The editor's current frame-src is 'self', so it needs the player origin added and app pages should refuse to run framed.
+   SOURCES: prototypes/C1b/out/q3-cross.json
+
+[F8] (high; verified-empirically) allow-popups is an unrestricted exfiltration channel, and in the cross-site configuration it does not even deliver Reveal's speaker view.
+   EVIDENCE: q3.cjs: with allow-popups, window.open(attacker) and <a target=_blank> after one click delivered a GET to the attacker (CSP does not apply to the popup's navigation). q1q2.cjs cross with partitioning: the speaker popup opened but both preview iframes showed 'static 404 /vfs/<id>/index.html?receiver...', because the top-level popup is in a different storage partition with no worker. Same-site: both iframes ready=true. With Playwright's default flags the cross-site popup appears to work, which is misleading.
+   SOURCES: prototypes/C1b/out/q1q2-cross-real-partitioned.json
+
+[F9] (high; verified-empirically) Storage of the player origin is partitioned by top-level site only in the cross-site configuration; same-site, a top-level visit shares everything and can run a deck unsandboxed.
+   EVIDENCE: Same-site: a top-level visit saw the deck's cache, localStorage and IndexedDB, fetch of the deck file -> 200, top-level navigation to the deck URL -> '200 deck'. Cross-site: caches=[], ls=null, 0 registrations, deck URL -> 404. Chrome documents partitioning of storage and service workers for third-party contexts since Chrome 115.
+   SOURCES: prototypes/C1b/out/q1q2-same-real-partitioned.json | https://privacysandbox.google.com/cookies/storage-partitioning
+
+[F10] (high; verified-empirically) Worker-synthesised responses enforce CSP, nosniff, Referrer-Policy and Permissions-Policy, but not Clear-Site-Data; a CSP sandbox directive without allow-same-origin breaks worker control; the policy must be on worker scripts too.
+   EVIDENCE: q4.cjs: text/plain script ran without nosniff and failed with it; Referer absent with no-referrer; allowsFeature('fullscreen') false with 'fullscreen=()'. Clear-Site-Data "storage" on a worker response left localStorage, caches and the registration intact, while the same header from the network cleared all three. 'sandbox allow-scripts' in the header gave origin null, navigator.serviceWorker SecurityError and sub-resources going to the static host (404); adding allow-same-origin kept control. With the policy on HTML only, new Worker and SharedWorker fetched the attacker and importScripts loaded attacker code.
+   SOURCES: prototypes/C1b/out/q4-cross.json
+
+[F11] (high; verified-empirically) Any deck can create worker sessions, so nothing security-relevant may travel in the session message: the policy must be a constant in the worker, and a per-deck 'network allowed' flag is forgeable.
+   EVIDENCE: q5.cjs v2: in the test build that accepts headers with the session, the hostile deck created a policy-free second session ('ready'), navigated its frame to it and the attacker received 'self-upgrade-fetch'. From there it registered /sw.js?planted=1 on /vfs/, whose clients.claim() took over the victim tab (sub.html 404). The worker cannot tell the app from a deck because every client is on the shared origin.
+   SOURCES: prototypes/C1b/out/q5-v2.json
+
+[F12] (high; verified-empirically) Residual shared-origin risk in the hardened design is denial of service: a deck can unregister the worker, which breaks other open decks' next navigation until the app bootstraps again.
+   EVIDENCE: q6.cjs run U under the fixed policy: getRegistrations()+unregister() returned true; already-loaded documents kept working (sub.html 200), but the victim frame's next navigation showed 'static 404 /vfs/<token>/sub.html' from the static host. The next boot re-registered and the next deck played. Decks open at once also share one process, so there is no Spectre-class barrier between them (inferred).
+   SOURCES: prototypes/C1b/out/q6.json
+
+[F13] (high; verified-empirically) An allow-listed CDN host cannot be made leak-free: the deck can request arbitrary paths and queries there, and worker mediation is bypassed from child frames.
+   EVIDENCE: q6.cjs N1 (attacker host standing in for a CDN in script-src/style-src/font-src): script, import(), stylesheet, @import, FontFace, prefetch, modulepreload and worker importScripts all reached it with '?leak=DECKSECRET'. q7.cjs: with the worker answering those requests from memory, a <script src> created inside an about:blank or blob: child frame still reached the host. Under the fixed offline policy all three variants were blocked.
+   SOURCES: prototypes/C1b/out/q6.json | prototypes/C1b/out/q7.json
+
+[F14] (medium; verified-primary-source) jsDelivr publishes per-file daily hit counts for any package, so an attacker can read back which of their own files a deck requested without access to CDN logs.
+   EVIDENCE: GET https://data.jsdelivr.com/v1/stats/packages/npm/reveal.js@5.2.1/files?period=day returned per-file hits (e.g. /dist/reveal.js 10,663 on 2026-11-24). This makes a slow, low-bandwidth covert channel; I did not publish a package to demonstrate it end to end. No equivalent public statistics are known for unpkg or cdnjs (uncertain).
+   SOURCES: https://data.jsdelivr.com/v1/stats/packages/npm/reveal.js@5.2.1/files?period=day
+
+[F15] (medium; verified-empirically) With only allow-scripts allow-same-origin the deck cannot touch the app, remove its sandbox, navigate the top page, open popups, show dialogs, download, lock the pointer or use permission-gated devices; it can write the clipboard after a click and add history entries, as it can in today's opaque sandbox.
+   EVIDENCE: q3.cjs (same-site and cross-site): parent.document, top.location.href, parent.localStorage -> SecurityError; frameElement null; document.domain setter -> SecurityError; top navigation, window.open, alert, download, pointer lock, clipboard API, geolocation, USB, notifications all refused. document.execCommand('copy') after a click returned true and the app read DECK-EXEC-COPY; the same worked from sandbox="allow-scripts" (q6.cjs run O: OPAQUE-EXEC-COPY). history.length grew to 6 after 3 pushState calls. With the 'everything' token set the top page was replaced and a file was downloaded.
+   SOURCES: prototypes/C1b/out/q3-cross.json | prototypes/C1b/out/q3-same.json
+
+[F16] (medium; verified-primary-source) Firefox and Safari document partitioned service workers and Cache Storage in third-party iframes; Firefox private windows only have service workers from version 140; Safari may purge the registration after 7 days and makes third-party localStorage/IndexedDB ephemeral.
+   EVIDENCE: MDN State Partitioning lists Service Workers among storage partitioned by top-level site, on by default since Firefox 103; Bugzilla 1731999 (Firefox 96) allows third-party registration without storage access. Firefox 140 release notes: 'Service Workers are now available in Private Browsing Mode'. WebKit: 'Third-party Service Workers are partitioned and their cache and IndexedDB is partitioned too'; third-party LocalStorage and IndexedDB 'also made ephemeral'; 7-day cap covers 'Service Worker registrations and cache'. Not run on real Firefox or Safari; Safari private browsing behaviour not confirmed.
+   SOURCES: https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/State_Partitioning | https://bugzilla.mozilla.org/show_bug.cgi?id=1731999 | https://www.firefox.com/en-US/firefox/140.0/releasenotes/ | https://webkit.org/tracking-prevention/ | https://webkit.org/blog/8090/workers-at-your-service/
+
+[F17] (medium; uncertain) Memory-only files are lost when the worker stops; the idle lifetime could not be measured here.
+   EVIDENCE: Verified: after CDP ServiceWorker.stopAllWorkers the deck's fetch returned '404 no such session' and the app's port ping got no pong in 1.5 s. Not measurable: after 50 s idle the worker was still the same instance with and without 10 s pings, because automation keeps workers alive. The keep-alive ping plus re-bootstrap design is inferred, not tested.
+   SOURCES: prototypes/C1b/out/q5-v2.json | prototypes/C1b/out/q5-idle.json
+
+[F18] (medium; verified-primary-source) One deck per origin through random subdomains is not available on GitHub Pages, and Clear-Site-Data is not available there either.
+   EVIDENCE: GitHub Pages docs: 'We strongly recommend that you do not use wildcard DNS records, such as *.example.com' (domain-takeover risk); a Pages site serves one configured custom domain and sends no custom headers. Clear-Site-Data on worker responses is ignored (measured). Subdomains of one registrable domain would also be same-site with each other and share a process (inferred).
+   SOURCES: https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site
+
+[F19] (medium; verified-empirically) Playwright disables Chromium's third-party storage partitioning by default, so cross-site storage and popup results from default Playwright runs do not reflect shipping Chrome.
+   EVIDENCE: playwright-core lib/coreBundle.js lists 'ThirdPartyStoragePartitioning' in --disable-features (comment cites playwright issue 32230). With defaults, a top-level visit saw the cross-site iframe's caches and the speaker popup worked; with the feature re-enabled (lib.cjs realLaunch) storage was partitioned and the popup got 404.
+   SOURCES: prototypes/C1b/lib.cjs | prototypes/C1b/out/q1q2-cross.json
+
+RECOMMENDATIONS (7):
+
+[R1] (effort S; impact high) Host the player on a cross-site origin, not a qft.org subdomain
+   WHY: Same-site puts deck code in the editor's process (app frozen, Stop dead, measured) and leaves storage unpartitioned. A dedicated GitHub account's root site (<name>.github.io) is cross-site because github.io is in the Public Suffix List; the stand-in got its own process and Stop in 65 ms. Publish only boot.html and sw.js there and nothing else from that account.
+   RISKS: Every project site of one GitHub account shares the origin, so the account must be dedicated. Storage partitioning breaks popup speaker view. Real GitHub Pages hosting was not exercised.
+
+[R2] (effort M; impact high) Replace the prototype's bootstrap with the single-frame, memory-only design
+   WHY: The sibling bootstrap iframe and shared Cache Storage gave sandbox escape, cross-deck read/write and a session-long trojan. Booting inside the same sandboxed frame, keeping files in worker memory under 128-bit path tokens, control only over the app's MessagePort, and wiping storage at every boot defeated all of these while 9/9 Reveal packages still played.
+   RISKS: Files vanish when the worker stops; needs a keep-alive ping and re-bootstrap path whose behaviour on idle is untested in every engine.
+
+[R3] (effort S; impact high) Compile one fixed, path-restricted policy into the worker and send it on every response
+   WHY: default-src/connect-src/frame-src/worker-src/base-uri limited to the session's own /vfs/<token>/ directory, object-src 'none', form-action 'none', plus Referrer-Policy no-referrer, nosniff and a Permissions-Policy deny list. Measured: leaves only prerender and STUN open, blocks registering a second worker, and closes the worker-script hole. Never take policy from the session message and never add a CSP sandbox directive without allow-same-origin.
+   RISKS: 'unsafe-inline' and 'unsafe-eval' remain for Reveal compatibility; decks that need CDNs show unstyled or raw content.
+
+[R4] (effort M; impact high) Grant only allow-scripts allow-same-origin by default
+   WHY: Each further token added a measured capability: popups (exfiltration), modals (dialogs), downloads (files on disk), top-navigation (editor page replaced). allow-forms is low risk under form-action 'none'. Offer print (allow-modals) and downloads as explicit per-session opt-ins; build presenter view and fullscreen in the app instead of delegating them.
+   RISKS: Reveal's S key and window.print() do nothing in normal play; an app-built presenter view is extra work.
+
+[R5] (effort S; impact high) Harden the editor page for the new frame
+   WHY: Add the player origin to the editor's frame-src (the only thing that stops a deck navigating its own frame to an attacker), make app pages refuse to initialise when framed (a deck could otherwise load the app inside its frame with the app's origin), and accept messages only when source, origin and session token all match.
+   RISKS: frame-src still needs 'self' for the existing opaque runner, so the framed-page guard is required, not optional.
+
+[R6] (effort L; impact medium) Do not ship an allow-list network mode; localise static CDN files in the app instead
+   WHY: Allow-listed hosts receive arbitrary deck-chosen URLs, jsDelivr exposes per-file hit counts publicly, and worker mediation is bypassed from child frames. Having the app download the statically referenced files once, with consent, and rewrite them to package-local paths keeps the offline policy intact. If a true network mode is ever added it needs a second player origin with its own built-in policy and the label 'this deck can contact the internet'.
+   RISKS: Libraries that compute URLs at run time will fail closed; the app's own download reveals the static URL list and the user's IP to the CDN.
+
+[R7] (effort S; impact medium) Keep the opaque Tier-1 path as fallback and reword the offline claim
+   WHY: Service workers in third-party iframes are unavailable in some contexts (Firefox private windows before 140, blocked site data, Safari private browsing unconfirmed). Prerender and STUN stay open in both designs, so 'no external connections' holds for ordinary decks only.
+   RISKS: Two playback paths to maintain and test.
+
+OPEN QUESTIONS:
+ - Does a partitioned service worker register and control a sandboxed allow-same-origin iframe in real Firefox and Safari (including iOS and private browsing)? Only documentation was checked.
+ - How long does each engine keep an idle worker with an open MessagePort alive, and do port pings extend it? Automation kept the worker alive here, so this was not measurable.
+ - Does the GitHub account that would host the player have a custom domain or other Pages sites that would change its origin or share it?
+ - Is there any way to stop script-inserted <link rel=prerender> and WebRTC STUN in Chromium? None was found here or in A1.
+ - Do preconnect and dns-prefetch leak? No connection was seen even in the no-policy control, so the test is inconclusive.
+ - Would <iframe credentialless> give a useful extra per-page storage partition in Chromium? Not examined.
+ - Do Slidev builds (hash or memory router, relative base) play under the hardened flow and policy? Not part of this task.
+ - Does Android Chrome put the cross-site player frame in its own process for this site? Not testable here.
+
+ARTIFACTS: notes/C1b-player-origin-security.md | prototypes/C1b/lib.cjs | prototypes/C1b/player2/sw.js | prototypes/C1b/player2/boot.html | prototypes/C1b/app/app.html | prototypes/C1b/hostile/battery.js | prototypes/C1b/q1q2.cjs | prototypes/C1b/q3.cjs | prototypes/C1b/q4.cjs | prototypes/C1b/q5.cjs | prototypes/C1b/q6.cjs | prototypes/C1b/q7.cjs | prototypes/C1b/q8.cjs | prototypes/C1b/q9.cjs | prototypes/C1b/out

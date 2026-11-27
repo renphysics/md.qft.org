@@ -84,13 +84,13 @@ describe('portable presentation ZIP import', () => {
     })), null);
   });
 
-  it('explains source-only projects and ordinary website builds', async () => {
-    await assert.rejects(inspectPresentationArchive(rawZip({
+  it('leaves Slidev source and ordinary website builds to the deck reader', async () => {
+    assert.equal(await inspectPresentationArchive(rawZip({
       'slides.md': '# A lecture', 'package.json': '{"devDependencies":{"@slidev/cli":"53"}}',
-    })), /contains Slidev source.*packaging tool/);
-    await assert.rejects(inspectPresentationArchive(rawZip({
+    })), null);
+    assert.equal(await inspectPresentationArchive(rawZip({
       'dist/index.html': html, 'dist/assets/app.js': 'app()',
-    })), /website build ZIP.*packaging tool/);
+    })), null);
   });
 
   it('rejects traversal, absolute, URL-like and platform-dependent paths', async () => {
@@ -112,17 +112,24 @@ describe('portable presentation ZIP import', () => {
   });
 
   it('checks sizes before decompression and rejects dishonest inflated sizes', async () => {
-    const tooLarge = await mutate(makeZip(), (_bytes, view, central) => {
+    const tooLarge = await mutate(makeZip({}, '', 6), (_bytes, view, central) => {
       view.setUint32(central + 24, PRESENTATION_LIMITS.fileBytes + 1, true);
+      view.setUint32(central + 20, Math.ceil((PRESENTATION_LIMITS.fileBytes + 1) / 1000), true);
     });
-    await assert.rejects(inspectPresentationArchive(tooLarge), /expanded file exceeds/);
+    await assert.rejects(inspectPresentationArchive(tooLarge), /larger than 40 MB\. Make that file smaller/);
+    // A size that the compressed data cannot have is damage, not a large file (W4.6).
+    const impossible = await mutate(makeZip({}, '', 6), (_bytes, view, central) => {
+      view.setUint32(central + 24, 0x7ffffff0, true);
+    });
+    await assert.rejects(inspectPresentationArchive(impossible),
+      /^PresentationPackageError: This ZIP could not be opened: a file in it declares a size that its data cannot have\. Download it again or make the ZIP again, then open the new file\.$/);
     // A deflate stream with a plausible small header must not be silently truncated.
     const lied = await mutate(makeZip({}, '', 6), (_bytes, view, central) => {
       const local = view.getUint32(central + 42, true);
       view.setUint32(central + 24, 1, true);
       view.setUint32(local + 22, 1, true);
     });
-    await assert.rejects(inspectPresentationArchive(lied), /damaged file/);
+    await assert.rejects(inspectPresentationArchive(lied), /could not be opened: the file .+ in it is damaged/);
   });
 
   it('detects damaged payload checksums and local-directory disagreement', async () => {
@@ -131,7 +138,7 @@ describe('portable presentation ZIP import', () => {
       const data = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
       bytes[data + 1] ^= 1;
     });
-    await assert.rejects(inspectPresentationArchive(damaged), /damaged file/);
+    await assert.rejects(inspectPresentationArchive(damaged), /could not be opened: the file .+ in it is damaged/);
     const conflicting = await mutate(makeZip(), (bytes) => { bytes[30] ^= 1; });
     await assert.rejects(inspectPresentationArchive(conflicting), /does not match its directory/);
   });
@@ -188,7 +195,7 @@ describe('portable presentation ZIP import', () => {
         at += 46 + nameSize + extraSize + commentSize;
       }
     });
-    await assert.rejects(inspectPresentationArchive(file), /damaged file: source\/plot\.png/);
+    await assert.rejects(inspectPresentationArchive(file), /could not be opened: the file source\/plot\.png in it is damaged/);
   });
 
   it('rejects oversized files before reading their bytes', async () => {
@@ -196,5 +203,6 @@ describe('portable presentation ZIP import', () => {
     const file = { size: PRESENTATION_LIMITS.archiveBytes + 1, arrayBuffer: () => { read = true; } } as unknown as File;
     await assert.rejects(inspectPresentationArchive(file), /smaller than 60 MB/);
     assert.equal(read, false);
+    await assert.rejects(inspectPresentationArchive(new File([], 'empty.zip')), /^PresentationPackageError: This file is empty, perhaps because the download did not finish\./);
   });
 });

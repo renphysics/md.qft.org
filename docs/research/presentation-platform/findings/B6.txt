@@ -1,0 +1,180 @@
+
+####################################################################################################
+##### B6-editor-ux
+
+SUMMARY:
+Keep CodeMirror 6. The site's bundle already contains the HTML/CSS/JS parsers, so JSON, YAML, Vue, lint, merge review, slide mapping and an AI-answer importer add +61.5 KB min / +23.2 KB gzip, against 2,833 KB / 729 KB gzip plus workers for Monaco's smallest core (and no mobile support).
+
+Slide-aware editing is feasible and cheap. A 5 KB mapper on the Lezer HTML parser matched 41/41 slides of Reveal's demo deck and 12/12 of a mixed HTML/Markdown deck. Reveal's own postMessage API syncs slides across the opaque sandbox with no injected code. A built Slidev client exposes the current slide through vue-router, and a port of Slidev's splitter matches the official parser.
+
+Full reload is fast enough to be the default refresh: median 173–189 ms for 41 slides, 482 ms for 120 slides with 360 formulas, about 210 ms for a compiled Slidev deck. Loading the new frame hidden and swapping when ready removes flashing and keeps the last good render.
+
+A dependency-free 3.2 KB importer handled 13/13 synthetic chat-answer shapes (my own samples) and refused an elided file; strict jsdiff threw on a sloppy diff.
+
+Blocking issue found: a Reveal deck with `hash: true` is killed by the real production player, because a SecurityError from `replaceState` is treated as fatal. A six-line shim fixes it.
+
+File System Access remains Chromium-only. WebMCP is in origin trial as `document.modelContext`. The Prompt API is stable in desktop Chrome 148.
+
+Not tested: real screen readers and phones, Firefox/Safari, the folder picker end to end.
+
+FINDINGS (23):
+
+[F1] (critical; verified-empirically) A standard Reveal.js deck with `hash: true` (the default in Reveal's own index.html template and demo) is killed by the site's real production player; a six-line history shim makes the same deck play.
+   EVIDENCE: Served dist read-only on port 4579 and imported a three-slide self-contained Reveal 6.0.2 deck through the normal ZIP input (proto/B6/real-player/run.mjs). `hash: true`: status "Playback needs attention", frame removed, notice "Failed to execute 'replaceState' on 'History': A history state object with URL '' cannot be created in a document with origin 'null'…". `hash: false` and `history: true`: "Playing locally". `hash: true` plus a try/catch wrapper around history.replaceState/pushState in the deck head (run-shim.mjs): "Playing locally", including returning to slide 1. Cause: reveal.js js/controllers/location.js:155 calls replaceState(location.pathname + location.search); the player treats any window error as fatal (src/lib/presentation-runtime.ts:127-131, 237-245). Under srcdoc the error occurs on every slide change.
+   SOURCES: src/lib/presentation-runtime.ts | node_modules/reveal.js/js/controllers/location.js | prototypes/B6/real-player/run.mjs
+
+[F2] (critical; verified-empirically) CodeMirror 6 should remain the editor: HTML, CSS and JavaScript/TypeScript support costs 0 bytes because the site's bundle already contains those parsers; everything needed for the project editor adds +61.5 KB minified / +23.2 KB gzip.
+   EVIDENCE: esbuild 0.28.2 (bundle, minify, ESM, es2022), gzip -9 (proto/B6/cm-measure/measure.mjs, tiers.mjs). Baseline equal to the site's imports: 599.4 KB min / 204.9 KB gzip. Increments (min/gzip KB): html 0/0, css 0/0, javascript+TS+JSX 0/0, json+linter 3.3/1.6, yaml 12.1/5.2, vue 3.1/1.4, xml 14.2/4.9, lint API 3.8/1.2, merge 27.7/9.2 (unified only 19.4/6.9), all languages+lint+merge 63.0/23.0. Tier totals: MVP (languages + lint gutter) +21.5/+8.8; Solid (+ merge + slide map + AI importer) +61.5/+23.2. Breakdown shows @lezer/javascript 76 KB, @lezer/css 16.8 KB, @lezer/html 14 KB already in the baseline via @codemirror/lang-markdown. Versions from npm today: @codemirror/merge 6.12.3, lint 6.9.8, lang-html 6.4.12, lang-yaml 6.1.3, lang-vue 0.1.3 (last release 2023-12-28).
+   SOURCES: prototypes/B6/cm-measure/measure.mjs | package.json
+
+[F3] (critical; verified-empirically) Reveal.js slide-to-source mapping (HTML sections, nested vertical stacks, external and inline Markdown) can be done statically with the Lezer HTML parser the site already ships, and it matches what Reveal builds at runtime.
+   EVIDENCE: proto/B6/reveal-lab/slide-map.mjs (5.1 KB min / 2.4 KB gzip with @lezer/html external). test-map.mjs loads real Reveal 6.0.2 in Chromium and compares each runtime slide's indices and heading with the mapped source range: Reveal's own demo.html 41/41 slides (after adding the rule that data-visibility="hidden" slides are removed; without it only 9/41 matched); a mixed deck with HTML, external slides.md with horizontal/vertical/notes separators and inline textarea templates 12/12, with correct file attribution. Cursor-to-slide lookup also verified. The Markdown part is a line-for-line port of plugin/markdown/plugin.js slidify() plus the plugin's de-indentation with an offset map.
+   SOURCES: prototypes/B6/reveal-lab/slide-map.mjs | https://cdn.jsdelivr.net/gh/hakimel/reveal.js@6.0.2/plugin/markdown/plugin.js
+
+[F4] (critical; verified-empirically) A full iframe reload with slide restore is fast enough to be the default refresh strategy; CSS-only and single-slide patches are near-instant; a hidden second frame swapped in when ready removes the flash and preserves the last good render.
+   EVIDENCE: proto/B6/live-lab/measure.mjs and heavy.mjs, sandbox="allow-scripts" frames, host-side timing to a double-requestAnimationFrame acknowledgement, 9 runs (7 for heavy). Reveal demo deck (41 slides, 5 plugins, 1.75 MB inlined): reload to ready 155 ms (srcdoc) / 158 ms (blob); ready + slide restored + painted 173 / 189 ms; double-buffered 179 ms; CSS swap of a 562 KB stylesheet 25 ms; one-slide innerHTML + Reveal.sync() patch 29 ms; goto 30 ms. Synthetic 120-slide deck with 360 KaTeX formulas and 120 highlighted code blocks: ready 426 ms, restored 482 ms, slide patch 37 ms. Compiled Slidev portable build (3.36 MB): first slide mounted 182–188 ms, slide 3 restored 207–216 ms. requestAnimationFrame still fires in a visibility:hidden frame. Numbers are from headless Chromium on a 4-CPU container and exclude any Slidev compile step.
+   SOURCES: prototypes/B6/live-lab/measure.mjs | prototypes/B6/live-lab/heavy.mjs
+
+[F5] (high; verified-empirically) Monaco is the wrong choice for this site: its smallest usable core is about 32 times the incremental cost of extending CodeMirror, it needs workers, and its own README says mobile browsers are not supported.
+   EVIDENCE: monaco-editor 0.58.0 (published 2026-11-23) bundled with esbuild (proto/B6/monaco-measure): full main JS 4,536 KB min / 1,208 KB gzip in 93 chunks (2,779 / 719 before first use); minimal core (API + code editor + diff + find + 5 grammars) 2,833 KB / 729 KB gzip plus 97 KB CSS; workers editor 338/100, json 465/137, css 1,097/251, html 775/202, ts 6,912/1,521 KB min/gzip. README FAQ: "Is the editor supported in mobile browsers or mobile web app frameworks? No." LiveCodes docs: Monaco "requires a relatively large download and is not supported in mobile browsers"; it uses CodeMirror on mobile. The site CSP (worker-src 'self' blob:, style-src 'unsafe-inline') would permit Monaco, so size and mobile are the blockers, not CSP. No real screen-reader comparison was done.
+   SOURCES: prototypes/B6/monaco-measure/measure.mjs | https://livecodes.io/docs/features/editor-settings | https://codemirror.net/examples/tab/
+
+[F6] (high; verified-empirically) Reveal's built-in postMessage API lets the editor follow and drive an unmodified deck across the opaque sandbox, including ES-module decks with no global `Reveal`.
+   EVIDENCE: proto/B6/live-lab/postmessage-test.mjs: from the parent, postMessage(JSON.stringify({method:'configure',args:[{postMessageEvents:true}]})) then {method:'isReady'} until a callback (30–62 ms), then {method:'slide',args:[1,1]}; the frame posted {namespace:'reveal',eventName:'slidechanged',state:{indexh,indexv,…}} and a getTotalSlides callback (41 and 4). Defaults in reveal.js js/config.ts:929-930 are postMessage: true, postMessageEvents: false. The site's runner currently relays only ready/escape/error upward and qft-presentation-focus downward (presentation-runtime.ts:42-56), so one more whitelisted message kind per direction is needed.
+   SOURCES: node_modules/reveal.js/js/config.ts | node_modules/reveal.js/js/reveal.js | prototypes/B6/live-lab/postmessage-test.mjs
+
+[F7] (high; verified-empirically) A built Slidev 53.1.0 client exposes the current slide and navigation only through vue-router on the Vue app handle; `window.__slidev__` and Slidev's postMessage control are dev-only; per-slide `start` line numbers are compiled into the bundle but are not reachable and carry no file path or end.
+   EVIDENCE: @slidev/client setup/root.ts: `if (__DEV__) { window.__slidev__ = context; useEmbeddedControl() }`. proto/B6/slidev-lab/probe2.cjs on the ordinary dist (history router) and the portable presentation.html (memory router): window.__slidev__ undefined; document.querySelector('#app').__vue_app__.config.globalProperties.$router present; currentRoute.value.params.no and query.clicks give slide and click; $router.push('/3') navigates; afterEach fired for push and for ArrowRight; DOM has [data-slidev-no] with class slidev-page-N; the injection context is not reachable (app._instance null). Built bundle contains `slide:{…title:'Amplitudes add',filepath:'',start:12,…no:2}` with raw/content blanked. A port of @slidev/parser parseSync's boundary rules (dist/core.mjs:420-469; only backtick fences protect a `---` line) matched the official parser on 16 slides in 3 files; a splitter that honoured ~~~ fences disagreed on 4. Port costs ~2.4 KB gzip (shared module) versus 106 KB min / 33.3 KB gzip for @slidev/parser/core. `src:` imports and disabled slides are not handled by the port.
+   SOURCES: (scratch)/shared/slidev-starter/node_modules/@slidev/client/setup/root.ts | prototypes/B6/slidev-lab/probe2.cjs | prototypes/B6/reveal-lab/test-slidev-map.mjs
+
+[F8] (high; verified-empirically) When a user breaks the deck, the static slide map and the browser can disagree, parser error positions can be far from the mistake, and script errors leave the deck never ready — so the preview needs a runtime self-check and a softer error policy than the current player.
+   EVIDENCE: proto/B6/live-lab/broken-test.mjs on Reveal's demo deck: deleting one </section> gave 34 mapped slides versus 42 at runtime, with Lezer's only error at line 671 (the edit was near line 250) and no script error; an unclosed <div gave errors at lines 245/250 and 41 slides in both; an unterminated attribute quote gave 40 in both (one slide swallowed); misspelling Reveal.initialize or a JS syntax error left the deck never ready with "Uncaught TypeError: Reveal.initialise is not a function" / "Uncaught SyntaxError: Unexpected token ','" reported through the bridge. The intact deck: 41 and 41.
+   SOURCES: prototypes/B6/live-lab/broken-test.mjs
+
+[F9] (high; verified-empirically) An AI chat answer can be imported with review and without any AI service: a tolerant, line-number-agnostic importer is required, and a strict patch library is not sufficient.
+   EVIDENCE: proto/B6/patch-lab/patch-apply.mjs (7.6 KB min / 3.2 KB gzip, no dependencies) parses SEARCH/REPLACE blocks, unified diffs, OpenAI `*** Begin Patch` blocks and labelled whole-file fences, matches with five loosening levels and re-indents. test.mjs: 13/13 synthetic cases written by me to resemble chat output behave as intended, including refusing a whole file containing "<!-- ... rest of the slides unchanged ... -->", resolving a duplicate match by the current-slide hint, keeping CRLF, and producing a paste-back failure report; the first run was 11/13 (a fence around a SEARCH/REPLACE block was also read as a whole-file replacement — fixed). jsdiff 9 applyPatch threw "Removed line count did not match for hunk at line 3" on the sloppy diff with fuzzFactor 0 and 2. Review verified with @codemirror/merge unifiedMergeView (3 chunks; rejectChunk restored one change, acceptChunk moved the baseline) and MergeView; screenshot in shots/B6-review-merge.png. Aider's docs support the design (avoid line numbers; flexible patching, 9X more errors without it). How often current models follow a requested format was not measured.
+   SOURCES: prototypes/B6/patch-lab/patch-apply.mjs | https://aider.chat/docs/more/edit-formats.html | https://aider.chat/docs/unified-diffs.html
+
+[F10] (high; verified-primary-source) The File System Access API (open a folder, write back, watch for external edits) is still Chromium-only with negative positions from Mozilla and Apple; folder import and OPFS work everywhere.
+   EVIDENCE: MDN browser-compat-data (main, fetched today): showDirectoryPicker Chrome/Edge 86, Chrome Android 132, Firefox no, Safari no; FileSystemObserver Chrome 133 desktop only; getAsFileSystemHandle Chrome 86 / Android 132; launchQueue Chrome 102 desktop only; webkitGetAsEntry Chrome 13, Firefox 50, Safari 11.1; input webkitdirectory Chrome 7, Firefox 50, Safari 11.1, iOS 18.4; OPFS getDirectory Chrome 86, Firefox 111, Safari 15.2; OPFS createWritable Safari 26. web-features: File System Access "very unlikely to ever become Baseline in this current form" (Firefox negative, Safari oppose); OPFS Widely Available since 2025-09-27. Chrome 122+ offers "Allow on every visit" when requestPermission() is called on a handle stored in IndexedDB. vscode.dev: without the API "you cannot open a folder locally, but you can open files instead". The picker flow itself could not be automated here.
+   SOURCES: https://raw.githubusercontent.com/mdn/browser-compat-data/main/api/Window.json | https://web-platform-dx.github.io/web-features-explorer/features/file-system-access/ | https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api | https://code.visualstudio.com/docs/setup/vscode-web
+
+[F11] (high; verified-empirically) A blob: URL created by the site cannot be loaded inside the opaque-origin sandbox; bytes transferred by postMessage and turned into a blob inside the frame can, at negligible cost.
+   EVIDENCE: proto/B6/asset-lab/run.cjs, frame with img-src data: blob:: parent-created blob URL → "Not allowed to load local resource"; frame-created blob from a transferred ArrayBuffer → loaded in 2.6 ms; data: URL → loaded; a 50 MB buffer transferred in 0.1 ms with the parent's copy detached. This allows replacing an image or video without a reload and without base64 growth against the 24 MB HTML limit (presentation-package.ts:8).
+   SOURCES: prototypes/B6/asset-lab/run.cjs | src/lib/presentation-package.ts
+
+[F12] (medium; verified-empirically) Clicking an element in a Reveal HTML slide can be resolved to its exact source range, and a text edit made on the slide can be written back touching only that range; runtime-generated content cannot.
+   EVIDENCE: proto/B6/live-lab/pick-test.mjs: the bridge reports a child-index path from the slide's section; walking the same path in the Lezer tree resolved 14 of 15 picks (one of them, a blockquote with entities, was confirmed separately by check-bq.mjs because my text comparator could not); the 15th, a table written without <tbody>, needed the text-match fallback because the browser inserts tbody. Committing new text for <h2>Touch Optimized</h2> produced <h2>Touch &amp; Pen &lt;Optimized&gt;</h2> with the rest of the file byte-identical (measure.mjs). Phoenix Code documents the same limit: "Elements added by JavaScript are not in your HTML source … Element not editable - generated by script".
+   SOURCES: prototypes/B6/live-lab/pick-test.mjs | https://docs.phcode.dev/docs/Pro%20Features/live-preview-edit
+
+[F13] (medium; verified-empirically) WebMCP is real but not shippable as a dependency: it is in a Chrome origin trial, the API surface is `document.modelContext` (not `navigator.modelContext`), and it is off by default in Chromium 158.
+   EVIDENCE: Chromium 158 headless: `modelContext` absent by default and with --enable-experimental-web-platform-features alone; with --enable-blink-features=WebMCP `document.modelContext` exposes registerTool/getTools/executeTool. proto/B6/features/webmcp.cjs registered qft_get_current_slide, qft_read_file and qft_propose_edit, listed them (with annotations) and executed them; CDP WebMCP.enable answered. Chrome docs (updated 2026-11-20): origin trial from Chrome 149, flag chrome://flags/#enable-webmcp-testing, cross-origin frames need allow="tools". chrome-devtools-mcp 1.13.0 offers list_webmcp_tools/execute_webmcp_tool behind --categoryExperimentalWebmcp ("Requires Chrome 150+ with --enable-features=WebMCP") and --autoConnect to a running Chrome 144+. Which shipping assistants call page tools is not documented.
+   SOURCES: https://developer.chrome.com/docs/ai/webmcp | https://developer.chrome.com/docs/ai/webmcp/imperative-api | https://raw.githubusercontent.com/ChromeDevTools/chrome-devtools-mcp/main/docs/configuration.md | prototypes/B6/features/webmcp.cjs
+
+[F14] (medium; verified-primary-source) Chrome's built-in Prompt API is stable for web pages on desktop only, with heavy hardware requirements, so it can only ever be an optional helper.
+   EVIDENCE: Chrome docs (updated 2026-10-21): Web — Chrome 148; Extensions — Chrome 138; Windows 10/11, macOS 13+, Linux, Chromebook Plus; "Chrome for Android, iOS … not yet supported"; at least 22 GB free; GPU with more than 4 GB VRAM or 16 GB RAM and 4 cores; languages en, ja, es, de, fr; not available in workers. BCD: Chrome 148, Edge 138 behind a flag, Firefox no, Safari no. In Chromium 158 here `LanguageModel` exists and availability() returned "downloadable"; Writer/Rewriter/Proofreader appear only with experimental features. Quality on slide or code edits was not tested.
+   SOURCES: https://developer.chrome.com/docs/ai/prompt-api | https://raw.githubusercontent.com/mdn/browser-compat-data/main/api/LanguageModel.json
+
+[F15] (medium; verified-empirically) The multi-file editor model is cheap with CodeMirror: one view with a state per file keeps separate undo histories, and project-wide search should use native string search rather than CodeMirror cursors.
+   EVIDENCE: proto/B6/project-lab/run.mjs: per-file undo preserved across view.setState() switches; an edit dispatched with isolateHistory.of('full') undone as one step; 48 EditorStates for a 4.9 MB Reveal project created in 221 ms with about 5 MB heap; tab switch 2.4 ms average. fflate round trip of the same project: zip 661 ms at level 6 (synchronous), unzip 167 ms, byte-identical. input webkitdirectory returned relative paths. proto/B6/review-lab/run.mjs: searching 48 files / 4.9 MB took 13 ms with indexOf versus 507 ms with SearchCursor.
+   SOURCES: prototypes/B6/project-lab/run.mjs | prototypes/B6/review-lab/run.mjs
+
+[F16] (medium; verified-primary-source) Comparable tools converge on a few patterns worth copying: edit the current slide rather than the whole file, a slide tree with cursor-synced preview, read-only and hidden file flags, and explicit handling of generated elements.
+   EVIDENCE: Slidev side editor edits the current slide and notes with a 500 ms throttle and is a no-op without the dev server (SideEditor.vue, useSlideInfo.ts). Slidev VS Code extension: slides tree, drag reorder, preview synced to cursor, AI tools slidev_getActiveSlide / slidev_getSlideContent. slides.com developer mode: per-slide HTML editor without <script>/<link>, CSS editor, reveal import by pasting HTML with a slide count, hosted MCP server needing an account. Phoenix Code Edit Mode: click → control box, double-click to edit text, Enter/Esc, generated elements marked not editable. LiveCodes: Monaco desktop / CodeMirror mobile; export as JSON, source ZIP or single HTML. Sandpack: readOnly / hidden / active per file. WebContainers need COOP/COEP response headers, which GitHub Pages cannot set.
+   SOURCES: https://sli.dev/features/vscode-extension | https://slides.com/docs/developer-mode | https://docs.phcode.dev/docs/Pro%20Features/live-preview-edit | https://livecodes.io/docs/features/export | https://sandpack.codesandbox.io/docs/getting-started/usage | https://webcontainers.io/guides/configuring-headers
+
+[F17] (medium; verified-primary-source) Browser-stored projects are not durable by default, which makes a visible storage state and one-click ZIP export part of the minimum design.
+   EVIDENCE: MDN: origin data is best-effort unless navigator.storage.persist() succeeds. WebKit: ITP deletes "all of a website's script-writable storage after seven days of Safari use without user interaction on the site" (home-screen web apps excepted). In Chromium here navigator.storage.persisted() was false and the quota estimate 10 GB. OPFS measured: 200 × 10 KB files written in 556 ms, read in 243 ms; FileSystemObserver on OPFS reported appeared/modified. The repo already keeps the uploaded ZIP as an immutable Blob (presentation-store.ts:153-157) and uses revision-checked saves with BroadcastChannel (draft-store.ts:281-311).
+   SOURCES: https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria | https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/ | src/lib/presentation-store.ts
+
+[F18] (medium; verified-primary-source) Browser agents and local MCP bridges can already operate the site without the site calling any AI: Claude in Chrome by acting on the UI, Chrome DevTools MCP by attaching to the user's Chrome.
+   EVIDENCE: Anthropic help centre: Claude in Chrome "is available on paid plans (Pro, Max, Ultra, Team, and Enterprise), in the Chrome side panel, Claude Cowork, and Claude Code"; it reads, clicks and types; "not supported on other Chromium-based web browsers or mobile devices". chrome-devtools-mcp 1.13.0 docs: --autoConnect attaches to a running Chrome 144+ after remote debugging is enabled at chrome://inspect/#remote-debugging, with a permission dialog. Whether Claude in Chrome uses WebMCP page tools is not stated anywhere I found.
+   SOURCES: https://support.claude.com/en/articles/12012173-get-started-with-claude-in-chrome | https://raw.githubusercontent.com/ChromeDevTools/chrome-devtools-mcp/main/docs/advanced-usage.md
+
+[F19] (low; verified-empirically) Bring-your-own-API-key calls from the browser are technically possible with all major providers today, but they send deck content to a third party.
+   EVIDENCE: curl OPTIONS preflights with Origin: https://md.qft.org returned permissive CORS headers for api.anthropic.com/v1/messages (with anthropic-dangerous-direct-browser-access allowed), api.openai.com/v1/responses and /v1/chat/completions, generativelanguage.googleapis.com, openrouter.ai and api.mistral.ai. The site CSP already has connect-src 'self' https: blob: (BaseLayout.astro:26). No request with a real key was made.
+   SOURCES: src/layouts/BaseLayout.astro
+
+[F20] (low; verified-empirically) Large files are not a differentiator between the editors: both stay responsive up to 20 MB and with megabyte-long lines.
+   EVIDENCE: proto/B6/bigfile/bench.mjs: CodeMirror opened 20 MB of HTML (663 k lines) to first paint in 171 ms with 24 ms median per-keystroke frame time and +106 MB heap; Monaco 282 ms, 16 ms, +114 MB. Compiled Slidev presentation.html (3.36 MB, longest line 1.49 MB): CodeMirror 66 ms (486 ms with wrapping on), Monaco 196 ms (377 ms). Page boot from localhost: 86–134 ms versus 190–384 ms.
+   SOURCES: prototypes/B6/bigfile/bench.mjs
+
+[F21] (low; verified-primary-source) "Open with" for an installed app needs only a web app manifest with file_handlers in Chrome desktop; the site has neither a manifest nor a service worker today.
+   EVIDENCE: Chrome File Handling docs: manifest file_handlers (action, accept, icons) plus launchQueue.setConsumer; "currently limited to desktop operating systems"; the app must be installed. web.dev install criteria for Chrome list HTTPS and a manifest with name, 192/512 px icons, start_url and display, and no service worker. docs/ARCHITECTURE.md:21 states the project has no service worker; without one an installed app still needs the network to start.
+   SOURCES: https://developer.chrome.com/docs/capabilities/web-apis/file-handling | https://web.dev/articles/install-criteria | docs/ARCHITECTURE.md
+
+[F22] (low; verified-primary-source) WebLLM is not a fit for this audience.
+   EVIDENCE: @mlc-ai/web-llm 0.2.89 (registry modified 2026-11-17) requires WebGPU and downloads model weights from Hugging Face. BCD for WebGPU: Chrome 113 (Linux from 144), Chrome Android 121, Firefox 141 on Windows and 145 on Apple-silicon macOS, Safari 26. Model sizes and edit quality were not measured here; the judgement that multi-gigabyte downloads rule it out is mine.
+   SOURCES: https://raw.githubusercontent.com/mlc-ai/web-llm/main/README.md | https://raw.githubusercontent.com/mdn/browser-compat-data/main/api/GPU.json
+
+[F23] (medium; inferred) Three-tier effort: about 3–4 weeks for a minimum viable project editor, 4–5 more for the AI loop, inspector and soft refresh, and 4–7 more for real-folder access, inline editing and agent tools.
+   EVIDENCE: Estimate for one developer who knows the codebase, built from the prototype sizes (mapper 190 lines, importer 190 lines, bridges 110 and 35 lines, host with double buffering 60 lines) and the measured library deltas (+8.8 KB gzip for tier 1, +23.2 KB gzip cumulative for tier 2). Own UI code size (15–25 KB gzip per tier) is a guess. It assumes another workstream delivers a player that runs multi-file Reveal projects in the sandbox.
+   SOURCES: notes/B6-editor-ux.md
+
+RECOMMENDATIONS (13):
+
+[R1] (effort S; impact high) Add a history shim to the sandbox bootstrap and stop treating every script error as fatal while previewing
+   WHY: Verified in the real production player: a Reveal deck with `hash: true` ends in "Playback needs attention"; wrapping history.replaceState/pushState in try/catch makes it play. During editing, transient errors must be reported without tearing the frame down; only "never became ready" should discard a candidate.
+   RISKS: Relaxing the fatal-error rule for normal playback changes a deliberate safety choice; it could be limited to edit mode.
+
+[R2] (effort S; impact high) Keep CodeMirror 6 and load the extra languages and merge view in a lazy project-editor chunk
+   WHY: HTML/CSS/JS are already in the bundle; the full set costs +23.2 KB gzip against 729 KB gzip plus workers for Monaco, and CodeMirror works on phones. Its Lezer trees also power the slide mapping.
+   RISKS: @codemirror/lang-vue is 0.1.3 and unmaintained since 2023; it gives highlighting, not Vue type checking.
+
+[R3] (effort M; impact high) Build the project model as immutable original ZIP + overlay + project journal + named snapshots, with ZIP export
+   WHY: The presentation store already keeps the upload as a Blob, so "restore original" is free; an overlay makes snapshots cheap; a journal gives one-click undo for multi-file operations that CodeMirror's per-file history cannot provide.
+   RISKS: Best-effort browser storage and Safari's seven-day rule: show where work lives and keep Download ZIP one click away; run fflate off the main thread (661 ms synchronous for 4.9 MB).
+
+[R4] (effort M; impact high) Make the editor slide-first: slide list by default, file tree behind a toggle, framework files collapsed and read-only
+   WHY: The audience thinks in slides; a Reveal ZIP is 48+ files of which a handful are content. Slidev's tree view, slides.com's per-slide HTML editor and Sandpack's readOnly/hidden flags all point the same way.
+   RISKS: Misclassifying a file as framework hides something the teacher needs; provide "show all files".
+
+[R5] (effort M; impact high) Refresh by double-buffered full reload with slide restore; add CSS swap and single-slide patch later
+   WHY: Measured 0.17–0.48 s for reload and 25–37 ms for patches; the hidden-frame swap removes flashing and is also the "last good render" mechanism. In-place Markdown re-rendering is not worth building.
+   RISKS: Two live copies briefly double memory and could double-play audio/video; interactive demo state is lost on reload, so pause auto-refresh while the user is interacting with a slide.
+
+[R6] (effort M; impact high) Implement slide ↔ source sync with the Lezer mapper, Reveal's postMessage API and a vue-router bridge for Slidev, and verify the map against the runtime after every reload
+   WHY: 41/41 and 12/12 slides mapped; zero-injection sync works for Reveal. Malformed HTML makes the static map and the browser disagree (34 versus 42), so compare and say "approximate" instead of jumping to the wrong place.
+   RISKS: The Slidev bridge relies on `__vue_app__` and vue-router internals rather than a public Slidev API; the runner relay needs a new whitelisted message kind.
+
+[R7] (effort M; impact high) Ship the AI loop as copy-out context packs plus a paste-in importer with merge-view review
+   WHY: No accounts or keys; the importer prototype is 3.2 KB gzip and tolerant of real chat sloppiness, while a strict patch library fails. The site writes the prompt, so it can ask for SEARCH/REPLACE blocks with a file path line.
+   RISKS: Format compliance by current models is unmeasured; wrong-place application must stay behind review, with placeholder refusal, shrink warnings and single-step undo.
+
+[R8] (effort S; impact high) Do not offer an editor for files whose edits cannot change playback
+   WHY: Today a portable Slidev package plays a compiled copy; editing its source/ changes nothing. Until a compile path exists, keep those files read-only with an explicit banner.
+   RISKS: Users may expect editing anyway; the banner must say what to do instead.
+
+[R9] (effort M; impact medium) Add a slide inspector (title, notes, background, transition, hidden) and slide operations as source edits
+   WHY: A form is the safe middle ground for non-developers and works for Markdown and Slidev content that has no HTML source element to click. Each control is an attribute or range replacement of the kind already verified for text write-back.
+   RISKS: Three source dialects (Reveal HTML, Reveal Markdown, Slidev frontmatter) triple the cases; start with Reveal HTML.
+
+[R10] (effort M; impact medium) Deliver assets to the sandbox as transferred bytes turned into blobs inside the frame
+   WHY: Parent blob URLs are blocked in the opaque frame; base64 inflates media by a third against a 24 MB HTML limit; a 50 MB transfer took 0.1 ms. It also enables replacing an image without a reload.
+   RISKS: Requires URL rewriting inside the frame for src, CSS url() and scripted loads; scripted fetches of relative paths still fail.
+
+[R11] (effort L; impact medium) Offer real-folder editing as a Chromium-only enhancement with folder import as the universal fallback
+   WHY: showDirectoryPicker, stored permissions and FileSystemObserver give edit-in-VS-Code-and-watch without ZIP round trips, but Firefox and Safari oppose the API. input webkitdirectory and folder drop work everywhere for import.
+   RISKS: Not tested end to end here; external and local edits to the same file need a merge step; permission is lost when the tab is backgrounded unless the user chose "Allow on every visit".
+
+[R12] (effort L; impact medium) Add inline text editing on the slide for Reveal HTML only, and label generated content as not directly editable
+   WHY: Path-based picking resolved 14/15 elements and the write-back touched only the intended range; Phoenix Code's interaction (double-click, Enter, Esc) is a proven model.
+   RISKS: The bridge becomes a channel from untrusted deck code into the project: accept commits only during an explicit edit gesture and validate indices.
+
+[R13] (effort S; impact low) Register WebMCP page tools behind feature detection; leave WebLLM and bring-your-own-key out
+   WHY: A few hundred lines expose get_current_slide / read_file / propose_changes to agents where the origin trial or flag is on, mirroring Slidev's VS Code tools. WebLLM needs multi-gigabyte downloads; BYO-key contradicts the no-keys principle.
+   RISKS: Origin-trial tokens are per origin (forks need their own) and the API has already been renamed once; write tools must only propose.
+
+OPEN QUESTIONS:
+ - Will Slidev source be compiled in the browser by another workstream? That decides whether Slidev edits can be previewed at all and whether element-level source positions can be injected at compile time (the data-line technique).
+ - How often do current chat models (ChatGPT, Claude, Gemini) actually follow a requested SEARCH/REPLACE answer format? My 13 cases are synthetic; a real corpus is needed before fixing the prompt wording.
+ - Should the player's 'any uncaught error is fatal' rule be relaxed for normal playback too, or only in edit mode?
+ - Does the File System Access flow behave as documented end to end (picker, three-way permission prompt, FileSystemObserver on a real folder edited by VS Code)? It could not be automated in headless Chromium.
+ - How do the editor and preview behave in Firefox and Safari, on a real phone keyboard and with a real screen reader? Only Chromium was available.
+ - Which shipping assistants consume WebMCP page tools (Gemini in Chrome, Claude in Chrome)? Chrome's docs only name extensions and DevTools MCP.
+ - Is the owner willing to register an origin-trial token (per origin, so forks would need their own) and to add a web app manifest for File Handling?
+ - How should Slidev `src:` imports and disabled/hidden slides be numbered in the mapper — reimplement the frontmatter keys or ship @slidev/parser/core (33 KB gzip)?
+ - How much slower are the measured reload times on a typical teacher laptop or Chromebook than on this 4-CPU container?
+ - Is on-device Gemini Nano good enough for 'explain this error' or small slide-text edits? Availability was checked, quality was not.
+
+ARTIFACTS: notes/B6-editor-ux.md | (scratch)/shots/B6-review-merge.png | prototypes/B6/reveal-lab/slide-map.mjs | prototypes/B6/reveal-lab/test-map.mjs | prototypes/B6/reveal-lab/test-slidev-map.mjs | prototypes/B6/live-lab/bridge-reveal.js | prototypes/B6/live-lab/bridge-slidev.js | prototypes/B6/live-lab/www/index.html | prototypes/B6/live-lab/measure.mjs | prototypes/B6/live-lab/heavy.mjs | prototypes/B6/live-lab/broken-test.mjs | prototypes/B6/live-lab/pick-test.mjs | prototypes/B6/live-lab/postmessage-test.mjs | prototypes/B6/live-lab/latency-results.json | prototypes/B6/real-player/run.mjs | prototypes/B6/real-player/run-shim.mjs | prototypes/B6/patch-lab/patch-apply.mjs | prototypes/B6/patch-lab/test.mjs | prototypes/B6/cm-measure/measure.mjs | prototypes/B6/cm-measure/tiers.mjs | prototypes/B6/cm-measure/results.json | prototypes/B6/monaco-measure/measure.mjs | prototypes/B6/bigfile/bench.mjs | prototypes/B6/review-lab/run.mjs | prototypes/B6/project-lab/run.mjs | prototypes/B6/asset-lab/run.cjs | prototypes/B6/features/run.cjs | prototypes/B6/features/webmcp.cjs | prototypes/B6/slidev-lab/probe2.cjs | prototypes/B6/ref
