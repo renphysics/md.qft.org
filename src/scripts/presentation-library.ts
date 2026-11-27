@@ -1080,8 +1080,10 @@ export class PresentationLibrary extends HTMLElement {
         // The player's information (printing, the speaker view) also shows over
         // the slides, so a Print button gets an answer, in Present too: when it
         // is new in this playback or the person has just acted, so that a
-        // script cannot keep it up by itself.
-        if (limit.counted === false && (this.runtime.length > listed || navigator.userActivation?.isActive === true)) this.showRescuedNotice(limit.text);
+        // script cannot keep it up by itself. The basic-settings sentence keeps
+        // its place while it shows.
+        const basicShowing = this.rescuedNotice && this.q('[data-pres-rescued-text]').textContent === STALL_RESCUED_TEXT;
+        if (limit.counted === false && !basicShowing && (this.runtime.length > listed || navigator.userActivation?.isActive === true)) this.showRescuedNotice(limit.text);
         this.runtimeAdded(before);
       },
       onStalled: (detail, firstError) => this.showStall(detail, firstError),

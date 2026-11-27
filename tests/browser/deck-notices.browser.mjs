@@ -30,6 +30,8 @@ function revealDeck(title, startup, body = '') {
 
 const RESCUED = revealDeck('Notice lesson', 'const theme = undefinedSetting.colour; Reveal.initialize({ hash: true });',
   `<p><a id="long" href="${LONG_LINK}">Lesson plan</a></p>`);
+// print() while the basic-settings notice shows, as from a Print button pressed early.
+const RESCUED_PRINT = revealDeck('Rescued print', 'setTimeout(() => window.print(), 4000); const theme = undefinedSetting.colour; Reveal.initialize({ hash: true });');
 const BLANK = revealDeck('Blank lesson', 'Reveal.initialize({ plugins: [{ id: "broken", init() { missingHelper(); } }] });');
 
 const PRINTING = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Handout lesson</title></head><body>
@@ -238,6 +240,18 @@ export default async function run(t) {
         return text.startsWith('qft-deck-check/1') && text;
       }, 'the report');
       assert.doesNotMatch(report, /print/, 'not in the report');
+    });
+    if (size.width === 1280) await t.step(`${label}: print() while the basic-settings notice shows is listed in the notes and leaves that notice in place`, async () => {
+      await page.locator('[data-pres-back]').click();
+      await openDeck(page, 'rescued-print.html', RESCUED_PRINT);
+      await page.locator('[data-pres-start-button]').click();
+      await page.locator('[data-pres-rescued]').waitFor({ state: 'visible', timeout: 15_000 });
+      const basic = await page.locator('[data-pres-rescued-text]').textContent();
+      assert.match(basic, /basic settings/);
+      await until(async () => (await page.locator('[data-pres-runtime-list]').textContent()).includes(PRINT_SENTENCE), 'the print sentence in the notes', 15_000);
+      await page.waitForTimeout(500);
+      assert.equal(await page.locator('[data-pres-rescued]').isVisible(), true);
+      assert.equal(await page.locator('[data-pres-rescued-text]').textContent(), basic, 'the basic-settings sentence keeps its place');
     });
     await context.close();
   }
