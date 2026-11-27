@@ -33,8 +33,10 @@ const RESCUED = revealDeck('Notice lesson', 'const theme = undefinedSetting.colo
 const BLANK = revealDeck('Blank lesson', 'Reveal.initialize({ plugins: [{ id: "broken", init() { missingHelper(); } }] });');
 
 const PRINTING = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Handout lesson</title></head><body>
-<h1>Handout lesson</h1><button id="print" type="button">Print handout</button>
-<script>document.getElementById('print').addEventListener('click', () => { window.print(); setTimeout(() => window.print(), 10000); });</script></body></html>`);
+<style>.handout h1{display:none}</style><h1>Handout lesson</h1><button id="print" type="button">Print handout</button>
+<script>window.onbeforeprint = () => { document.body.dataset.before = '1'; };
+window.addEventListener('afterprint', () => document.body.classList.remove('handout'));
+document.getElementById('print').addEventListener('click', () => { document.body.classList.add('handout'); window.print(); setTimeout(() => window.print(), 10000); });</script></body></html>`);
 const PRINT_SENTENCE = 'The presentation tried to print, which the player cannot do. To print the slides, open the presentation\'s HTML file in your web browser (unzip a ZIP first) and print from there.';
 
 const SIZES = [{ width: 1280, height: 800 }, { width: 390, height: 844 }, { width: 320, height: 568 }];
@@ -205,7 +207,7 @@ export default async function run(t) {
       await leaveFullscreen(page);
     });
 
-    if (size.width === 1280) await t.step(`${label}: a Print button gets the player's sentence over the slides, in Present too, without a problem or a line in the report`, async () => {
+    if (size.width === 1280) await t.step(`${label}: a Print button gets the player's sentence over the slides, in Present too, without a problem or a line in the report, and a handout view switches back on afterprint`, async () => {
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
       await page.locator('[data-pres-back]').click();
       await openDeck(page, 'handout-lesson.html', PRINTING);
@@ -217,6 +219,8 @@ export default async function run(t) {
       const notice = page.locator('[data-pres-rescued]');
       await notice.waitFor({ state: 'visible' });
       assert.equal(await page.locator('[data-pres-rescued-text]').textContent(), PRINT_SENTENCE);
+      assert.equal(await frame.locator('h1').isVisible(), true, 'the slide is back after the print attempt');
+      assert.equal(await frame.locator('body').getAttribute('data-before'), '1', 'window.onbeforeprint ran');
       assert.equal(await page.locator('[data-pres-player-status]').textContent(), 'Playing locally', 'no problem');
       await present(page);
       assert.equal(await notice.isVisible(), true, 'in Present');

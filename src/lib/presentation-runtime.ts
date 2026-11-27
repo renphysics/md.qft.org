@@ -662,7 +662,16 @@ function presentationRuntimeFactory() {
         setTimeout(() => { opening = false; }, 0);
         return null;
       });
-      replace('print', function print() { limit('print'); });
+      // As a browser does when the person closes the print dialog: a deck
+      // that switches to a handout view before printing switches back on
+      // afterprint. A print() from one of these handlers fires nothing again.
+      let printing = false;
+      replace('print', function print() {
+        if (printing) { limit('print'); return; }
+        printing = true;
+        const fire = (type: string) => { try { window.dispatchEvent(new Event(type)); } catch { /* The other event still fires. */ } };
+        try { fire('beforeprint'); limit('print'); fire('afterprint'); } finally { printing = false; }
+      });
       ignoreError = (event: ErrorEvent) => {
         try {
           const error = event.error as { name?: unknown; message?: unknown } | null | undefined;

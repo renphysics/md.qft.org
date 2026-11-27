@@ -592,6 +592,14 @@ function deckBootstrap(tolerant: boolean, settings: { hash?: string; reveal?: un
   const timers: [() => void, number][] = [];
   const window: any = {
     localStorage: { length: 0 }, sessionStorage: { length: 0 }, addEventListener: on(listeners.window),
+    // As in browsers: the listeners and the on… handler hear the event, and an error in one is reported, not thrown.
+    dispatchEvent(event: { type: string }) {
+      for (const listener of [...(listeners.window.get(event.type) ?? []), window[`on${event.type}`]]) {
+        if (typeof listener !== 'function') continue;
+        try { listener(event); } catch (error) { window.reported = [...(window.reported ?? []), String(error)]; }
+      }
+      return true;
+    },
     crypto: { getRandomValues: (array: any) => crypto.getRandomValues(array) },
   };
   if (settings.reveal) window.Reveal = settings.reveal;
@@ -847,6 +855,21 @@ test('the message box keeps OK in view and makes the rest of the document inert 
   }
   assert.equal(shown, 51, 'the one on show, and a queue of 50');
   assert.deepEqual([slides.hasAttribute('inert'), aside.hasAttribute('inert')], [false, true], 'exactly what was there before is restored');
+});
+
+test('print() fires beforeprint, lists its sentence, then fires afterprint, as a closed print dialog does', () => {
+  const deck = deckBootstrap(true);
+  const seen: string[] = [];
+  deck.window.addEventListener('beforeprint', () => { seen.push(`before ${deck.messages().length}`); throw new Error('A broken handler'); });
+  deck.window.onbeforeprint = () => { seen.push('onbefore'); deck.window.print(); };
+  deck.window.addEventListener('afterprint', () => { seen.push(`after ${deck.messages().length}`); deck.window.print(); });
+  deck.window.onafterprint = () => { seen.push('onafter'); };
+  assert.equal(deck.window.print(), undefined);
+  assert.deepEqual(seen, ['before 0', 'onbefore', 'after 1', 'onafter'], 'in order, synchronously; a print() inside a handler fires nothing again');
+  assert.deepEqual(deck.window.reported, ['Error: A broken handler'], 'the throwing handler stopped nothing');
+  assert.deepEqual(deck.messages(), [['limit', 'print']]);
+  deck.window.print();
+  assert.deepEqual(seen.length, 8, 'a second print() fires both events again');
 });
 
 test('confirm() and prompt() answer as the sandbox does and warn once per playback', () => {
