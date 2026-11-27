@@ -102,9 +102,12 @@ export interface PresentationPlayerOptions {
   onStalled?: (detail: PresentationStall, firstError: string | undefined) => void;
   /**
    * Tolerant profile only: the person clicked a link to a website in the
-   * deck, which cannot open it itself. The address is checked (http or https,
-   * no user name or password, at most 2000 characters) and comes only after
-   * a user action. Opening it must take another action on the host page.
+   * deck, which cannot open it itself. The bootstrap sends it only for a
+   * trusted click or middle click that the deck did not cancel; the host
+   * checks the address (http or https, no user name or password, at most
+   * 2000 characters) and wants recent user activation in the page. A deck
+   * can still forge the message while there is such activation, so show
+   * only the address, and open it only on another action on the host page.
    */
   onLink?: (url: URL) => void;
   /**
