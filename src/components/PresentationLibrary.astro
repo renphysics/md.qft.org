@@ -57,7 +57,7 @@ import '../styles/presentations.css';
           <div class="presentation-notes-body">
             <ul class="presentation-notes-list" data-pres-notes-list></ul>
             <div class="presentation-runtime" data-pres-runtime hidden><p class="presentation-notes-label">While playing</p><ul class="presentation-notes-list" data-pres-runtime-list></ul></div>
-            <div class="presentation-notes-actions"><button class="button-secondary" data-pres-report><Icon name="copy" size={14} /> Copy report for AI</button><span>Paste the report into the AI assistant that made the presentation.</span></div>
+            <div class="presentation-notes-actions"><button class="button-secondary" data-pres-report><Icon name="copy" size={14} /> Copy report for AI</button><span data-pres-report-hint>Paste the report into the AI assistant that made the presentation.</span></div>
             <textarea class="presentation-report-text" data-pres-report-text readonly hidden spellcheck="false" aria-label="Report for your AI assistant"></textarea>
           </div>
         </details>

@@ -477,11 +477,12 @@ export class PresentationLibrary extends HTMLElement {
    * report. `counted: false` marks the player's information (the speaker
    * view): listed, but neither counted as a problem nor put in the report.
    */
-  private addRuntime(origin: PresentationMessageOrigin, message: string, counted = true): void {
+  private addRuntime(origin: PresentationMessageOrigin, message: string, counted = true, hostFromPresentation = false): void {
     const text = cleanReportedText(message);
     if (!text || this.runtime.filter((item) => item.origin === origin).length >= PresentationLibrary.runtimeLimit
       || this.runtime.some((item) => item.origin === origin && item.text === text)) return;
-    this.runtime.push(counted ? { origin, text } : { origin, text, counted: false });
+    // The report marks a sentence whose host name the presentation chose.
+    this.runtime.push({ origin, text, ...(counted ? {} : { counted: false }), ...(hostFromPresentation ? { hostFromPresentation: true } : {}) });
     this.renderNotes();
   }
 
@@ -996,6 +997,10 @@ export class PresentationLibrary extends HTMLElement {
     this.q<HTMLButtonElement>('[data-pres-present]').disabled = !ready;
     this.q<HTMLButtonElement>('[data-pres-html]').disabled = !ready;
     this.q('[data-pres-keyboard-hint]').hidden = !ready;
+    // When the site could not load its converter there is nothing for an AI assistant to change.
+    this.q('[data-pres-report]').hidden = siteSide;
+    this.q('[data-pres-report-hint]').textContent = siteSide ? 'Nothing to send to your AI assistant: reload the page and open the ZIP again.'
+      : 'Paste the report into the AI assistant that made the presentation.';
     if (!ready) {
       this.player?.destroy();
       this.player = undefined;
@@ -1037,7 +1042,7 @@ export class PresentationLibrary extends HTMLElement {
       // Information such as the speaker view is listed, not counted.
       onLimit: (limit) => {
         const before = this.runtimeProblems();
-        this.addRuntime('player', limit.text, limit.counted);
+        this.addRuntime('player', limit.text, limit.counted, !!limit.host);
         this.runtimeAdded(before);
       },
       onStalled: (detail, firstError) => this.showStall(detail, firstError),
@@ -1395,11 +1400,17 @@ export class PresentationLibrary extends HTMLElement {
     const active = this.active;
     if (!active) return;
     const { project, playable } = active;
+    // A presentation opened as one HTML file is kept as index.html; the report names the file as it was opened.
+    const { originalDownload } = await import('../lib/deck-project');
+    const original = await originalDownload(project);
+    if (active !== this.active) return;
+    const singleFile = /\.html$/i.test(original.name) ? original.name : undefined;
     // `stalled` sets the report's result line ('does not start' or 'starts with basic settings').
     const input: DeckReportInput = {
       kind: project.kind, engine: project.engine, edited: project.edits.size > 0,
       ...(project.detection.engineVersion ? { engineVersion: project.detection.engineVersion } : {}),
       ...(project.entry ? { entry: project.entry } : {}),
+      ...(singleFile ? { singleFile } : {}),
       ...(this.slides !== undefined ? { slides: this.slides } : {}),
       ...(this.stall ? { stalled: this.stall } : {}),
       issues: playable.issues, runtime: this.runtime,
@@ -1444,12 +1455,12 @@ export class PresentationLibrary extends HTMLElement {
       this.leftRestarts += 1;
       const position = player.currentPosition();
       player.update(active.playable.html, position ? { position } : {});
-      this.addRuntime('player', leftText(left.host, `which the player cannot do. ${position ? 'It was started again at the same slide.' : 'It was started again from the beginning.'}`));
+      this.addRuntime('player', leftText(left.host, `which the player cannot do. ${position ? 'It was started again at the same slide.' : 'It was started again from the beginning.'}`), true, !!left.host);
     } else {
       player.stop();
       const text = leftText(left.host, 'so the player stopped it. Choose Start to play it again.');
       this.reportProblem('player', text);
-      this.addRuntime('player', text);
+      this.addRuntime('player', text, true, !!left.host);
     }
     this.runtimeAdded(before);
   }

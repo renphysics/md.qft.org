@@ -176,6 +176,9 @@ export default async function run(t) {
     await page.locator('[data-file-input]').setInputFiles({ name: 'slidev-build.zip', mimeType: 'application/zip', buffer: slidev });
     await until(async () => (await page.locator('[data-pres-problem]').textContent()).includes(LOAD_FAILURE), 'the fixed sentence for the converter');
     assert.doesNotMatch(await page.locator('[data-pres-dialog]').textContent(), /Check the internet connection/);
+    // Nothing to send to an AI assistant: no Copy report for AI, and the hint says what to do instead.
+    assert.equal(await page.locator('[data-pres-report]').isVisible(), false, 'no Copy report for AI');
+    assert.equal(await page.locator('[data-pres-report-hint]').textContent(), 'Nothing to send to your AI assistant: reload the page and open the ZIP again.');
     await page.locator('[data-pres-close]').click();
     await page.locator('[data-pres-dialog]').waitFor({ state: 'hidden' });
     // The workspace's slide preview: the fixed sentence with Reload, not "Switch to Document and back".
