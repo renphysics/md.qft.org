@@ -84,6 +84,8 @@ export default async function run(t) {
   t.allowConsoleError(/Framing 'https:\/\/phet\.colorado\.edu\/' violates the following Content Security Policy directive/);
   t.allowConsoleError(/Refused to frame 'https:\/\/phet\.colorado\.edu\/'/);
   t.allowPageError(/^$/);
+  t.allowConsoleError(/^Unsafe attempt to initiate navigation for frame with origin '[^']*' from frame with URL 'blob:null\/[^']*'\. The frame attempting navigation of the top-level window is sandboxed/);
+  t.allowPageError(/does not have permission to navigate the target frame to 'https:\/\/phet\.colorado\.edu\/en\/simulations'/);
   const { context, page } = await t.newPage({ viewport: { width: 1100, height: 700 } });
   await openHost(t, context, page);
 
@@ -183,6 +185,20 @@ export default async function run(t) {
     await frame.locator('#empty').click();
     await until(async () => limitCodes(await events(page)).includes('failed-step'), 'the failed-step note');
     assert.deepEqual((await events(page)).warnings, [], 'no "Uncaught" as the presentation\'s words');
+  });
+
+  await t.step('top.location.href = an address after a click offers the address as a link, without the browser\'s error', async () => {
+    const topLevel = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Top</title></head><body>
+<button id="top" type="button">Open the simulation</button>
+<script>document.getElementById('top').addEventListener('click', () => { const site = 'https://phet.colorado.edu/en/simulations'; top.location.href = site; });</script></body></html>`;
+    assert.equal(await page.evaluate((html) => window.play(html, 'tolerant'), topLevel), 'ready');
+    const frame = await deckFrame(page, '#top');
+    await frame.locator('#top').click();
+    await until(async () => (await events(page)).links.length === 1, 'the address to be offered');
+    await page.waitForTimeout(300);
+    const reported = await events(page);
+    assert.deepEqual(reported.links, ['https://phet.colorado.edu/en/simulations']);
+    assert.deepEqual([reported.warnings, reported.errors, limitCodes(reported)], [[], [], []], 'no SecurityError as the presentation\'s words');
   });
 
   await t.step('A button that sends the presentation to a website ends the playback; the host is told once, with the host name', async () => {

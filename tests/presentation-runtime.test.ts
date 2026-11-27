@@ -1776,6 +1776,29 @@ test('window.open() of a website right after the person acted is offered as a li
   ]);
 });
 
+test('top.location.href = address is offered as a link right after the person acted, otherwise a blocked-page note, never the raw error (X1.1)', () => {
+  const refused = (address: string) => {
+    const error = new Error(`Failed to set a named property 'href' on 'Location': The current window does not have permission to navigate the target frame to '${address}'.`);
+    error.name = 'SecurityError';
+    return error;
+  };
+  const deck = deckBootstrap(true);
+  const fire = (address: string) => deck.fire('window', 'error', new deck.ErrorEvent(`Uncaught SecurityError: ${refused(address).message}`, refused(address)) as any);
+  fire('https://example.org/sim');
+  deck.fire('window', 'pointerdown', { isTrusted: true });
+  fire('https://phet.colorado.edu/sims/html/forces');
+  fire('https://intranet/page');
+  assert.deepEqual(deck.messages(), [['limit', 'blocked-page example.org'], ['link', 'https://phet.colorado.edu/sims/html/forces'], ['link', 'https://intranet/page']]);
+  // Another SecurityError, or one without a website address, stays the presentation's own.
+  const other = deckBootstrap(true);
+  const plain = new Error('The operation is insecure.');
+  plain.name = 'SecurityError';
+  other.fire('window', 'error', new other.ErrorEvent('Uncaught SecurityError: The operation is insecure.', plain) as any);
+  const local = refused('blob:null/abc');
+  other.fire('window', 'error', new other.ErrorEvent('Uncaught SecurityError: x', local) as any);
+  assert.deepEqual(other.messages(), [['warning', 'Uncaught SecurityError: The operation is insecure.'], ['warning', 'Uncaught SecurityError: x']]);
+});
+
 test('an error that carries only the browser\'s "Uncaught" has no text of its own (W1.8)', () => {
   const deck = deckBootstrap(true);
   for (const message of ['Uncaught ', 'Uncaught', 'Uncaught undefined', 'Uncaught null', "Uncaught ''", '']) deck.fire('window', 'error', new deck.ErrorEvent(message) as any);

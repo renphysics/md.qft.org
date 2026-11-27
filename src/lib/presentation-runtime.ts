@@ -664,9 +664,21 @@ function presentationRuntimeFactory() {
       });
       replace('print', function print() { limit('print'); });
       ignoreError = (event: ErrorEvent) => {
-        if (!opening) return false;
         try {
-          const error = event.error as { name?: unknown } | null | undefined;
+          const error = event.error as { name?: unknown; message?: unknown } | null | undefined;
+          // top.location.href = address (or parent.): the sandbox refuses it
+          // with a SecurityError. Treat it as window.open() of that address.
+          const target = error?.name === 'SecurityError' ? /navigate the target frame to '(https?:\/\/[^\s']+)'/i.exec(String(error.message)) : null;
+          if (target) {
+            if (acted()) offerLink(target[1]);
+            else {
+              let host = '';
+              try { host = new URL(target[1]).host; } catch { /* No host. */ }
+              limit('blocked-page', isHost(host) ? host : '');
+            }
+            return true;
+          }
+          if (!opening) return false;
           return error instanceof TypeError || error?.name === 'TypeError';
         } catch { return false; }
       };
