@@ -68,9 +68,9 @@ async function openDeck(page, name, buffer) {
   await page.locator('[data-pres-start-button]').waitFor({ state: 'visible', timeout: 60_000 });
 }
 
-/** Present: the button may be cut off at 320 px (a separate fix), so click its visible left edge. */
+/** Present, with an ordinary click: the toolbar wraps on a phone, so the button is whole at 320 px too. */
 async function present(page) {
-  await page.locator('[data-pres-present]').click({ position: { x: 8, y: 10 } });
+  await page.locator('[data-pres-present]').click();
   await until(() => page.evaluate(() => !!document.fullscreenElement
     || !!document.querySelector('[data-pres-stage].presentation-fallback-fullscreen')), 'Present');
   await page.waitForTimeout(600);

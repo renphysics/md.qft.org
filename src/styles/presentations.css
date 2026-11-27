@@ -1,5 +1,6 @@
 qft-presentation-library { display: contents; }
-.app-dialog.presentation-dialog { width: min(1280px, calc(100vw - 48px)); max-width: none; height: min(900px, calc(100dvh - 48px)); max-height: none; padding: 0; overflow: hidden; border-radius: 12px; }
+/* overflow: clip, not only hidden: a focused control (the editor's cursor) must not scroll the whole dialog sideways. */
+.app-dialog.presentation-dialog { width: min(1280px, calc(100vw - 48px)); max-width: none; height: min(900px, calc(100dvh - 48px)); max-height: none; padding: 0; overflow: hidden; overflow: clip; border-radius: 12px; }
 .app-dialog.presentation-dialog[open] { display: flex; flex-direction: column; }
 .presentation-dialog .presentation-topbar { display: flex; align-items: center; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .presentation-dialog .presentation-mark { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
@@ -34,8 +35,12 @@ qft-presentation-library { display: contents; }
 .presentation-dialog .presentation-saved-row > button { font-size: 11px; color: var(--muted); background: transparent; padding: 6px; }
 .presentation-dialog .presentation-saved-row > button[data-pres-confirm-delete] { color: var(--accent); font-weight: 600; }
 .presentation-dialog .presentation-empty { border: 1px dashed var(--border); padding: 26px 16px; text-align: center; color: var(--muted); font-size: 12px; border-radius: 7px; }
+/* A part of the site could not be loaded: said in place of the list, with Reload. */
+.presentation-dialog .presentation-load-failed { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid #c98b97; border-left-width: 4px; border-radius: 7px; background: #fbeef1; color: #6f2435; font-size: 12px; line-height: 1.6; }
+html[data-theme='dark'] .presentation-dialog .presentation-load-failed { background: #3f262c; color: #f4c6cf; border-color: #a5636f; }
+.presentation-dialog .presentation-load-failed p { flex: 1 1 260px; margin: 0; }
 .presentation-dialog .presentation-library-note { font-size: 11px; color: var(--muted); line-height: 1.8; }
-.presentation-dialog .presentation-deck { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.presentation-dialog .presentation-deck { min-height: 0; min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .presentation-dialog .presentation-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--border); }
 .presentation-dialog .presentation-view-switch { display: flex; gap: 3px; }
 .presentation-dialog .presentation-view-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 5px; padding: 7px 10px; font-size: 11px; color: var(--muted); background: transparent; }
@@ -186,7 +191,9 @@ html[data-theme='dark'] .presentation-dialog .presentation-edit-problem { backgr
   .presentation-dialog .presentation-example > svg { height: 75px; margin-bottom: 12px; }
   .presentation-dialog .presentation-example-caption strong { font-size: 18px; }
   .presentation-dialog .presentation-library-heading { align-items: flex-start; flex-direction: column; gap: 7px; }
-  .presentation-dialog .presentation-toolbar { padding: 7px; gap: 4px; }
+  /* On a phone the toolbar wraps, so every button, Present included, stays inside the dialog. */
+  .presentation-dialog .presentation-toolbar { padding: 7px; gap: 4px; flex-wrap: wrap; }
+  .presentation-dialog .presentation-deck-actions { flex-wrap: wrap; }
   .presentation-dialog .presentation-view-switch button { padding: 7px; gap: 4px; font-size: 10px; }
   .presentation-dialog .presentation-deck-actions { gap: 4px; }
   .presentation-dialog .presentation-deck-actions .button-secondary, .presentation-dialog .presentation-deck-actions .button-primary { padding: 6px; font-size: 10px; gap: 4px; }
@@ -205,7 +212,15 @@ html[data-theme='dark'] .presentation-dialog .presentation-edit-problem { backgr
   .presentation-dialog .presentation-stage:fullscreen .presentation-strips, .presentation-dialog .presentation-stage.presentation-fallback-fullscreen .presentation-strips { top: 48px; height: calc(50% - 48px); }
   .presentation-dialog .presentation-stage:fullscreen .presentation-strip, .presentation-dialog .presentation-stage.presentation-fallback-fullscreen .presentation-strip { padding-right: 8px; }
   .presentation-dialog .presentation-start h3 { font-size: 24px; }
-  .presentation-dialog .presentation-source { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px; padding: 10px; }
-  .presentation-dialog .presentation-files { max-height: 132px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-  .presentation-dialog .presentation-code { min-height: 140px; }
+  /*
+   * The Source files view is one column that scrolls as a whole: the file
+   * list, the editor at a fixed height, then the problems, the status with
+   * Restore original, and the note, each in its own place.
+   */
+  .presentation-dialog .presentation-source { display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow-x: hidden; overflow-y: auto; }
+  .presentation-dialog .presentation-files { flex: none; max-height: 132px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .presentation-dialog .presentation-source-main { flex: none; min-height: auto; }
+  .presentation-dialog .presentation-code { flex: none; height: min(320px, 55dvh); min-height: 140px; }
+  .presentation-dialog .presentation-file-message { flex: none; }
+  .presentation-dialog .presentation-edit-status { min-width: 0; flex-basis: 100%; }
 }
