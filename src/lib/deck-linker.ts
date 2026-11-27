@@ -152,9 +152,59 @@ function textOf(element: Element): string {
   return parent.childNodes.map((node) => (node.nodeName === '#text' ? (node as DefaultTreeAdapterTypes.TextNode).value : '')).join('');
 }
 
+/** Removes every child at once (parse5's detachNode searches the siblings for each one). */
+function clearChildren(parent: ParentNode): void {
+  for (const child of parent.childNodes) child.parentNode = null;
+  parent.childNodes = [];
+}
+
 function setText(element: Element, value: string): void {
-  for (const child of [...element.childNodes]) defaultTreeAdapter.detachNode(child);
+  clearChildren(element);
   if (value) defaultTreeAdapter.insertText(element, value);
+}
+
+/**
+ * Removals and replacements of many elements (review VF1.1). parse5's
+ * detachNode and insertBefore look the node up among its siblings, so one call
+ * per element took quadratic time on a page of 100,000 siblings. A node given
+ * here is cut off from its parent at once (isAttached then says so, for it and
+ * everything inside it); the parent's child list is rebuilt once, in apply().
+ * Nodes put in its place count as children of that parent straight away, and
+ * may themselves be replaced before apply().
+ */
+class TreeEdits {
+  private readonly parents = new Set<ParentNode>();
+  private readonly replacements = new Map<ChildNode, ChildNode[]>();
+
+  remove(node: ChildNode): void {
+    this.replace(node, []);
+  }
+
+  replace(node: ChildNode, nodes: ChildNode[]): void {
+    const parent = node.parentNode;
+    if (!parent) return;
+    this.parents.add(parent);
+    this.replacements.set(node, nodes);
+    node.parentNode = null;
+    for (const replacement of nodes) replacement.parentNode = parent;
+  }
+
+  apply(): void {
+    for (const parent of this.parents) {
+      const kept: ChildNode[] = [];
+      const stack = [...parent.childNodes].reverse();
+      while (stack.length) {
+        const child = stack.pop()!;
+        const replaced = this.replacements.get(child);
+        if (replaced) {
+          for (let index = replaced.length - 1; index >= 0; index -= 1) stack.push(replaced[index]);
+        } else if (child.parentNode === parent) kept.push(child);
+      }
+      parent.childNodes = kept;
+    }
+    this.parents.clear();
+    this.replacements.clear();
+  }
 }
 
 function createElement(tagName: string, attributes: Record<string, string> = {}, namespace: string = NS.HTML): Element {
@@ -178,11 +228,6 @@ function prepend(parent: Element, node: ChildNode): void {
   const first = parent.childNodes[0];
   if (first) defaultTreeAdapter.insertBefore(parent, node, first);
   else defaultTreeAdapter.appendChild(parent, node);
-}
-
-function replaceNode(reference: ChildNode, nodes: ChildNode[]): void {
-  insertBefore(reference, nodes);
-  defaultTreeAdapter.detachNode(reference);
 }
 
 function children(parent: ParentNode): ChildNode[] {
@@ -535,6 +580,8 @@ class DeckLinker {
   private readonly skippedLower = new Map<string, string>();
   /** Script elements that hold a bundled library, not the deck's own code. */
   private readonly vendorElements = new WeakSet<Element>();
+  /** Removals and replacements in the page, applied once per pass. */
+  private readonly edits = new TreeEdits();
 
   constructor(
     private readonly files: DeckFiles,
@@ -980,13 +1027,13 @@ class DeckLinker {
     const typeValue = (getAttribute(element, 'type') ?? '').trim().toLowerCase().replace(/;[\s\S]*$/, '');
     const isModule = typeValue === 'module';
     const src = getAttribute(element, 'src') ?? getAttribute(element, 'href') ?? getAttribute(element, 'xlink:href');
-    if (typeValue === 'importmap' || typeValue === 'speculationrules') { defaultTreeAdapter.detachNode(element); return; }
+    if (typeValue === 'importmap' || typeValue === 'speculationrules') { this.edits.remove(element); return; }
     if (!isModule && !JAVASCRIPT_TYPES.test(typeValue)) {
       // A data block (templates, JSON): the browser never loads its src.
       for (const name of ['src', 'href', 'xlink:href']) removeAttribute(element, name);
       return;
     }
-    if (hasAttribute(element, 'nomodule')) { defaultTreeAdapter.detachNode(element); return; }
+    if (hasAttribute(element, 'nomodule')) { this.edits.remove(element); return; }
     if (isModule) { await this.processModule(element, src); return; }
     if (src === undefined) {
       this.processInlineScript(element);
@@ -995,9 +1042,9 @@ class DeckLinker {
     const replacement = await this.classicScript(src, element);
     const deferred = hasAttribute(element, 'defer') && !hasAttribute(element, 'async');
     if (deferred && replacement.length) {
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       this.deferred.push(...replacement);
-    } else replaceNode(element, replacement);
+    } else this.edits.replace(element, replacement);
   }
 
   /** The inline elements that replace a classic script with a src. */
@@ -1049,7 +1096,7 @@ class DeckLinker {
     let code = textOf(element);
     // The 3.x template loads a print stylesheet by script; 6.x builds it in.
     if (/css\/print\/pdf\.css/.test(code) && /css\/print\/paper\.css/.test(code) && /createElement\(\s*['"]link['"]\s*\)/.test(code) && code.length < 2000) {
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       return;
     }
     this.classicTexts.push(code);
@@ -1141,14 +1188,14 @@ class DeckLinker {
       else if (target.kind === 'remote') reference = mapLibraryUrl(target.url);
       else if (target.kind === 'local') reference = mapLibraryPath(target.path);
       if (reference && reference.role !== 'not-needed') {
-        replaceNode(element, await this.vendorScripts(reference, src));
+        this.edits.replace(element, await this.vendorScripts(reference, src));
         return;
       }
       if (target.kind !== 'local') {
         if (target.kind === 'missing') this.reportMissing(target.path);
         else if (target.kind === 'remote') this.reportRemote(target, 'script');
         else if (target.kind === 'other') this.reportOther(target.value);
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         return;
       }
       code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
@@ -1163,7 +1210,7 @@ class DeckLinker {
     if (!imports.length && complete) {
       const rewritten = this.rewriteConfigFiles(code);
       if (src !== undefined || rewritten !== code) {
-        replaceNode(element, [scriptElement(rewritten, { type: 'module', ...(src ? { 'data-qft-from': where } : {}) })]);
+        this.edits.replace(element, [scriptElement(rewritten, { type: 'module', ...(src ? { 'data-qft-from': where } : {}) })]);
       }
       return;
     }
@@ -1196,7 +1243,7 @@ class DeckLinker {
       const shown = unsupported.slice(0, 3).join(', ');
       this.failedModuleTexts.push(code);
       this.report('es-modules-unsupported', 'warning', `Part of the presentation's code (it imports ${shown}) cannot run here, so it is left out. Ask your AI assistant to put that code directly in index.html.`, shown);
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       return;
     }
     const nodes: ChildNode[] = [];
@@ -1212,7 +1259,7 @@ class DeckLinker {
     }
     rewritten = this.rewriteConfigFiles(`${bindings.join('\n')}${bindings.length ? '\n' : ''}${rewritten}`);
     nodes.push(scriptElement(rewritten, { type: 'module', 'data-qft-from': where }));
-    replaceNode(element, nodes);
+    this.edits.replace(element, nodes);
   }
 
   private moduleLibrary(specifier: string, dir: string): LibraryReference | undefined {
@@ -1239,7 +1286,7 @@ class DeckLinker {
     const preloaded = rel.includes('preload') && (getAttribute(element, 'as') ?? '').trim().toLowerCase() === 'style'
       && /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload);
     if ((!rel.includes('stylesheet') && !preloaded) || rel.includes('alternate') || hasAttribute(element, 'disabled')) {
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       return;
     }
     const href = getAttribute(element, 'href') ?? '';
@@ -1254,7 +1301,7 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    replaceNode(element, css ? [styleElement(css, attributes)] : []);
+    this.edits.replace(element, css ? [styleElement(css, attributes)] : []);
   }
 
   /* --------------------------------------------------------- Markdown */
@@ -1358,7 +1405,7 @@ class DeckLinker {
       if (/^[ \t]/.test(text)) text = `<!-- -->\n${text}`;
       const template = createElement('textarea', { 'data-template': '' });
       setText(template, await this.rewriteMarkdown(text));
-      for (const child of [...section.childNodes]) defaultTreeAdapter.detachNode(child);
+      clearChildren(section);
       defaultTreeAdapter.appendChild(section, template);
       setAttribute(section, 'data-markdown', '');
       removeAttribute(section, 'data-charset');
@@ -1401,13 +1448,13 @@ class DeckLinker {
             const kept = getAttribute(element, attribute);
             if (kept) attributes[attribute] = kept;
           }
-          replaceNode(element, [createElement('img', attributes)]);
+          this.edits.replace(element, [createElement('img', attributes)]);
           return;
         }
       }
     }
     this.embeddedPage(target, value);
-    replaceNode(element, [placeholderElement(element, target)]);
+    this.edits.replace(element, [placeholderElement(element, target)]);
   }
 
   private async processAssets(element: Element): Promise<void> {
@@ -1442,7 +1489,7 @@ class DeckLinker {
       if (name === 'source' && getAttribute(element, 'srcset') !== undefined && element.parentNode && isElement(element.parentNode as Node)
         && localName(element.parentNode as Element) === 'picture') {
         // The <img> inside <picture> is what plays here.
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         return;
       }
       if (name === 'track') {
@@ -1450,7 +1497,7 @@ class DeckLinker {
           this.report('captions-left-out', 'info', 'Caption tracks cannot be included, so videos play without captions.');
         }
         // A <track> without its file reports a loading error while the video plays.
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         return;
       } else {
         await image('src', name === 'source' ? sourcePurpose(element) : mediaPurpose);
@@ -1599,13 +1646,16 @@ class DeckLinker {
 
   /** Facts about the deck that change how earlier elements are treated. */
   private survey(elements: Element[]): void {
+    let baseSeen = false;
     for (const element of elements) {
       const name = localName(element);
       const handlerId = Number(getAttribute(element, 'data-qft-on'));
       if (Number.isSafeInteger(handlerId) && handlerId >= this.nextHandlerId) this.nextHandlerId = handlerId + 1;
-      if (name === 'base' && !insideTemplate(element)) {
+      if (name === 'base' && !baseSeen && !insideTemplate(element)) {
         const href = getAttribute(element, 'href');
+        // As in HTML, only the first <base> with an href counts (review VF1.3).
         if (href !== undefined) {
+          baseSeen = true;
           const target = this.resolve(href.endsWith('/') ? `${href}x` : href, this.baseDir);
           if (target.kind === 'local' || target.kind === 'missing') this.baseDir = dirname(target.path);
           else this.report('document-base', 'info', 'The page points to a web address for its files; the files in your ZIP are used instead.');
@@ -1664,8 +1714,9 @@ class DeckLinker {
     // Scripts always run in the player, so <noscript> content never applies. The
     // linker reads it as text and the player as markup; drop it before either.
     for (const element of elementsOf(this.document)) {
-      if (localName(element) === 'noscript' && element.namespaceURI === NS.HTML) defaultTreeAdapter.detachNode(element);
+      if (localName(element) === 'noscript' && element.namespaceURI === NS.HTML) this.edits.remove(element);
     }
+    this.edits.apply();
     if (isEmptyPage(this.document)) {
       const name = cleanReportedText(this.entry.split('/').pop() || 'The start page', 120);
       this.report('page-empty', 'error', `${name} is empty. Export the presentation again.`, this.entry || undefined);
@@ -1680,12 +1731,12 @@ class DeckLinker {
       const name = localName(element);
       if (name === 'script') { await this.processScript(element); continue; }
       if (name === 'link') { await this.processLink(element); continue; }
-      if (name === 'base') { defaultTreeAdapter.detachNode(element); continue; }
+      if (name === 'base') { this.edits.remove(element); continue; }
       if (name === 'meta' && hasAttribute(element, 'http-equiv')) {
         if ((getAttribute(element, 'http-equiv') ?? '').trim().toLowerCase() === 'refresh') {
           this.report('page-redirect', 'warning', 'The page asks to open another address, which is not possible here, so that instruction is removed.');
         }
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         continue;
       }
       if (name === 'style') {
@@ -1700,6 +1751,7 @@ class DeckLinker {
       if ((name === 'a' || name === 'area') && element.namespaceURI === NS.HTML) this.noteLink(element);
       this.collectHandlers(element);
     }
+    this.edits.apply();
     // Inline scripts that call Reveal.initialize with a 3.x dependency list.
     for (const element of elementsOf(this.document)) {
       if (localName(element) === 'script' && !getAttribute(element, 'src') && !getAttribute(element, LINKER_MARKER)

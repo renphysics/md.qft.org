@@ -70,6 +70,15 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     'index.html': reveal(`<section>A</section>${'<script>x();</script>'.repeat(2000)}<script>Reveal.initialize({ plugins: [${Array.from({ length: 50_000 }, (_, index) => `P${index}`).join(', ')}] });</script>`),
   })) },
   { name: '40,000 elements with class names inside one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<div class="a controls b">x</div>'.repeat(40_000)}</section>`) })) },
+  // VF1.1 and VF1.3: one sibling search per removed element (6.5 s in the site), and every <base> resolved against the one before.
+  { name: '150,000 sibling <noscript> elements in one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<noscript>x</noscript>'.repeat(150_000)}</section>`) })) },
+  { name: '60,000 <base href> elements', run: async () => {
+    const result = await link(deck({ 'index.html': page('<base href="x/">'.repeat(60_000)) }));
+    assert.ok(!result.html.includes('<base'), 'the base elements are removed');
+  } },
+  { name: '60,000 sibling elements that the linker removes or replaces', run: () => link(deck({
+    'index.html': reveal(`<section>${'<meta http-equiv="x-ua" content="1"><video><track src="a.vtt"></video><iframe src="https://x.example/"></iframe><script src="m.js"></script><link rel="preload" href="a.css">'.repeat(12_000)}</section>`),
+  })) },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
   { name: 'a Slidev library chunk with 150,000 "export{"', run: () => detectDeck(slidevBuild({ vue: `/*${'export{'.repeat(150_000)}*/` })) },
