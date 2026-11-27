@@ -29,6 +29,8 @@ const quiz = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>
 <form id="plain"><input id="plain-answer"><input id="plain-check" type="submit" value="Send"></form>
 <form id="nobutton"><input id="lonely"></form><p id="nobutton-feedback">-</p>
 <form id="requested"><input id="requested-answer"></form><p id="requested-feedback">-</p>
+<form id="cancelled"><input id="cancelled-answer"><button id="cancelled-check">Check</button></form><p id="cancelled-feedback">-</p>
+<form id="twofields"><input id="first"><input id="second"></form><p id="twofields-feedback">-</p>
 <script>
 document.getElementById('listener').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -40,6 +42,10 @@ document.getElementById('inline').addEventListener('submit', function (event) { 
 document.getElementById('required').addEventListener('submit', (event) => { event.preventDefault(); document.getElementById('required-feedback').textContent = 'sent'; });
 document.getElementById('nobutton').onsubmit = () => { document.getElementById('nobutton-feedback').textContent = 'implicit'; return false; };
 document.getElementById('requested').addEventListener('submit', (event) => { event.preventDefault(); document.getElementById('requested-feedback').textContent = 'requested'; });
+// The click handler cancels the button's default action: no submission at all.
+document.getElementById('cancelled-check').addEventListener('click', (event) => { event.preventDefault(); document.getElementById('cancelled-feedback').textContent = 'clicked'; });
+document.getElementById('cancelled').addEventListener('submit', () => { window.cancelledSubmits = (window.cancelledSubmits || 0) + 1; });
+document.getElementById('twofields').addEventListener('submit', (event) => { event.preventDefault(); document.getElementById('twofields-feedback').textContent = 'implicit'; });
 </script></body></html>`;
 
 /** Buttons and links that act on a click. */
@@ -115,6 +121,18 @@ export default async function run(t) {
     assert.deepEqual(limitCodes(await events(page)), []);
   });
 
+  await t.step('A submit button whose click the presentation cancels sends nothing; Enter in a form with two fields and no button does not submit it', async () => {
+    const frame = await deckFrame(page, '#listener');
+    await frame.locator('#cancelled-check').click();
+    await until(async () => (await frame.locator('#cancelled-feedback').textContent()) === 'clicked', 'the click handler to run');
+    await frame.locator('#first').fill('a');
+    await frame.locator('#first').press('Enter');
+    await page.waitForTimeout(500);
+    assert.equal(await frame.evaluate(() => /** @type {any} */ (window).cancelledSubmits), undefined, 'no submit event after a cancelled click');
+    assert.equal(await frame.locator('#twofields-feedback').textContent(), '-', 'no implicit submission with two fields');
+    assert.deepEqual(limitCodes(await events(page)), [], 'no form note');
+  });
+
   await t.step('A form that no handler stops gives one note: the player cannot send forms', async () => {
     const frame = await deckFrame(page, '#listener');
     await frame.locator('#plain-check').click();
@@ -128,6 +146,16 @@ export default async function run(t) {
     assert.equal(reported.limits[0].counted, true);
     assert.equal(reported.states.at(-1), 'ready', 'the presentation keeps playing');
     assert.ok(frame.url().startsWith('blob:'));
+  });
+
+  await t.step('form.submit() from a timer gives the form note', async () => {
+    const timed = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Timed form</title></head><body>
+<form id="timed" action="https://example.org/answers"><input name="a" value="4"></form>
+<script>setTimeout(() => { document.getElementById('timed').submit(); }, 300);</script></body></html>`;
+    assert.equal(await page.evaluate((html) => window.play(html, 'tolerant'), timed), 'ready');
+    await until(async () => limitCodes(await events(page)).includes('form'), 'the form note');
+    await page.waitForTimeout(300);
+    assert.deepEqual(limitCodes(await events(page)), ['form'], 'one note');
   });
 
   await t.step('window.open() of a website after a click offers the address as a link; cancelled links are not offered', async () => {
