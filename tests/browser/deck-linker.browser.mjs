@@ -249,6 +249,43 @@ export default async function run(t) {
     assert.equal(await plain.evaluate(() => document.querySelectorAll('.katex-html .katex-tag, .katex-html .eqn-num').length), 0);
   });
 
+  await step('A long numbered environment is typeset with its numbers, and typesetting again leaves typeset formulas alone', async () => {
+    // 120 rows with five of the presentation's macros each: \tag costs KaTeX expansions that MathJax does not count (closing check Y1.1).
+    const rows = Array.from({ length: 120 }, (_, index) => `\\v{a}_{${index}} &= \\v{b} + \\v{c} + \\v{d} + \\v{e}`).join(' \\\\\n');
+    // Its own list of skipped tags (without annotation) and typesetting on every slide change (closing check Y1.3).
+    const config = "{ tex: { tags: 'ams', macros: { v: ['\\\\mathbf{#1}', 1] } }, options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] } }";
+    const files = new Map([['index.html', new TextEncoder().encode(`<!doctype html><html><head><meta charset="utf-8"><title>Long environment</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<script>window.MathJax = ${config};</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head><body><div class="reveal"><div class="slides">
+<section><h3>Long</h3>\\begin{align}\n${rows}\n\\end{align}<p>The last is \\eqref{eq:after} minus one.</p></section>
+<section><h3>After</h3>\\begin{equation} z = 1 \\label{eq:after} \\end{equation}<p>See \\eqref{eq:after}.</p></section>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>Reveal.initialize({ hash: true }); Reveal.on('slidechanged', function () { MathJax.typesetPromise(); });</script></body></html>`)]]);
+    const frame = await play(page, await linked(files, 'long'), 'long');
+    await revealState(frame);
+    // Counted in the slides: Reveal also keeps a text copy of the current slide for screen readers (.aria-status), which changes with the slide.
+    const count = () => frame.evaluate(() => ({
+      errors: document.querySelectorAll('.katex-error').length, formulas: document.querySelectorAll('.reveal .slides .katex').length,
+      nested: document.querySelectorAll('annotation .katex, .katex .katex, .katex-error .katex-error').length,
+    }));
+    // KaTeX puts the numbers of all rows into one column of tags.
+    const first = await frame.evaluate(() => ({
+      tags: [...document.querySelectorAll('.reveal .slides section:first-child .katex-html .katex-tag')].map((tag) => tag.textContent.replace(/[\u200b\s]/g, '')).join(' '),
+      text: document.querySelector('.reveal .slides section:first-child p').textContent,
+    }));
+    assert.deepEqual(first, { tags: Array.from({ length: 120 }, (_, index) => `(${index + 1})`).join(''), text: 'The last is (121) minus one.' });
+    const before = await count();
+    assert.deepEqual({ errors: before.errors, nested: before.nested }, { errors: 0, nested: 0 });
+    assert.deepEqual(await goTo(frame, 1), { tags: ['(121)'], text: 'See (121).' });
+    await goTo(frame, 0);
+    for (let pass = 0; pass < 3; pass += 1) await frame.evaluate(() => MathJax.typesetPromise());
+    assert.deepEqual(await count(), before, 'five more typesetting passes add nothing');
+    assert.deepEqual(await goTo(frame, 1), { tags: ['(121)'], text: 'See (121).' });
+  });
+
   await step('A plain page that loads MathJax 3 on its own is typeset with KaTeX, also text that MathJax.typesetPromise is asked for later', async () => {
     const html = `<!doctype html><html><head><meta charset="utf-8">
 <script>window.MathJax = { tex: { macros: { RR: '\\\\mathbb{R}' } } };</script>

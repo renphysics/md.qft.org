@@ -189,6 +189,12 @@ const equationNumbersSource = String.raw`  var equations = window.__qftEquations
       }));
     };
   }
+  // KaTeX stops a formula after 1,000 macro expansions, and \tag is a macro
+  // there (about six expansions), so the numbers added above made a long
+  // environment fail that MathJax typesets (closing check Y1.1: 167 plain
+  // rows, or 84 rows with five of the presentation's macros each). MathJax
+  // counts only the presentation's own macros; 10,000 is MathJax 2's limit.
+  var maxExpand = 10000;
 `;
 
 /**
@@ -332,6 +338,7 @@ ${mathHelpersSource()}
       delimiters: longestFirst(pairs(tex.displayMath || mathjaxDisplay, true).concat(pairs(tex.inlineMath || mathjaxInline, false), environments(tex.processEnvironments))),
       ignoredTags: Array.isArray(skip) ? skip : ignored,
       macros: given,
+      maxExpand: maxExpand,
       preProcess: numbering(tagMode(numbers), given)
     };
   }
@@ -389,6 +396,12 @@ export function mathJaxStandInSource(version: 2 | 3 | 4 = 3): string {
   if (current && current.qftStandIn) return;
 ${mathHelpersSource()}
   var skipTags = ignored.concat(['annotation', 'annotation-xml']);
+  // Typesetting is asked for again and again (on every slide change in many
+  // presentations). A typeset formula keeps its TeX in an <annotation>, and a
+  // formula KaTeX could not read shows its TeX: neither is read again, also
+  // when the presentation gives its own list of skipped tags (closing check
+  // Y1.3: each pass typeset the annotation once more, inside the last result).
+  var ownOutput = ['tex2jax_ignore', 'mathjax_ignore', 'katex', 'katex-error'];
   var config = {};
   function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value) && !value.nodeType; }
   function merge(target, source, depth) {
@@ -418,8 +431,9 @@ ${mathHelpersSource()}
       throwOnError: false,
       delimiters: longestFirst(pairs(display, true).concat(pairs(inline, false), environments(tex.processEnvironments === false ? false : two.processEnvironments))),
       ignoredTags: skip,
-      ignoredClasses: ['tex2jax_ignore', 'mathjax_ignore'],
+      ignoredClasses: ownOutput,
       macros: all,
+      maxExpand: maxExpand,
       preProcess: numbering(tagMode(numbers), all)
     };
   }
@@ -454,7 +468,7 @@ ${mathHelpersSource()}
     var node = document.createElement('mjx-container');
     try {
       var given = settings();
-      window.katex.render(given.preProcess(String(math)), node, { displayMode: !options || options.display !== false, throwOnError: false, macros: given.macros });
+      window.katex.render(given.preProcess(String(math)), node, { displayMode: !options || options.display !== false, throwOnError: false, macros: given.macros, maxExpand: given.maxExpand });
     } catch (error) { node.textContent = String(math); }
     return node;
   }

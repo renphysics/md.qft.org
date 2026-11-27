@@ -12,7 +12,7 @@ import { mathJaxConfigSource, mathJaxStandInSource, mathStandInSource } from '..
  * MathJax would put a number.
  */
 
-type Options = { preProcess: (math: string) => string; macros: Record<string, unknown>; ignoredTags: string[] };
+type Options = { preProcess: (math: string) => string; macros: Record<string, unknown>; ignoredTags: string[]; ignoredClasses?: string[]; maxExpand?: number };
 interface FakeNode { nodeType: number; nodeValue?: string; localName?: string; classList?: { contains(name: string): boolean }; lastChild?: FakeNode | null; previousSibling?: FakeNode | null }
 
 const textNode = (value: string): FakeNode => ({ nodeType: 3, nodeValue: value });
@@ -25,20 +25,21 @@ function element(localName: string, children: FakeNode[]): FakeNode {
 function mathJaxPage(before = '', version: 2 | 3 | 4 = 3) {
   const seen: Options[] = [];
   const rendered: string[] = [];
+  const converted: Array<{ maxExpand?: number }> = [];
   let formulas: string[] = [];
   const body = element('body', []);
   const context: Record<string, any> = {
     setTimeout: (callback: () => void) => callback(),
     document: { readyState: 'loading', body, addEventListener: () => {}, getElementById: () => null, querySelectorAll: () => [], createElement: () => ({}) },
     renderMathInElement: (_root: unknown, options: Options) => { seen.push(options); for (const tex of formulas) rendered.push(options.preProcess(tex)); formulas = []; },
-    katex: { render: (tex: string) => { rendered.push(tex); } },
+    katex: { render: (tex: string, _node: unknown, options: { maxExpand?: number }) => { rendered.push(tex); converted.push(options); } },
   };
   context.window = context;
   vm.createContext(context);
   if (before) vm.runInContext(before, context);
   vm.runInContext(mathJaxStandInSource(version), context);
   const typeset = (...list: string[]) => { formulas = list; context.MathJax.typeset(); return rendered.splice(0); };
-  return { context, seen, typeset };
+  return { context, seen, converted, typeset };
 }
 
 /** The rewrite of one configuration, for formulas given one by one. */
@@ -49,8 +50,8 @@ const rewrite = (before: string, version: 2 | 3 | 4 = 3) => {
 const ams = "window.MathJax = { tex: { tags: 'ams' } };";
 
 /** What KaTeX shows in its column of tags (no error, no number from a CSS counter). */
-function shown(tex: string, macros: object = {}) {
-  const html = katex.renderToString(tex, { displayMode: true, throwOnError: true, output: 'html', macros: { ...macros } });
+function shown(tex: string, macros: object = {}, maxExpand?: number) {
+  const html = katex.renderToString(tex, { displayMode: true, throwOnError: true, output: 'html', macros: { ...macros }, ...(maxExpand === undefined ? {} : { maxExpand }) });
   assert.doesNotMatch(html, /class="eqn-num"/, `${tex}: no number from a CSS counter`);
   const at = html.indexOf('<span class="katex-tag">');
   return at < 0 ? '' : html.slice(at).replace(/<[^>]*>/g, '').replace(/\u200b/g, '').trim();
@@ -204,6 +205,12 @@ describe('Reveal\'s math plugin stand-in', () => {
       ['KaTeX', { mathjax3: { tex: { tags: 'ams' } } }, equation],
     ] as const) assert.equal(pluginOptions(factory, config).preProcess(equation), expected, `${factory} ${JSON.stringify(config)}`);
   });
+
+  it('gives KaTeX room for the added numbers in each MathJax form, and leaves the KaTeX form its own limit (Y1.1)', () => {
+    for (const factory of ['', 'MathJax2', 'MathJax3', 'MathJax4']) assert.equal(pluginOptions(factory, {}).maxExpand, 10_000, factory || 'RevealMath');
+    assert.equal(pluginOptions('KaTeX', {}).maxExpand, undefined);
+    assert.equal(pluginOptions('KaTeX', { katex: { maxExpand: 50 } }).maxExpand, 50, 'the presentation\'s own KaTeX setting stays');
+  });
 });
 
 describe('what KaTeX makes of the rewritten formulas', () => {
@@ -228,6 +235,52 @@ describe('what KaTeX makes of the rewritten formulas', () => {
     for (const before of ['', ams, "window.MathJax = { tex: { tags: 'all' } };"]) {
       const { seen, typeset } = mathJaxPage(before);
       for (const tex of typeset(...formulas)) assert.doesNotThrow(() => shown(tex, seen[0].macros), `${before} ${tex}`);
+    }
+  });
+});
+
+describe('a long numbered environment (closing check Y1.1)', () => {
+  // 120 rows with five of the presentation's own macros each (600 expansions): MathJax typesets this with (1) to (120).
+  // In KaTeX the added \\tag costs about six more a row, which passes its limit of 1,000.
+  const rows = Array.from({ length: 120 }, (_, index) => `\\v{a}_{${index}} &= \\v{b} + \\v{c} + \\v{d} + \\v{e}`).join(' \\\\ ');
+  const long = `\\begin{align} ${rows} \\end{align}`;
+  const config = "window.MathJax = { tex: { tags: 'ams', macros: { v: ['\\\\mathbf{#1}', 1] } } };";
+  const numbers = Array.from({ length: 120 }, (_, index) => `(${index + 1})`).join('');
+
+  it('is typeset with its numbers: \\tag costs KaTeX macro expansions that MathJax does not count', () => {
+    const { seen, typeset } = mathJaxPage(config);
+    const [tex] = typeset(long);
+    assert.equal(seen[0].maxExpand, 10_000);
+    assert.equal(shown(tex, seen[0].macros, seen[0].maxExpand), numbers);
+    // The reason for the setting: with KaTeX's own limit of 1,000 the rewritten formula fails, and the unnumbered one does not.
+    assert.throws(() => shown(tex, seen[0].macros), /Too many expansions/);
+    assert.equal(shown(long.replace(/align/g, 'align*'), seen[0].macros), '');
+  });
+
+  it('has the same room in a direct conversion (tex2chtml) and in MathJax 2', () => {
+    const { context, converted } = mathJaxPage(config);
+    context.MathJax.tex2chtml(long);
+    assert.equal(converted[0].maxExpand, 10_000);
+    const two = mathJaxPage("window.MathJax = { TeX: { equationNumbers: { autoNumber: 'AMS' } } };", 2);
+    two.typeset('x');
+    assert.equal(two.seen[0].maxExpand, 10_000);
+  });
+
+  it('still stops a macro that calls itself', () => {
+    const { seen, typeset } = mathJaxPage("window.MathJax = { tex: { macros: { loop: '\\\\loop x' } } };");
+    const [tex] = typeset('\\loop');
+    const started = performance.now();
+    assert.throws(() => shown(tex, seen[0].macros, seen[0].maxExpand), /Too many expansions/);
+    assert.ok(performance.now() - started < 1000);
+  });
+});
+
+describe('typesetting again (closing check Y1.3)', () => {
+  it('never reads the stand-in\'s own output again, also when the presentation lists its own skipped tags', () => {
+    for (const before of ['', "window.MathJax = { options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] } };", "window.MathJax = { tex2jax: { skipTags: ['script', 'pre'] } };"]) {
+      const { seen, typeset } = mathJaxPage(before);
+      typeset('x');
+      for (const name of ['katex', 'katex-error', 'tex2jax_ignore', 'mathjax_ignore']) assert.ok(seen[0].ignoredClasses?.includes(name), `${before}: ${name}`);
     }
   });
 });
