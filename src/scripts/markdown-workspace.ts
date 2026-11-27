@@ -1408,7 +1408,9 @@ class MarkdownWorkspace extends HTMLElement {
       const target = matching.find((draft) => draft.id === this.current?.id) ?? matching.sort((a,b) => b.updatedAt-a.updatedAt)[0];
       if (target) { await this.reviewLessonImport(imported, target); return; }
       await this.newDocument(imported.title, imported.source, imported);
-      this.notify(imported.project ? 'Lesson opened. Check lesson helps you spot missing images, equations, or demo dependencies.' : 'Opened the Markdown and its images as a new document.');
+      // The same Slidev text zipped without its package.json reaches this importer.
+      if (looksLikeSlidevSource(imported.source)) this.notify(SLIDEV_SOURCE_OPENED_TEXT, 30_000);
+      else this.notify(imported.project ? 'Lesson opened. Check lesson helps you spot missing images, equations, or demo dependencies.' : 'Opened the Markdown and its images as a new document.');
       return;
     }
     if (!/\.(md|markdown|txt)$/i.test(file.name)) throw new Error('Choose Markdown (.md), plain text (.txt), a lesson ZIP, or a presentation (.html or .zip).');

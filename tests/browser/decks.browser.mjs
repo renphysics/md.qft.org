@@ -284,6 +284,11 @@ export default async function run(t) {
     // An ordinary Markdown file keeps the short notice.
     await choose(page, '[data-file-input]', 'notes.md', Buffer.from('# Notes\n\nPlain text.\n'), 'text/markdown');
     await until(async () => (await toast.textContent()) === 'Opened as a new document. Your original file is unchanged.', 'the ordinary notice');
+    // The same text zipped under another name, without its package.json, comes through the Markdown importer.
+    const lone = Buffer.from(zipSync({ 'talk.md': loadFixtureDeck('slidev-source').get('slides.md') }));
+    await choose(page, '[data-file-input]', 'talk.zip', lone, 'application/zip');
+    await until(async () => /^Opened as a Markdown document\. This looks like the source of a Slidev presentation/.test(await toast.textContent()), 'the same notice for the zipped text');
+    assert.equal(await dialog.isVisible(), false);
   });
 
   await t.step('The shipped Slidev example plays, takes the keyboard and its demo works', async () => {
