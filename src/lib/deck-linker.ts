@@ -1124,11 +1124,17 @@ class DeckLinker {
       return;
     }
     const replacement = await this.classicScript(src, element);
-    const elements = [...replacement, ...this.scriptEvent(element, replacement, this.scriptLeftOut)];
+    const event = this.scriptEvent(element, replacement, this.scriptLeftOut);
+    const elements = [...replacement, ...event];
     const deferred = hasAttribute(element, 'defer') && !hasAttribute(element, 'async');
     if (deferred && elements.length) {
       this.edits.remove(element);
       this.deferred.push(...elements);
+    } else if (hasAttribute(element, 'async')) {
+      // An async script loads after the page has been parsed: its onload code
+      // runs then, the script stays in its place (review X3.2).
+      this.edits.replace(element, replacement);
+      this.deferred.push(...event);
     } else this.edits.replace(element, elements);
   }
 
@@ -1451,11 +1457,16 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    // Other onload code runs once the style is in place (review W3.1); the
-    // two forms above are already applied to the style element.
+    // Other onload code runs once the page has been parsed, as the load event
+    // does (review X3.5); the two forms above are already applied to the style
+    // element, so only the code beside them is left to run.
     const style = css ? [styleElement(css, attributes)] : [];
-    const handled = /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload) || media !== undefined;
-    this.edits.replace(element, style.length && !handled ? [...style, ...this.scriptEvent(element, style, false)] : style);
+    if (/\brel\s*=\s*["']\s*stylesheet\b/i.test(onload) || media !== undefined) {
+      const rest = onload.replace(/(?:\bthis\s*\.\s*)?\b(?:rel\s*=\s*(["'])\s*stylesheet\s*\1|media\s*=\s*(["'])[^"'\n]{0,200}\2|onload\s*=\s*null)/gi, '');
+      setAttribute(element, 'onload', /^[\s;]*$/.test(rest) ? '' : rest);
+    }
+    this.edits.replace(element, style);
+    if (style.length) this.deferred.push(...this.scriptEvent(element, style, false));
   }
 
   /* --------------------------------------------------------- Markdown */
@@ -2363,9 +2374,9 @@ const MARKDOWN_TOO_LARGE = '## Slides too large\n\nThese slides are too large to
  */
 /**
  * Whether a stylesheet lays out Reveal.js slides (review W3.3): a rule whose
- * selector puts `section` inside `.reveal .slides` (any combinator) and whose
- * body sets `position: absolute`, as reveal.css does. A cosmetic rule alone
- * does not count. One pass: comments are cut with indexOf, and each rule's
+ * selector puts `section` inside `.reveal .slides` (any combinator), with the
+ * section as its subject, and whose body sets `position: absolute`, as
+ * reveal.css does. A cosmetic rule alone does not count. One pass: comments are cut with indexOf, and each rule's
  * selector and body are disjoint pieces of the text.
  */
 export function hasRevealLayoutRule(css: string): boolean {
@@ -2380,6 +2391,9 @@ export function hasRevealLayoutRule(css: string): boolean {
   }
   const text = parts.join('');
   const selector = /\.reveal\s*>?\s*\.slides\s*>?\s*section(?![\w-])/i;
+  // The section itself is what the rule positions, not something inside a slide (review X3.4).
+  const subject = /(?:^|[\s>+~])section(?:[.:[][^\s>+~]*)?$/i;
+  const layout = (selectors: string) => selectors.split(',').some((piece) => selector.test(piece) && subject.test(piece.trim()));
   const absolute = /(?:^|[\s;])position\s*:\s*absolute(?![\w-])/i;
   let last = -1;
   for (let index = 0; index < text.length; index += 1) {
@@ -2389,7 +2403,7 @@ export function hasRevealLayoutRule(css: string): boolean {
     // The body of a rule runs to the next brace; a "{" there means a block such as @media.
     let end = index + 1;
     while (end < text.length && text[end] !== '{' && text[end] !== '}') end += 1;
-    if (end < text.length && text[end] === '}' && selector.test(text.slice(last + 1, index)) && absolute.test(text.slice(index + 1, end))) return true;
+    if (end < text.length && text[end] === '}' && layout(text.slice(last + 1, index)) && absolute.test(text.slice(index + 1, end))) return true;
     last = index;
     if (text[end] === '}') { last = end; index = end; }
     else index = end - 1;

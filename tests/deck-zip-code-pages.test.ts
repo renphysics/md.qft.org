@@ -116,8 +116,8 @@ describe('ZIP file names in old code pages', () => {
     assert.equal(note?.severity, 'info');
     assert.equal(note!.message, 'Some file names in this ZIP (for example img/Schr\uFFFDdinger.png) are stored in an old spelling that this site could not read. If nothing is missing in the slides, you can ignore this.');
     assert.ok([...quiet.project.files.keys()].includes('img/Schr\u0094dinger.png'), 'the name is kept as it was read before');
-    // When a file the slides use is reported missing, the note is the likely reason: a warning.
-    names[0][1] = page('<img src="img/Schrodinger.png" alt="">');
+    // When a file the slides use is reported missing and its name is not plain ASCII, the note is the likely reason: a warning.
+    names[0][1] = page('<img src="img/Schrœdinger.png" alt="">');
     const missing = await play(codePageZip(names));
     assert.ok(missing.result.issues.some((issue) => issue.code === 'missing-file'));
     const warning = missing.result.issues.find((issue) => issue.code === 'zip-names-not-utf8');
@@ -223,6 +223,71 @@ describe('ZIP file names in old code pages', () => {
     names.push([concat(ascii('img/Schr'), hex('94'), ascii('dinger.png')), PNG]);
     const mixed = await readDeckArchive(codePageZip(names));
     assert.deepEqual([...mixed.files.keys()].sort(), ['Notizen für später.txt', 'img/Schrödinger.png', 'img/Übung.png', 'img/图片.png', 'index.html'].sort());
+  });
+
+  it('reads again only the UTF-8 names whose reading in the winning code page the slides use (X4.1)', async () => {
+    // Real UTF-8 names without the flag, as macOS writes them; the slides name none of them, but hold one token that
+    // is café.png read as Windows-1252, or 量子.png read as GBK.
+    const real = ['img/café.png', 'img/Schrödinger.png', 'img/量子.png', 'img/Квант.png', 'img/Ελληνικά.png', 'img/日本語.png',
+      'img/한국어.png', 'img/🚀rocket.png', 'img/Übung.png', 'img/Élan.png', 'img/Ünïcödé.png', 'img/量子力学.png', 'img/naïve.png'];
+    const zip = (token: string) => codePageZip([[ascii('index.html'), page(`<p>${token}</p><img src="img/a.png" alt="">`)], [ascii('img/a.png'), PNG],
+      ...real.map((name): [Uint8Array, Uint8Array] => [strToU8(name), PNG])]);
+    const western = await readDeckArchive(zip('img/cafÃ©.png'));
+    assert.deepEqual([...western.files.keys()].sort(), ['img/a.png', 'index.html', ...real.filter((name) => name !== 'img/café.png'), 'img/cafÃ©.png'].sort());
+    const chinese = await readDeckArchive(zip('img/閲忓瓙.png'));
+    assert.deepEqual([...chinese.files.keys()].sort(), ['img/a.png', 'index.html', ...real.filter((name) => name !== 'img/量子.png'), 'img/閲忓瓙.png'].sort());
+  });
+
+  it('keeps an unflagged UTF-8 name that the slides use when another code page wins (X5.6)', async () => {
+    const file = codePageZip([
+      [ascii('index.html'), page('<img src="img/量子.png" alt=""><img src="img/光子.png" alt=""><img src="img/Übung.png" alt="">')],
+      [concat(ascii('img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+      [concat(ascii('img/'), hex('b9e2d7d3'), ascii('.png')), PNG],
+      [strToU8('img/Übung.png'), PNG],
+    ]);
+    const { project, result } = await play(file);
+    assert.deepEqual([...project.files.keys()].sort(), ['img/Übung.png', 'img/光子.png', 'img/量子.png', 'index.html']);
+    assert.match(result.issues.find((issue) => issue.code === 'zip-names-code-page')!.message, /read as GBK \(Chinese\)/);
+    assert.deepEqual(result.issues.filter((issue) => issue.code === 'missing-file'), []);
+  });
+
+  it('keeps a zipped folder whose name happens to be valid UTF-8 together with the names read again in it', async () => {
+    // A folder named 图片 (GBK cdbc c6ac, valid UTF-8 "ͼƬ") holding index.html and img/量子.png.
+    const deck = await readDeckArchive(codePageZip([
+      [concat(hex('cdbcc6ac'), ascii('/index.html')), page('<img src="img/量子.png" alt="">')],
+      [concat(hex('cdbcc6ac'), ascii('/img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.deepEqual([...deck.files.keys()].sort(), ['img/量子.png', 'index.html']);
+    assert.equal(deck.folder, '图片');
+  });
+
+  it('uses the ZIP\'s own name as evidence for the name of the folder it holds (X4.2)', async () => {
+    // Windows names the ZIP of the folder 课件 (GBK bfce bcfe) 课件.zip; the files in it have plain names.
+    const names: [Uint8Array, Uint8Array][] = [
+      [concat(hex('bfcebcfe'), ascii('/index.html')), page('<img src="img/a.png" alt="">')],
+      [concat(hex('bfcebcfe'), ascii('/img/a.png')), PNG],
+    ];
+    const project = await openDeck(codePageZip(names, '课件.zip'));
+    assert.ok(project);
+    assert.equal(project.folder, '课件');
+    assert.ok(project.issues.some((issue) => issue.code === 'zip-names-code-page'));
+    project.edits = nextDeckEdits(project, new Map([['index.html', '<p>Edited</p>']])).edits;
+    const edited = await readDeckArchive(new File([await deckArchive(project).arrayBuffer()], 'edited.zip'));
+    assert.equal(edited.folder, '课件');
+    assert.deepEqual([...edited.files.keys()].sort(), ['img/a.png', 'index.html']);
+    // A ZIP named differently behaves as before: the folder keeps its old spelling, with the information note.
+    const other = await readDeckArchive(codePageZip(names, 'lesson.zip'));
+    assert.equal(other.folder, '¿Î¼þ');
+    assert.equal(other.issues.find((issue) => issue.code === 'zip-names-not-utf8')?.severity, 'info');
+  });
+
+  it('raises the note about unreadable names only when a missing file could be one of them (X4.3)', async () => {
+    const stray: [Uint8Array, Uint8Array] = [concat(hex('818d'), ascii('notes.txt')), strToU8('x')];
+    const severity = async (body: string) => (await play(codePageZip([[ascii('index.html'), page(body)], stray])))
+      .result.issues.find((issue) => issue.code === 'zip-names-not-utf8')?.severity;
+    assert.equal(await severity('<img src="img/missing.png" alt="">'), 'info');
+    assert.equal(await severity('<img src="img/量子.png" alt="">'), 'warning');
+    assert.equal(await severity('<img src="img/%E9%87%8F.png" alt="">'), 'warning');
   });
 
   it('reads the start page first, and a large file up to the limit, when it collects the evidence (W4.3)', async () => {

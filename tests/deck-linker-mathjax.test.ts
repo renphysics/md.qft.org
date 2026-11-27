@@ -219,10 +219,13 @@ describe('the MathJax stand-in', () => {
     assert.equal(options.macros['\\CC'], '\\mathbb{C}');
     assert.equal(typeof options.preProcess, 'function');
     assert.equal(options.preProcess('\\begin{eqnarray}a&=&b\\end{eqnarray}'), '\\begin{align}a&=&b\\end{align}');
+    assert.equal(options.preProcess('\\begin{multline*}a\\\\b\\end{multline*}'), '\\begin{gather*}a\\\\b\\end{gather*}');
+    assert.equal(options.preProcess('\\begin{flalign}a&=b\\end{flalign}'), '\\begin{align}a&=b\\end{align}');
   });
 
   it('typesets LaTeX environments written directly in the text, unless processEnvironments is false (review W3.2)', async () => {
-    const all = ['CD', 'align', 'align*', 'alignat', 'alignat*', 'eqnarray', 'eqnarray*', 'equation', 'equation*', 'gather', 'gather*'];
+    const all = ['CD', 'align', 'align*', 'alignat', 'alignat*', 'eqnarray', 'eqnarray*', 'equation', 'equation*', 'flalign', 'flalign*', 'gather', 'gather*',
+      'multline', 'multline*'];
     for (const [before, version, expected] of [
       ['', 3, all],
       ['window.MathJax = { tex: { processEnvironments: true } };', 3, all],
@@ -240,12 +243,12 @@ describe('the MathJax stand-in', () => {
     }
   });
 
-  it('gives KaTeX auto-render environments it can typeset, with eqnarray read as align', async () => {
+  it('gives KaTeX auto-render environments it can typeset, with eqnarray and flalign read as align and multline as gather', async () => {
     const { rendered, flush } = standIn();
     await flush();
     const options = rendered[0].options;
     for (const name of environmentsOf(options)) {
-      const body = name.startsWith('alignat') ? '{2}a&=b&c&=d\\\\e&=f' : name === 'CD' ? 'A @>a>> B' : name.startsWith('equation') ? 'a=b' : 'a&=b\\\\c&=d';
+      const body = name.startsWith('alignat') ? '{2}a&=b&c&=d\\\\e&=f' : name === 'CD' ? 'A @>a>> B' : name.startsWith('equation') ? 'a=b' : name.startsWith('multline') ? 'p+q\\\\=r' : 'a&=b\\\\c&=d';
       const tex = options.preProcess(`\\begin{${name}}${body}\\end{${name}}`);
       assert.doesNotThrow(() => katex.renderToString(tex, { displayMode: true, throwOnError: true, macros: { ...options.macros } }), name);
     }
@@ -330,8 +333,8 @@ describe('the MathJax stand-in', () => {
 describe('Reveal\'s math plugin stand-in', () => {
   it('typesets bare LaTeX environments for MathJax configurations, not for KaTeX', () => {
     for (const [factory, config, expected] of [
-      ['MathJax3', {}, 11], ['MathJax3', { mathjax3: { tex: { processEnvironments: false } } }, 0],
-      ['MathJax2', {}, 11], ['MathJax2', { math: { tex2jax: { processEnvironments: false } } }, 0], ['KaTeX', {}, 0],
+      ['MathJax3', {}, 15], ['MathJax3', { mathjax3: { tex: { processEnvironments: false } } }, 0],
+      ['MathJax2', {}, 15], ['MathJax2', { math: { tex2jax: { processEnvironments: false } } }, 0], ['KaTeX', {}, 0],
     ] as const) {
       const seen: any[] = [];
       const context: Record<string, any> = { document: { readyState: 'complete' }, renderMathInElement: (_root: unknown, options: any) => seen.push(options) };

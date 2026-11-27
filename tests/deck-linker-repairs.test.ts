@@ -331,6 +331,13 @@ describe('the content test for the Reveal.js layout (review W3.3)', () => {
     assert.equal(hasRevealLayoutRule('.reveal .slides > section { position: relative } x { position: absolute }'), false);
     assert.equal(hasRevealLayoutRule(''), false);
   });
+
+  it('counts a rule only when it positions the section itself, not something inside a slide (review X3.4)', () => {
+    for (const css of ['.reveal .slides section{position:absolute}', '.reveal .slides > section.title:not(.stack) { position: absolute }',
+      '.reveal .slides section > section{position:absolute}', 'p, .reveal .slides>section {position:absolute}']) assert.equal(hasRevealLayoutRule(css), true, css);
+    for (const css of ['.reveal .slides section .badge{position:absolute;top:0;right:0}', '.reveal .slides section img.abs{position:absolute}',
+      '.reveal .slides > section > .box, .reveal .slides section p{position:absolute}', '.reveal .slides div.section{position:absolute}']) assert.equal(hasRevealLayoutRule(css), false, css);
+  });
 });
 
 describe('data saved in the browser (VF5.3)', () => {
@@ -376,6 +383,9 @@ describe('wording (VF6.5, VF6.8)', () => {
     const converted = await convert(slidevBuild({ head: '<script src="/extra.js"></script>' }));
     assert.equal(converted.issues.find((item) => item.code === 'script-left-out')?.message,
       'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).');
+    const inline = await convert(slidevBuild({ head: '<script type="module">window.extra = 1</script>' }));
+    assert.equal(inline.issues.find((item) => item.code === 'script-left-out')?.message,
+      'A script written inside index.html was left out, because a Slidev build starts from its own script file. If something is missing, build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).');
   });
 
   it('ends the inline-script notes with a next step, and says "AI assistant"', async () => {

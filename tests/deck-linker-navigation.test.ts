@@ -20,11 +20,15 @@ describe('rewriting a literal change of the page address', () => {
       ['location.href = "https://example.org/sim";', 'window.open("https://example.org/sim", "_blank");'],
       ["location = 'https://example.org/a'", `window.open('https://example.org/a', "_blank")`],
       ['location.assign("http://example.org/b")', 'window.open("http://example.org/b", "_blank")'],
-      ['location.replace(`//example.org/c`);', 'window.open(`//example.org/c`, "_blank");'],
+      ['location.replace(`//example.org/c`);', 'window.open("https:" + `//example.org/c`, "_blank");'],
+      ["location.href = '//example.org/d'", `window.open("https:" + '//example.org/d', "_blank")`],
       ['window.location.href="https://a.example/"', 'window.open("https://a.example/", "_blank")'],
       ['self.location = "https://a.example/"', 'window.open("https://a.example/", "_blank")'],
       ['top.location.href = "https://a.example/"', 'window.open("https://a.example/", "_blank")'],
       ['parent.location.assign("https://a.example/")', 'window.open("https://a.example/", "_blank")'],
+      ['window.top.location.href = "https://a.example/"', 'window.open("https://a.example/", "_blank")'],
+      ['window.parent.location = "https://a.example/"', 'window.open("https://a.example/", "_blank")'],
+      ['window.self.location.replace("https://a.example/")', 'window.open("https://a.example/", "_blank")'],
       ['document.location = "HTTPS://A.example/"', 'window.open("HTTPS://A.example/", "_blank")'],
       ['if (ok) location.href = "https://a.example/"; else go();', 'if (ok) window.open("https://a.example/", "_blank"); else go();'],
       ['button.onclick = () => location = "https://a.example/"', 'button.onclick = () => window.open("https://a.example/", "_blank")'],
@@ -41,6 +45,9 @@ describe('rewriting a literal change of the page address', () => {
       'mylocation.href = "https://example.org/";',
       'frame.location.href = "https://example.org/";',
       'frame.window.location = "https://example.org/";',
+      'frame.window.top.location = "https://example.org/";',
+      'window.window.location = "https://example.org/";',
+      'window.document.location = "https://example.org/";',
       'location.hash = "https://example.org/";',
       'location.href = "slides/next.html";',
       'location.href = "#/2";',
@@ -92,8 +99,12 @@ describe('the linker', () => {
   });
 
   it('links a linked page to the same page', async () => {
-    const first = await link(page('<button onclick="location.href=\'https://example.org/sim\'">Open</button>'));
+    const first = await link(page('<button onclick="location.href=\'https://example.org/sim\'">Open</button><script src="js/reveal.js"></script>'), {
+      'js/reveal.js': 'window.Reveal = { home() { location.href = "https://revealjs.com/"; } };',
+    });
+    assert.match(first.html, /data-qft-from="js\/reveal\.js"/);
     const again = await link(first.html);
     assert.equal(again.html, first.html);
+    assert.match(again.html, /location\.href = "https:\/\/revealjs\.com\/"/, 'the library is left as it is');
   });
 });
