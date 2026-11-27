@@ -634,11 +634,14 @@ export class PresentationLibrary extends HTMLElement {
 
   private renderLibrary(): void {
     const list = this.q('[data-pres-list]');
-    const imported = (time: number) => new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    // Copies with the same title and file name (a corrected file opened beside the original) also show the time of import.
+    const copies = new Map<string, number>();
+    for (const record of this.records) copies.set(`${record.title}\n${record.fileName}`, (copies.get(`${record.title}\n${record.fileName}`) ?? 0) + 1);
+    const imported = (time: number, withTime: boolean) => new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', ...(withTime ? { hour: 'numeric', minute: '2-digit' } as const : {}) });
     const all = [
       ...this.records.map((record) => ({
         id: record.id, title: record.title, file: record.fileName,
-        detail: `${engineLabel(record.engine)} · ${bytesLabel(record.archiveSize)} · Imported ${imported(record.createdAt)}${record.edited ? ' · Edited' : ''}`,
+        detail: `${engineLabel(record.engine)} · ${bytesLabel(record.archiveSize)} · Imported ${imported(record.createdAt, copies.get(`${record.title}\n${record.fileName}`)! > 1)}${record.edited ? ' · Edited' : ''}`,
       })),
       ...[...this.temporary].map(([id, deck]) => ({
         id, title: deck.title, file: deck.fileName,

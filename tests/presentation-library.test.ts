@@ -1058,6 +1058,21 @@ test('library rows with the same title also name their file', () => {
   assert.match(details[0], /^small-reveal\.zip · Reveal\.js · 2 KB/);
   assert.match(details[1], /^small\ufffdgnp\.zip · /, 'invisible characters in the name are shown');
   assert.match(details[2], /^Reveal\.js · 2 KB/, 'a unique title needs no file name');
+  assert.doesNotMatch(details[0], /:/, 'a date without a time');
+});
+
+test('two library rows with the same title and file name also show the time of import', () => {
+  const f = library();
+  const at = (hours: number, minutes: number) => new Date(2026, 10, 27, hours, minutes).getTime();
+  const row = (id: string, createdAt: number) => ({ id, title: 'Chemical Equilibrium', engine: 'html', kind: 'html', fileName: 'k2.zip', archiveSize: 6144, createdAt, updatedAt: createdAt });
+  f.instance.records = [row('new', at(14, 5)), row('old', at(9, 30))];
+  f.instance.renderLibrary();
+  const details = f.control('[data-pres-list]').children.map((entry: any) => entry.children[0].children[1].children[1].textContent);
+  const time = (value: number) => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  assert.equal(details[0], `k2.zip · HTML · 6 KB · Imported ${time(at(14, 5))}`);
+  assert.equal(details[1], `k2.zip · HTML · 6 KB · Imported ${time(at(9, 30))}`);
+  assert.notEqual(details[0], details[1]);
+  assert.match(details[0], /:05/);
 });
 
 test('a library whose storage code cannot be loaded says so with Reload, and does not show 0 presentations', async () => {
