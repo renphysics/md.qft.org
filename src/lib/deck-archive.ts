@@ -297,15 +297,19 @@ function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Ma
   const page = best;
   // A name that is valid UTF-8 is read again only when the slides use it as read in that code page, or when it
   // lies in the same non-ASCII top-level folder as a name that is read again (so a zipped folder stays one
-  // folder); never when the slides use it as UTF-8.
+  // folder); never when the slides use it as UTF-8. A top-level part of the ZIP (its first path component, or
+  // the files at the top) that holds a name that is not valid UTF-8 is evidently in the old code page: all of
+  // its names are read again.
   const topFolder = (entry: ArchiveEntry) => {
     const slash = entry.rawName!.indexOf(0x2f);
     return slash > 0 && entry.rawName!.subarray(0, slash).some((byte) => byte > 0x7f) ? String.fromCharCode(...entry.rawName!.subarray(0, slash)) : undefined;
   };
+  const part = (entry: ArchiveEntry) => { const slash = entry.rawName!.indexOf(0x2f); return slash < 0 ? '' : String.fromCharCode(...entry.rawName!.subarray(0, slash)) + '/'; };
   const candidates = reread.filter((entry) => !matches(UTF8_PAGE, entry, pieces));
   const direct = candidates.filter((entry) => notUtf8(entry) || matches(page, entry, pieces));
   const folders = new Set(direct.map(topFolder).filter((folder) => folder !== undefined));
-  const rereadSet = new Set([...direct, ...candidates.filter((entry) => folders.has(topFolder(entry)!))]);
+  const legacyParts = new Set(reread.filter(notUtf8).map(part));
+  const rereadSet = new Set([...direct, ...candidates.filter((entry) => folders.has(topFolder(entry)!) || legacyParts.has(part(entry)))]);
   const taken = new Set(directory.map((entry) => collisionKey(entry.name)));
   const entries = directory.map((entry) => {
     if (!rereadSet.has(entry)) return entry;

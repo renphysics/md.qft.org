@@ -251,6 +251,25 @@ describe('ZIP file names in old code pages', () => {
     assert.deepEqual(result.issues.filter((issue) => issue.code === 'missing-file'), []);
   });
 
+  it('reads unused names that happen to be valid UTF-8, such as 图片2.png, in the code page of their part of the ZIP (Z2.1)', async () => {
+    // GBK: 图片 cdbc c6ac and 图2 cdbc 32 are valid UTF-8; 能量 c4dc c1bf is not. The slides use 图片1 and 能量 only.
+    const gbk = (name: string, bytes: string) => concat(ascii(`img/`), hex(bytes), ascii(name));
+    const { project, result } = await play(codePageZip([
+      [ascii('index.html'), page('<img src="img/图片1.png" alt=""><img src="img/能量.png" alt="">')],
+      [gbk('1.png', 'cdbcc6ac'), PNG], [gbk('2.png', 'cdbcc6ac'), PNG], [gbk('3.png', 'cdbcc6ac'), PNG],
+      [gbk('.png', 'c4dcc1bf'), PNG], [gbk('.png', 'cdbc32'), PNG],
+      // Another part of the ZIP whose names are all valid UTF-8 keeps them (Übung read as GBK would be 脺bung).
+      [strToU8('docs/Übung.txt'), strToU8('x')],
+    ]));
+    assert.deepEqual([...project.files.keys()].sort(),
+      ['docs/Übung.txt', 'img/图2.png', 'img/图片1.png', 'img/图片2.png', 'img/图片3.png', 'img/能量.png', 'index.html']);
+    assert.deepEqual(result.issues.filter((issue) => issue.code === 'missing-file'), []);
+    // A teacher who adds an unused picture to a slide finds it.
+    project.edits = nextDeckEdits(project, new Map([['index.html', new TextDecoder().decode(page('<img src="img/图片2.png" alt="">'))]])).edits;
+    const edited = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
+    assert.deepEqual(edited.issues.filter((issue) => issue.code === 'missing-file'), []);
+  });
+
   it('keeps a zipped folder whose name happens to be valid UTF-8 together with the names read again in it', async () => {
     // A folder named 图片 (GBK cdbc c6ac, valid UTF-8 "ͼƬ") holding index.html and img/量子.png.
     const deck = await readDeckArchive(codePageZip([
