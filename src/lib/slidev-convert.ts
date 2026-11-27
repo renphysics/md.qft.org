@@ -362,7 +362,7 @@ function readScript(conversion: Conversion, script: Element, folder: string, par
   const code = textOf(script);
   if (!code.trim()) return;
   if (module) {
-    conversion.report('script-left-out', 'warning', 'A script written inside index.html was left out, because a Slidev build starts from its own script file. If something is missing, build again with "npx slidev build".', conversion.entry);
+    conversion.report('script-left-out', 'warning', 'A script written inside index.html was left out, because a Slidev build starts from its own script file. If something is missing, build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).', conversion.entry);
     return;
   }
   parts.inlineScripts.push(code);
