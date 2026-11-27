@@ -89,7 +89,7 @@ const PLAYER_LIMITS = 'confirm(), prompt(), printing, new windows, forms sent to
  * It names reveal.css and the themes on purpose: "supplies only Reveal.js"
  * made an assistant replace reveal.css with a hand-written file.
  */
-const REVEAL_RULES = `Rules for this player: it supplies Reveal.js ${BUNDLED_VERSIONS['reveal.js']} (reveal.js, reveal.css, the themes, and the ${PLUGIN_LIST} plugins) and KaTeX ${BUNDLED_VERSIONS.katex} (katex.js, katex.css with its fonts, auto-render, mhchem and copy-tex): keep the links to those files exactly as they are (their onload code still runs); for formulas use the math plugin (RevealMath.KaTeX) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax's delimiters and LaTeX environments such as align written in the text; MathJax-only commands may show as errors. Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas; nothing else may load from the internet while the presentation plays. ${PLAYER_LIMITS}`;
+const REVEAL_RULES = `Rules for this player: it supplies Reveal.js ${BUNDLED_VERSIONS['reveal.js']} (reveal.js, reveal.css, the themes, and the ${PLUGIN_LIST} plugins) and KaTeX ${BUNDLED_VERSIONS.katex} (katex.js, katex.css with its fonts, auto-render, mhchem and copy-tex): keep the links to those files exactly as they are (their onload code still runs); for formulas use the math plugin (RevealMath.KaTeX) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax's delimiters and LaTeX environments such as align written in the text; MathJax-only commands may show as errors. Every other script, stylesheet, font and picture must be inside the presentation (inline in a single HTML file, pictures as data: URIs or inline SVG, or files in the ZIP beside it); nothing else may load from the internet while the presentation plays. ${PLAYER_LIMITS}`;
 
 /**
  * The same for a plain HTML page, which has no Reveal.js plugins to use and
@@ -144,7 +144,8 @@ function reply(kind: DeckKind, needsChanges: boolean, singleFile: boolean): stri
   if (!needsChanges) return 'Reply: no changes are needed for playback.';
   return singleFile
     ? 'Reply: send back the complete corrected file under the same name as the entry above, fixing the notes above and changing nothing else.'
-    : 'Reply: send back the complete corrected presentation, as a ZIP with index.html at the top, fixing the notes above and changing nothing else.';
+    // The entry's own name, which the notes give inside their block of data.
+    : 'Reply: send back the complete corrected presentation as a ZIP with the same file names (the entry above at the top), fixing the notes above and changing nothing else.';
 }
 
 /**

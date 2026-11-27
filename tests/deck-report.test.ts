@@ -175,7 +175,8 @@ describe('deck check report', () => {
     // The linker runs a replaced script's onload code, and typesets environments outside delimiters.
     assert.match(rules, /keep the links to those files exactly as they are \(their onload code still runs\);/);
     assert.match(rules, /for formulas use the math plugin \(RevealMath\.KaTeX\) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax's delimiters and LaTeX environments such as align written in the text; MathJax-only commands may show as errors\./);
-    assert.match(rules, /Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
+    // The site's Reveal.js prompt asks for one self-contained file: the rules allow it.
+    assert.match(rules, /Every other script, stylesheet, font and picture must be inside the presentation \(inline in a single HTML file, pictures as data: URIs or inline SVG, or files in the ZIP beside it\); nothing else/);
     assert.match(rules, /nothing else may load from the internet while the presentation plays/);
     // The linker's notes: e-mail links do not open (contact-links); saved data lasts one playback (browser-storage); the player's 'form' limit.
     assert.match(rules, /confirm\(\), prompt\(\), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops\. /);
@@ -183,7 +184,14 @@ describe('deck check report', () => {
     assert.match(rules, / To go to a website use an ordinary link \(<a href="https:\/\/\.\.\.">\): the player offers it to open in a new tab, as it does for window\.open\(\) or location\.href = "https:\/\/\.\.\." with the address written out in a click handler; any other change of the page address interrupts the slides\. A quiz form works when its submit handler checks the answers with a script and cancels the submission\.$/);
     assert.doesNotMatch(rules, /\n/, 'one line');
     assert.ok(lines.indexOf(rules) < lines.length - 1, 'the reply stays last');
-    assert.equal(lines.at(-1), 'Reply: send back the complete corrected presentation, as a ZIP with index.html at the top, fixing the notes above and changing nothing else.');
+    assert.equal(lines.at(-1), 'Reply: send back the complete corrected presentation as a ZIP with the same file names (the entry above at the top), fixing the notes above and changing nothing else.');
+    // A ZIP whose page has its own name: the reply does not rename it, and names nothing from the presentation outside the notes.
+    const named = formatDeckReport({ kind: 'html', engine: 'html', entry: 'chemical-equilibrium.html', issues: notes }).split('\n');
+    assert.ok(named.includes('entry: chemical-equilibrium.html'));
+    assert.equal(named.at(-1), lines.at(-1));
+    const opening = named.indexOf(DECK_REPORT_NOTES_LABEL) + 1;
+    const closing = named.indexOf(named[opening].replace(/text$/, ''), opening + 1);
+    assert.doesNotMatch(named.slice(closing + 1).join('\n'), /index\.html|chemical-equilibrium/);
     assert.doesNotMatch(formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [] }), /Rules for this player/, 'nothing to change, no rules');
     assert.doesNotMatch(formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: notes }), /supplies Reveal\.js/, 'Slidev gets its own rules');
   });
