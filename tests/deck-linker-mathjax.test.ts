@@ -43,6 +43,7 @@ describe('recognising MathJax scripts', () => {
     const cases: [string, 2 | 3 | 4 | undefined][] = [
       ['https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js', 3],
+      ['https://cdn.jsdelivr.net/npm/mathjax-full@3.2.2/es5/tex-chtml.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax@3/es5/startup.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax/es5/tex-svg-full.js', 3],

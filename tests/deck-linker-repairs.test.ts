@@ -211,6 +211,37 @@ describe('too large: the next step fits the largest file (review W3.5)', () => {
   });
 });
 
+describe('conditions the mutation run found unpinned (review W6.1, W6.2, W6.7, W6.10)', () => {
+  it('gives no browser-storage note for a Slidev build, whose own app code writes localStorage', async () => {
+    const files = deck({ 'index.html': page('<div id="app"></div><script>localStorage.setItem("slidev-color-schema", "dark");</script>') });
+    const slidev = await linkDeck(files, { kind: 'slidev-build', engine: 'slidev', entry: 'index.html', issues: [], flags: {} }, nodeVendorProvider());
+    assert.ok(!codes(slidev).includes('browser-storage'));
+    const plain = await linkDeck(files, { kind: 'html', engine: 'html', entry: 'index.html', issues: [], flags: {} }, nodeVendorProvider());
+    assert.ok(codes(plain).includes('browser-storage'));
+  });
+
+  it('repairs "<" in a single-dollar formula only when the presentation typesets single dollars', async () => {
+    const without = await link({ 'index.html': reveal('<section><p id="f">$a<b$</p></section>') });
+    // Left to the HTML parser as written: no "&lt;" is put in.
+    assert.doesNotMatch(without.html, /\$a&lt;b\$/);
+    assert.ok(!codes(without).includes('formula-less-than'));
+    const katex = await link({ 'index.html': reveal('<section><p id="f">$a<b$</p></section>', { init: 'Reveal.initialize({ plugins: [RevealMath.KaTeX] });' }).replace('</body>', '<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/math/math.js"></script></body>') });
+    assert.match(katex.html, /<p id="f">\$a&lt;b\$<\/p>/);
+    assert.ok(codes(katex).includes('formula-less-than'));
+  });
+
+  it('gives no reveal-style-missing to a plain page that loads reveal.js without reveal.css', async () => {
+    const result = await link({ 'index.html': page(`<main><h1>Not slides</h1></main>${REVEAL_SCRIPT}`) });
+    assert.ok(!codes(result).includes('reveal-style-missing'), JSON.stringify(result.issues));
+  });
+
+  it('leaves a formula alone that holds a comment followed by a tag', () => {
+    for (const html of ['<p>\\( a<!-- x --><b>y \\)</p>', '<p>$a<!-- c --><b>x$</p>', '<p>\\( x <!-- --><x \\)</p>', '<p>$a<!-- c --><x$</p>']) {
+      assert.deepEqual(repairFormulaTags(html, { singleDollar: true }), { html, repaired: 0 }, html);
+    }
+  });
+});
+
 describe('Reveal.js plugins that were left out (VF2b.8)', () => {
   it('stubs names written as window.Name or globalThis.Name, and calls on a stub do nothing', async () => {
     const result = await link({
