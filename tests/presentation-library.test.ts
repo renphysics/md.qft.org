@@ -164,7 +164,7 @@ function library(dependencies: Dependencies = {}) {
   instance.setView = () => {};
   /** Show a deck with the real method, as the library does after building it. */
   const show = (project = fixtureProject(), playable = fixturePlayable(), state = 'saved') => realShowDeck.call(instance, project, playable, state);
-  return { instance, calls, controls, control, show, clock, doc: sandbox.document };
+  return { instance, calls, controls, control, show, clock, doc: sandbox.document, navigator: sandbox.navigator };
 }
 
 /** An element for focus checks: inside the code editor or not, shown or hidden. */
@@ -791,6 +791,37 @@ test('a rescued deck shows a notice over the slides that closes itself, and the 
   options.onState('loading');
   assert.equal(f.control('[data-pres-rescued]').hidden, true);
   assert.equal(f.control('[data-pres-player-status]').textContent, 'Opening presentation…');
+});
+
+test('the player\'s information (printing) shows over the slides once, uncounted; again only right after the person acted', async () => {
+  const PRINT = 'The presentation tried to print, which the player cannot do. To print the slides, open the presentation\'s HTML file in your web browser (unzip a ZIP first) and print from there.';
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  const strip = f.control('[data-pres-rescued]');
+  strip.hidden = true;
+  options.onLimit({ code: 'print', text: PRINT, counted: false });
+  assert.equal(strip.hidden, false);
+  assert.equal(f.control('[data-pres-rescued-text]').textContent, PRINT);
+  assert.equal(f.calls.delays.at(-1), 12_000, 'it closes itself as the basic-settings notice does');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally', 'no problem');
+  assert.equal(f.control('[data-pres-notes]').open, false);
+  await f.instance.copyReport();
+  assert.doesNotMatch(f.calls.copied.at(-1)!, /print/, 'not in the report');
+  f.calls.timers.at(-1)!();
+  assert.equal(strip.hidden, true);
+  // A replay keeps the list: the same sentence again shows only right after the person's action.
+  options.onLimit({ code: 'print', text: PRINT, counted: false });
+  assert.equal(strip.hidden, true, 'a script cannot keep it up by itself');
+  f.navigator.userActivation = { isActive: true };
+  options.onLimit({ code: 'print', text: PRINT, counted: false });
+  assert.equal(strip.hidden, false, 'after a click on Print');
+  // A counted limit is no information for this notice.
+  f.calls.timers.at(-1)!();
+  options.onLimit({ code: 'question', text: 'The presentation asked a question.', counted: true });
+  assert.equal(strip.hidden, true);
 });
 
 test('one notice at a time: a link replaces the basic-settings notice while it shows', async () => {

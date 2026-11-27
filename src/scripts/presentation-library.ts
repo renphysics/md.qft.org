@@ -1071,7 +1071,13 @@ export class PresentationLibrary extends HTMLElement {
       // Information such as the speaker view is listed, not counted.
       onLimit: (limit) => {
         const before = this.runtimeProblems();
+        const listed = this.runtime.length;
         this.addRuntime('player', limit.text, limit.counted, !!limit.host);
+        // The player's information (printing, the speaker view) also shows over
+        // the slides, so a Print button gets an answer, in Present too: when it
+        // is new in this playback or the person has just acted, so that a
+        // script cannot keep it up by itself.
+        if (limit.counted === false && (this.runtime.length > listed || navigator.userActivation?.isActive === true)) this.showRescuedNotice(limit.text);
         this.runtimeAdded(before);
       },
       onStalled: (detail, firstError) => this.showStall(detail, firstError),
@@ -1122,10 +1128,7 @@ export class PresentationLibrary extends HTMLElement {
     }
     this.stall = detail;
     if (detail === 'rescued') {
-      this.q('[data-pres-rescued-text]').textContent = STALL_RESCUED_TEXT;
-      this.rescuedNotice = true;
-      this.armNotice('rescued');
-      this.renderNoticeArea();
+      this.showRescuedNotice(STALL_RESCUED_TEXT);
     } else {
       const lines: HTMLElement[] = [];
       const intro = document.createElement('p');
@@ -1150,6 +1153,14 @@ export class PresentationLibrary extends HTMLElement {
     }
     if (this.runtimeProblems()) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
     this.renderStatus();
+  }
+
+  /** The notice over the top of the slides that the basic settings use, with one of the player's sentences. */
+  private showRescuedNotice(text: string): void {
+    this.q('[data-pres-rescued-text]').textContent = text;
+    this.rescuedNotice = true;
+    this.armNotice('rescued');
+    this.renderNoticeArea();
   }
 
   /** A deck reported as not started has sent a slide position or count after all. */

@@ -32,6 +32,11 @@ const RESCUED = revealDeck('Notice lesson', 'const theme = undefinedSetting.colo
   `<p><a id="long" href="${LONG_LINK}">Lesson plan</a></p>`);
 const BLANK = revealDeck('Blank lesson', 'Reveal.initialize({ plugins: [{ id: "broken", init() { missingHelper(); } }] });');
 
+const PRINTING = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Handout lesson</title></head><body>
+<h1>Handout lesson</h1><button id="print" type="button">Print handout</button>
+<script>document.getElementById('print').addEventListener('click', () => { window.print(); setTimeout(() => window.print(), 10000); });</script></body></html>`);
+const PRINT_SENTENCE = 'The presentation tried to print, which the player cannot do. To print the slides, open the presentation\'s HTML file in your web browser (unzip a ZIP first) and print from there.';
+
 const SIZES = [{ width: 1280, height: 800 }, { width: 390, height: 844 }, { width: 320, height: 568 }];
 
 const box = (page, selector) => page.locator(selector).evaluate((element) => {
@@ -198,6 +203,37 @@ export default async function run(t) {
       assert.equal(overlaps(await box(page, '[data-pres-stalled]'), await box(page, '[data-pres-exit-fullscreen]')), false, 'the box is clear of Exit fullscreen');
       await page.screenshot({ path: resolve(t.artifacts, `deck-notices-blank-present-${label}.png`) });
       await leaveFullscreen(page);
+    });
+
+    if (size.width === 1280) await t.step(`${label}: a Print button gets the player's sentence over the slides, in Present too, without a problem or a line in the report`, async () => {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      await page.locator('[data-pres-back]').click();
+      await openDeck(page, 'handout-lesson.html', PRINTING);
+      await page.locator('[data-pres-start-button]').click();
+      const frame = await deckFrame(page, '#print');
+      await until(async () => (await page.locator('[data-pres-player-status]').textContent()) === 'Playing locally', 'the presentation to play');
+      await frame.locator('#print').click();
+      const clicked = Date.now();
+      const notice = page.locator('[data-pres-rescued]');
+      await notice.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('[data-pres-rescued-text]').textContent(), PRINT_SENTENCE);
+      assert.equal(await page.locator('[data-pres-player-status]').textContent(), 'Playing locally', 'no problem');
+      await present(page);
+      assert.equal(await notice.isVisible(), true, 'in Present');
+      await checkNotice(page, '[data-pres-rescued]', ['[data-pres-rescued-dismiss]']);
+      await leaveFullscreen(page);
+      await page.locator('[data-pres-rescued-dismiss]').click();
+      assert.equal(await notice.isVisible(), false);
+      // print() again from the presentation's timer, with nobody acting: no new notice.
+      await page.waitForTimeout(Math.max(0, clicked + 11_000 - Date.now()));
+      assert.equal(await notice.isVisible(), false, 'a script cannot bring it back');
+      await page.locator('[data-pres-notes] summary').click();
+      await page.locator('[data-pres-report]').click();
+      const report = await until(async () => {
+        const text = await page.evaluate(() => navigator.clipboard.readText());
+        return text.startsWith('qft-deck-check/1') && text;
+      }, 'the report');
+      assert.doesNotMatch(report, /print/, 'not in the report');
     });
     await context.close();
   }
