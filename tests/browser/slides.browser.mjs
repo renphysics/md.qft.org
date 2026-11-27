@@ -1,5 +1,7 @@
 /** End-to-end checks for the workspace's own Markdown slides (reveal.js preview, Present, Save PDF). */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { until } from './harness.mjs';
@@ -86,6 +88,11 @@ export default async function run(t) {
 
   await t.step('Save PDF in the exported slide HTML reaches the print step for the same example', async () => {
     const { context, page } = await t.newPage({ acceptDownloads: true });
+    // The export fetches the math fonts to embed them.
+    const fonts = new Set();
+    page.on('request', (request) => {
+      if (request.resourceType() === 'fetch' && /\/KaTeX_[^/]+\.woff2$/.test(new URL(request.url()).pathname)) fonts.add(request.url());
+    });
     await t.openWorkspace(page, '?example=quantum-slides');
     await slidesReady(page);
     await page.locator('[data-export-toggle]').click();
@@ -94,6 +101,20 @@ export default async function run(t) {
     const file = resolve(t.artifacts, 'quantum-slides-export.html');
     await (await downloading).saveAs(file);
     await context.close();
+    // Every font the export asked for is in the file, byte for byte: the page received each of them in full.
+    const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+    const embedded = new Set([...(await readFile(file, 'utf8')).matchAll(/url\("data:font\/woff2;base64,([A-Za-z0-9+/=]+)"\)/g)]
+      .map((match) => digest(Buffer.from(match[1], 'base64'))));
+    assert.ok(fonts.size > 0, 'the export fetched the math fonts');
+    const delivered = new Set();
+    for (const url of fonts) {
+      const answer = await fetch(url);
+      assert.equal(answer.status, 200, url);
+      assert.ok(embedded.has(digest(Buffer.from(await answer.arrayBuffer()))), `${new URL(url).pathname} is embedded in full`);
+      delivered.add(url);
+    }
+    // On GitHub's runner the browser reports some of these fetches as aborted all the same (see SuiteContext in harness.mjs).
+    t.setAsideDelivered((url) => delivered.has(url));
     const offline = await t.newContext({ offline: true });
     await offline.addInitScript(() => {
       window.__qftPrintCalls = 0;

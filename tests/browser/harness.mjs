@@ -110,22 +110,39 @@ export async function startPreview() {
   return server;
 }
 
+/** For the record of a failed request: the status of its response, the length the server announced, and the bytes the browser still has. */
+async function describeResponse(request) {
+  try {
+    const response = await request.response();
+    if (!response) return { status: null };
+    const announced = response.headers()['content-length'];
+    const received = await Promise.race([
+      response.body().then(body => body.length, error => String(error?.message ?? error).split('\n')[0].slice(0, 120)),
+      sleep(3000).then(() => 'no answer in 3 s'),
+    ]);
+    return { status: response.status(), announced: announced === undefined ? null : Number(announced), received };
+  } catch (error) {
+    return { status: String(error?.message ?? error).split('\n')[0].slice(0, 120) };
+  }
+}
+
 /**
  * Per-suite state: named steps, observed pages, and the error, console,
  * failed-request, and external-request records that every suite must keep empty.
  *
- * A request that the browser cancels because the suite itself closed its page
- * is not a failed resource. The Check workflow's first run on GitHub failed
- * the `slides` suite with one aborted request, for a font that the HTML
- * export fetches, waits for and embeds, in a step that closes its page as
- * soon as the download is saved. What was measured here: a page has all of a
- * fetched file a moment before the browser reports the request as finished;
- * while the page is busy that report does not come, and when the page is then
- * closed the Chromium build on this machine reports nothing at all. The build
- * on GitHub's runner evidently reports the request as aborted. Such requests
- * are listed in `closedWhileLoading` and do not fail a suite. Every failed
- * request is recorded with its step, page and kind, so that the results file
- * alone says where it came from.
+ * Every failed request is recorded with the step it happened in, its page
+ * and its kind, so that the results file alone says where it came from.
+ *
+ * One kind of report is not a failed resource. On GitHub's runner the Check
+ * workflow failed the `slides` suite twice in the same place: while the HTML
+ * export fetched its 20 font files, the browser reported the first one, and
+ * then the first three, as aborted (`net::ERR_ABORTED`), although the export
+ * went on and wrote a file with every font in it. The Chromium build on the
+ * development machine never reports this. A suite that has proof that the
+ * page received a file in full, as the export step has in the bytes of the
+ * exported file, hands the proof to `setAsideDelivered()`: such a report is
+ * then listed in `deliveredDespiteAbort` and does not fail the suite. Any
+ * other failed request still does.
  */
 export class SuiteContext {
   constructor({ browser, baseUrl, artifacts, name }) {
@@ -137,10 +154,8 @@ export class SuiteContext {
     this.pageErrors = [];
     this.consoleErrors = [];
     this.failedRequests = [];
-    this.closedWhileLoading = [];
+    this.deliveredDespiteAbort = [];
     this.externalRequests = [];
-    /** Pages and contexts that the suite has asked to close. */
-    this.closing = new WeakSet();
     this.currentStep = undefined;
     this.observedPages = [];
     this.contexts = [];
@@ -169,24 +184,21 @@ export class SuiteContext {
    */
   allowBlockedRequest(pattern) { this.allowedBlockedRequests.push(pattern); }
 
-  /** Remember when the suite itself asks for a page or a context to close. */
-  noteClose(target) {
-    const close = target.close.bind(target);
-    target.close = (...parameters) => {
-      this.closing.add(target);
-      return close(...parameters);
-    };
-    return target;
-  }
-
-  /** True once the suite has asked for this page, or its context, to close. */
-  isClosing(page) {
-    return this.closing.has(page) || this.closing.has(page.context()) || page.isClosed();
+  /**
+   * Set aside the browser's reports that a fetch was aborted, for files that
+   * the page is known to have received in full: `delivered(url)` is the
+   * suite's proof. Returns the reports that were set aside.
+   */
+  setAsideDelivered(delivered) {
+    const aside = this.failedRequests.filter(request => request.error === 'net::ERR_ABORTED' && request.resource === 'fetch' && delivered(request.url));
+    // In place: a suite may hold on to the list.
+    this.failedRequests.splice(0, this.failedRequests.length, ...this.failedRequests.filter(request => !aside.includes(request)));
+    this.deliveredDespiteAbort.push(...aside);
+    return aside;
   }
 
   observe(page) {
     this.observedPages.push(page);
-    this.noteClose(page);
     page.on('pageerror', error => {
       if (this.allowedPageErrors.some(pattern => pattern.test(error.message))) return;
       this.pageErrors.push({ page: page.url(), message: error.message });
@@ -202,8 +214,9 @@ export class SuiteContext {
       if (error === 'csp' && this.allowedBlockedRequests.some(pattern => pattern.test(request.url()))) return;
       // Enough to tell from the results alone where a failure came from.
       const record = { url: request.url(), error, step: this.currentStep, resource: request.resourceType(), method: request.method(), page: page.url() };
-      if (error === 'net::ERR_ABORTED' && this.isClosing(page)) this.closedWhileLoading.push(record);
-      else this.failedRequests.push(record);
+      this.failedRequests.push(record);
+      // Whether the page had an answer, and how much of it the browser can still hand over.
+      void describeResponse(request).then(details => Object.assign(record, details));
     });
     return page;
   }
@@ -213,7 +226,7 @@ export class SuiteContext {
    * so a CDN dependency is reported instead of silently loaded.
    */
   async newContext(options = {}) {
-    const context = this.noteClose(await this.browser.newContext({ viewport: { width: 1440, height: 1000 }, ...options }));
+    const context = await this.browser.newContext({ viewport: { width: 1440, height: 1000 }, ...options });
     this.contexts.push(context);
     const allowedOrigin = new URL(this.baseUrl).origin;
     await context.route('**/*', route => {
@@ -259,7 +272,7 @@ export class SuiteContext {
     return {
       checks: this.checks, pageErrors: this.pageErrors, consoleErrors: this.consoleErrors,
       failedRequests: this.failedRequests, externalRequests: this.externalRequests,
-      closedWhileLoading: this.closedWhileLoading,
+      deliveredDespiteAbort: this.deliveredDespiteAbort,
     };
   }
 
