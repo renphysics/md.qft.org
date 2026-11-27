@@ -48,8 +48,8 @@ export function stripSourceMapComment(code: string): string {
 /**
  * Helpers that both math stand-ins share, as script source: the delimiter
  * pairs of a configuration, the macros for MathJax-only commands, the
- * eqnarray rewrite, and the placeholder for references written in ordinary
- * text. They are written into each stand-in's own function scope.
+ * eqnarray, multline and flalign rewrite, and the placeholder for references
+ * written in ordinary text. They are written into each stand-in's own function scope.
  */
 function mathHelpersSource(): string {
   return `  var ignored = ['script', 'noscript', 'style', 'textarea', 'pre', 'code'];
@@ -85,9 +85,12 @@ function mathHelpersSource(): string {
       '\\\\unicode': unicodeMacro
     };
   }
-  // eqnarray is MathJax's; align lays out the same rows.
+  // KaTeX has no eqnarray, multline or flalign: align lays out the rows of
+  // eqnarray and flalign, gather those of multline (centred, review X3.3).
   function preProcess(math) {
-    return math.replace(/\\\\(begin|end)\\{eqnarray(\\*?)\\}/g, '\\\\$1{align$2}');
+    return math.replace(/\\\\(begin|end)\\{(eqnarray|flalign|multline)(\\*?)\\}/g, function (whole, side, name, star) {
+      return '\\\\' + side + '{' + (name === 'multline' ? 'gather' : 'align') + star + '}';
+    });
   }
   function macros(source) {
     var result = defaultMacros();
@@ -99,8 +102,10 @@ function mathHelpersSource(): string {
   }
   // MathJax also typesets LaTeX environments written directly in the text
   // (review W3.2), unless processEnvironments is false. These are the ones
-  // KaTeX can typeset at the top level; eqnarray goes through preProcess.
-  var environmentNames = ['equation', 'equation*', 'align', 'align*', 'alignat', 'alignat*', 'gather', 'gather*', 'CD', 'eqnarray', 'eqnarray*'];
+  // KaTeX can typeset at the top level; eqnarray, multline and flalign go
+  // through preProcess.
+  var environmentNames = ['equation', 'equation*', 'align', 'align*', 'alignat', 'alignat*', 'gather', 'gather*', 'CD', 'eqnarray', 'eqnarray*',
+    'multline', 'multline*', 'flalign', 'flalign*'];
   function environments(off) {
     return off === false ? [] : environmentNames.map(function (name) {
       return { left: '\\\\begin{' + name + '}', right: '\\\\end{' + name + '}', display: true };
