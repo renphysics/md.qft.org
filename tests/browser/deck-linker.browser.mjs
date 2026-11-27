@@ -199,9 +199,54 @@ export default async function run(t) {
     assert.doesNotMatch(math.m3, /require/, `require: ${math.m3}`);
     assert.doesNotMatch(math.m4, /eqnarray|No such environment/, `eqnarray: ${math.m4}`);
     assert.equal(await frame.locator('#m4 .katex-error').filter({ hasText: 'eqnarray' }).count(), 0);
-    // References in ordinary text get the placeholder too, and \unicode gives the character (review VF2b.3).
-    assert.equal(await frame.locator('#m2 p').textContent(), 'See (?) and ?.');
+    // References in ordinary text get the number of the labelled row (the deck sets tags: 'ams'), and \unicode gives the character (review VF2b.3).
+    assert.equal(await frame.locator('#m2 p').textContent(), 'See (1) and 1.');
     assert.match(math.m4, /→/, `unicode: ${math.m4}`);
+  });
+
+  // Equation numbers follow MathJax's setting and do not depend on the slide shown (final check: a CSS counter skipped hidden slides).
+  const numberedDeck = (config) => {
+    const slides = Array.from({ length: 12 }, (_, index) => [1, 2, 3, 6, 12].includes(index + 1)
+      ? `<section><h3>Slide ${index + 1}</h3>\\begin{align} a_{${index + 1}} &= b_{${index + 1}} \\label{eq:s${index + 1}} \\end{align}<p>See \\eqref{eq:s${index + 1}} and the first one \\eqref{eq:s1}.</p></section>`
+      : `<section><h3>Slide ${index + 1}</h3><p>No equation here.</p></section>`);
+    return new Map([['index.html', new TextEncoder().encode(`<!doctype html><html><head><meta charset="utf-8"><title>Numbered equations</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<script>window.MathJax = ${config};</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head><body><div class="reveal"><div class="slides">${slides.join('\n')}</div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>Reveal.initialize({ hash: true });</script></body></html>`)]]);
+  };
+  /** Presses an arrow key until slide `target` (counted from 0) shows; returns what it shows. */
+  const goTo = async (frame, target) => {
+    for (let current = await frame.evaluate(() => Reveal.getIndices().h); current !== target;) {
+      const key = current < target ? 'ArrowRight' : 'ArrowLeft';
+      await frame.locator('.reveal').press(key);
+      const next = current + (key === 'ArrowRight' ? 1 : -1);
+      await until(() => frame.evaluate((h) => Reveal.getIndices().h === h, next), `slide ${next + 1} to show`);
+      current = next;
+    }
+    return frame.evaluate(() => {
+      const slide = document.querySelector('.reveal .slides section.present');
+      return { tags: [...slide.querySelectorAll('.katex-html .katex-tag')].map((tag) => tag.textContent.replace(/\u200b/g, '').trim()), text: slide.querySelector('p').textContent };
+    });
+  };
+
+  await step('Equation numbers and \\eqref follow MathJax\'s tags setting and stay the same on every visit of a slide', async () => {
+    const frame = await play(page, await linked(numberedDeck("{ tex: { tags: 'ams', inlineMath: [['$','$']] } }"), 'numbered'), 'numbered');
+    await revealState(frame);
+    assert.equal(await frame.evaluate(() => document.querySelectorAll('.katex-error').length), 0);
+    const twelfth = await goTo(frame, 11);
+    assert.deepEqual(twelfth, { tags: ['(5)'], text: 'See (5) and the first one (1).' });
+    assert.deepEqual(await goTo(frame, 2), { tags: ['(3)'], text: 'See (3) and the first one (1).' });
+    assert.deepEqual(await goTo(frame, 0), { tags: ['(1)'], text: 'See (1) and the first one (1).' });
+    await frame.evaluate(() => MathJax.typesetPromise());
+    assert.deepEqual(await goTo(frame, 11), twelfth, 'the same after going back to the first slide and typesetting again');
+
+    const plain = await play(page, await linked(numberedDeck("{ tex: { inlineMath: [['$','$']] } }"), 'unnumbered'), 'unnumbered');
+    await revealState(plain);
+    assert.deepEqual(await goTo(plain, 2), { tags: [], text: 'See (?) and the first one (?).' }, 'MathJax numbers nothing by default');
+    assert.equal(await plain.evaluate(() => document.querySelectorAll('.katex-html .katex-tag, .katex-html .eqn-num').length), 0);
   });
 
   await step('A plain page that loads MathJax 3 on its own is typeset with KaTeX, also text that MathJax.typesetPromise is asked for later', async () => {
