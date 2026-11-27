@@ -437,9 +437,10 @@ rules of the Slidev prompt. For a single HTML file the report names the file
 (`entry: NAME.html (a single HTML file)`), uses that name in the notes where
 the site would write `index.html` (in the library and in the box on the stage
 too), gives advice for one file where a note would send you to a ZIP (" Add
-the file to the ZIP." becomes " Put it inside the HTML file (a picture as a
-data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML
-file together with that file."), and asks for the complete corrected file
+the file to the ZIP." becomes " Ask your AI assistant to put it inside the
+HTML file (a picture as a data: URI or inline SVG, a script or style inline),
+or make a ZIP of the HTML file together with that file."), and asks for the
+complete corrected file
 under the same name; for a ZIP it ends "Reply: send
 back the complete corrected presentation as a ZIP with the same file names
 (the entry above at the top), fixing the notes above and changing nothing

@@ -270,6 +270,17 @@ describe('ZIP file names in old code pages', () => {
     assert.deepEqual(edited.issues.filter((issue) => issue.code === 'missing-file'), []);
   });
 
+  it('reads an unused name by the code page of its part also when it shares no character with the names the slides use (Y3.2)', async () => {
+    // 能量 (c4dc c1bf) is not valid UTF-8, so img/ is evidently GBK. 图片2.png (cdbc c6ac) is valid UTF-8 by accident and
+    // shares no character with it: only the rule for the part reads it. docs/ holds no such name and keeps its UTF-8 names.
+    const deck = await readDeckArchive(codePageZip([
+      [ascii('index.html'), page('<img src="img/能量.png" alt="">')],
+      [concat(ascii('img/'), hex('c4dcc1bf'), ascii('.png')), PNG], [concat(ascii('img/'), hex('cdbcc6ac'), ascii('2.png')), PNG],
+      [strToU8('docs/Übung.txt'), strToU8('x')],
+    ]));
+    assert.deepEqual([...deck.files.keys()].sort(), ['docs/Übung.txt', 'img/图片2.png', 'img/能量.png', 'index.html']);
+  });
+
   it('reads a ZIP whose only Chinese names are default picture names, unused ones included, as GBK', async () => {
     // Every name here is valid UTF-8 by accident (图片 cdbc c6ac, 图 cdbc), so nothing but the slides shows the code page.
     const top = (name: string, bytes: string) => concat(hex(bytes), ascii(name));
@@ -290,6 +301,21 @@ describe('ZIP file names in old code pages', () => {
     project.edits = nextDeckEdits(project, new Map([['index.html', new TextDecoder().decode(page('<img src="img/图2.png" alt="">'))]])).edits;
     const edited = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
     assert.deepEqual(edited.issues.filter((issue) => issue.code === 'missing-file'), []);
+  });
+
+  it('does not let one mis-encoded name in the page rename its UTF-8 neighbours in a two-byte code page (Y2.2)', async () => {
+    // A correct UTF-8 ZIP without the flag. The page holds one name read in the old code page (量子.png as GBK is
+    // 閲忓瓙.png): that one file is read as the page spells it (review X4.1), and the unused files beside it keep
+    // their names, although the old reading of 量子1.png is made of the same characters.
+    for (const [label, word, other] of [['gbk', '量子', '电子'], ['shift_jis', '日本', '東京'], ['euc-kr', '물리', '과학'], ['big5', '子學', '講義']] as const) {
+      const misread = new TextDecoder(label, { fatal: true }).decode(strToU8(word));
+      const names = [`img/${word}.png`, `img/${word}1.png`, `img/${word}2.png`, `img/${word}${word}.png`, `img/${other}.png`, `more/${word}-${other}.png`];
+      const deck = await readDeckArchive(codePageZip([
+        [ascii('index.html'), page(`<p>img/${misread}.png</p><img src="img/a.png" alt="">`)], [ascii('img/a.png'), PNG],
+        ...names.map((name): [Uint8Array, Uint8Array] => [strToU8(name), PNG]),
+      ]));
+      assert.deepEqual([...deck.files.keys()].sort(), ['img/a.png', 'index.html', `img/${misread}.png`, ...names.slice(1)].sort(), label);
+    }
   });
 
   it('does not let one name spelled in a one-byte code page speak for other names with the same letters', async () => {

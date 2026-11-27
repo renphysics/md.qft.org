@@ -316,10 +316,14 @@ function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Ma
   // already hold is read again too: default picture names (图片1.png, 图片2.png) happen to be valid UTF-8, and
   // an unused 图片3.png would keep a garbled name beside them. Other names stay (review X4.1), and one-byte
   // code pages keep the strict rule, because text spelled in the wrong encoding (cafÃ©.png) occurs in pages.
+  // A name of an old two-byte code page is valid UTF-8 only by accident, as characters of two bytes (图片,
+  // cdbc c6ac, reads "ͼƬ"). A name whose UTF-8 reading holds a character of three or more bytes (Chinese,
+  // Japanese, Korean text) is what a UTF-8 ZIP holds and stays: one mis-encoded name in the page (閲忓瓙.png for
+  // 量子.png) must not rename 量子1.png beside it (closing check Y2.2).
   const confirmed = new Set<string>();
   if (page.wide) for (const entry of direct) for (const character of page.decode(entry.rawName!) ?? '') if (character > '\x7f') confirmed.add(character);
   const spelled = (entry: ArchiveEntry) => {
-    const name = confirmed.size ? page.decode(entry.rawName!) : undefined;
+    const name = confirmed.size && !entry.rawName!.some((byte) => byte >= 0xe0) ? page.decode(entry.rawName!) : undefined;
     if (!name) return false;
     let found = false;
     for (const character of name) if (character > '\x7f') { if (!confirmed.has(character)) return false; found = true; }

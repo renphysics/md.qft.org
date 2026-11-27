@@ -289,6 +289,12 @@ export default async function run(t) {
     await choose(page, '[data-file-input]', 'talk.zip', lone, 'application/zip');
     await until(async () => /^Opened as a Markdown document\. This looks like the source of a Slidev presentation/.test(await toast.textContent()), 'the same notice for the zipped text');
     assert.equal(await dialog.isVisible(), false);
+    // On a phone the long notice uses the width of the screen (closing check Y2.3: it was a column half the screen wide, 334 px tall).
+    const desktop = page.viewportSize();
+    await page.setViewportSize({ width: 320, height: 640 });
+    const box = await toast.boundingBox();
+    await page.setViewportSize(desktop);
+    assert.ok(box.x >= 14 && box.x + box.width <= 306 && box.width >= 280 && box.height <= 220, `the notice at 320 px: ${JSON.stringify(box)}`);
   });
 
   await t.step('The shipped Slidev example plays, takes the keyboard and its demo works', async () => {

@@ -343,6 +343,18 @@ export default async function run(t) {
     assert.equal(await page.locator('[data-pres-title]').textContent(), 'Optics workshop');
     assert.equal(await badge(page, 'css/custom.css').textContent(), 'Not applied');
     assert.match(await editorText(page), /lesson-dropped-on/, 'the typing stays');
+    // A ZIP that is refused while it is read (more than 1,000 files): the workspace says why, and the dialog stops saying "Opening…".
+    const many = [...zipSync(Object.fromEntries(Array.from({ length: 1001 }, (_, index) => [`f${index}.txt`, new Uint8Array(0)])))];
+    await page.locator('[data-pres-stage]').evaluate((stage, bytes) => {
+      const data = new DataTransfer();
+      data.items.add(new File([new Uint8Array(bytes)], 'too-many.zip', { type: 'application/zip' }));
+      stage.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, composed: true, dataTransfer: data }));
+    }, many);
+    await until(async () => /^This ZIP has more than 1,000 files and folders\./.test(await page.locator('[data-toast]').textContent() ?? ''), 'the workspace to say why the ZIP was refused');
+    assert.equal(await page.locator('[data-pres-notice]').isVisible(), false, 'no "Opening too-many.zip…" left behind');
+    assert.equal(await page.locator('[data-pres-confirm]').isVisible(), false, 'no question');
+    assert.equal(await page.locator('[data-pres-title]').textContent(), 'Optics workshop');
+    assert.match(await editorText(page), /lesson-dropped-on/, 'the typing still stays');
     await page.locator('[data-pres-close]').click();
     await page.locator('[data-pres-confirm-accept]').click();
     await dialog.waitFor({ state: 'hidden' });

@@ -872,6 +872,16 @@ test('print() fires beforeprint, lists its sentence, then fires afterprint, as a
   assert.deepEqual(seen.length, 8, 'a second print() fires both events again');
 });
 
+test('print() lists its sentence after beforeprint and before afterprint (closing check Y3.1)', () => {
+  // No print() inside a handler here: the nested call of the test above lists the sentence by itself.
+  const deck = deckBootstrap(true);
+  const seen: string[] = [];
+  deck.window.addEventListener('beforeprint', () => { seen.push(`before ${deck.messages().length}`); });
+  deck.window.addEventListener('afterprint', () => { seen.push(`after ${deck.messages().length}`); });
+  deck.window.print();
+  assert.deepEqual(seen, ['before 0', 'after 1']);
+});
+
 test('confirm() and prompt() answer as the sandbox does and warn once per playback', () => {
   const deck = deckBootstrap(true);
   assert.equal(deck.window.confirm('Sure?'), false);

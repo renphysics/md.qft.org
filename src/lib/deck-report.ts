@@ -122,7 +122,7 @@ const SITE_SIDE_REPLY = 'Reply: nothing to change in the presentation; the site 
  * or to index.html, and the advice for a presentation opened as one HTML file.
  */
 const SINGLE_FILE_ADVICE: readonly (readonly [string, string])[] = [
-  [' Add the file to the ZIP.', ' Put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.'],
+  [' Add the file to the ZIP.', ' Ask your AI assistant to put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.'],
   [' directly in index.html.', ' directly in the HTML file.'],
   [' inside index.html.', ' inside the HTML file.'],
   [' for a simpler index.html.', ' for a simpler HTML file.'],
