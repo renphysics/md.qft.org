@@ -63,7 +63,7 @@ describe('ZIP file names in old code pages', () => {
     assert.deepEqual(result.issues.filter((issue) => issue.code === 'missing-file'), []);
     const note = result.issues.find((issue) => issue.code === 'zip-names-code-page');
     assert.equal(note?.severity, 'info');
-    assert.match(note!.message, /not stored as UTF-8\. They were read as code page 437 .*which matches the names the slides use\./);
+    assert.equal(note!.message, 'The file names in this ZIP are stored in an old spelling. They were read as code page 437 (older Windows in English), which matches the names the slides use.');
   });
 
   it('reads GBK names, also one whose second byte is 0x5C ("\\"), which is not a folder', async () => {
@@ -114,13 +114,15 @@ describe('ZIP file names in old code pages', () => {
     const quiet = await play(codePageZip(names));
     const note = quiet.result.issues.find((issue) => issue.code === 'zip-names-not-utf8');
     assert.equal(note?.severity, 'info');
-    assert.match(note!.message, /not stored as UTF-8.*Rename those files using plain letters, digits and dashes.*tool that stores UTF-8 names\./);
+    assert.equal(note!.message, 'Some file names in this ZIP (for example img/Schr\uFFFDdinger.png) are stored in an old spelling that this site could not read. If nothing is missing in the slides, you can ignore this.');
     assert.ok([...quiet.project.files.keys()].includes('img/Schr\u0094dinger.png'), 'the name is kept as it was read before');
     // When a file the slides use is reported missing, the note is the likely reason: a warning.
     names[0][1] = page('<img src="img/Schrodinger.png" alt="">');
     const missing = await play(codePageZip(names));
     assert.ok(missing.result.issues.some((issue) => issue.code === 'missing-file'));
-    assert.equal(missing.result.issues.find((issue) => issue.code === 'zip-names-not-utf8')?.severity, 'warning');
+    const warning = missing.result.issues.find((issue) => issue.code === 'zip-names-not-utf8');
+    assert.equal(warning?.severity, 'warning');
+    assert.equal(warning!.message, 'Some file names in this ZIP (for example img/Schr\uFFFDdinger.png) are stored in an old spelling that this site could not read, so the slides cannot find those files. Ask your AI assistant to give the files plain names (letters, digits and dashes) and to make the ZIP again.');
   });
 
   it('leaves a name that would collide with another file as it was', async () => {
@@ -155,5 +157,127 @@ describe('ZIP file names in old code pages', () => {
       entry: 'index.html', edits: { '\u009abung.md': '# Saved earlier' },
     });
     assert.equal(again.edits.get('Übung.md'), '# Saved earlier');
+  });
+  it('reads the names of a zipped folder whose own name is in an old code page, start page included (W4.1)', async () => {
+    // Windows Explorer's "Send to > Compressed folder" on a folder named 课件 (GBK bfce bcfe); 量子 is c1bf d7d3.
+    const kejian = hex('bfcebcfe');
+    const wrapped = await play(codePageZip([
+      [concat(kejian, ascii('/index.html')), page('<img src="img/量子.png" alt="">')],
+      [concat(kejian, ascii('/img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.deepEqual([...wrapped.project.files.keys()].sort(), ['img/量子.png', 'index.html']);
+    assert.equal(wrapped.project.folder, '课件');
+    assert.deepEqual(wrapped.result.issues.filter((issue) => /missing|zip-names-not/.test(issue.code)), []);
+    assert.match(wrapped.result.issues.find((issue) => issue.code === 'zip-names-code-page')!.message, /read as GBK \(Chinese\)/);
+    // Übung/ in code page 850 (9a = Ü), with a picture name in the same code page.
+    const uebung = await play(codePageZip([
+      [concat(hex('9a'), ascii('bung/index.html')), page('<img src="img/Schrödinger.png" alt="">')],
+      [concat(hex('9a'), ascii('bung/img/Schr'), hex('94'), ascii('dinger.png')), PNG],
+    ]));
+    assert.deepEqual([...uebung.project.files.keys()].sort(), ['img/Schrödinger.png', 'index.html']);
+    assert.deepEqual(uebung.result.issues.filter((issue) => issue.code === 'missing-file'), []);
+    // The start page itself has an old-style name: 量子力学.html.
+    const root = await readDeckArchive(codePageZip([
+      [concat(hex('c1bfd7d3c1a6d1a7'), ascii('.html')), page('<img src="img/量子.png" alt="">')],
+      [concat(ascii('img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.deepEqual([...root.files.keys()].sort(), ['img/量子.png', '量子力学.html']);
+  });
+
+  it('reads again a GBK name that happens to be valid UTF-8, such as 图片1.png (W4.2)', async () => {
+    // 图片 is cdbc c6ac in GBK, which is also valid UTF-8 ("ͼƬ").
+    const tupian = concat(ascii('img/'), hex('cdbcc6ac'), ascii('1.png'));
+    assert.equal(new TextDecoder('utf-8', { fatal: true }).decode(tupian), 'img/ͼƬ1.png');
+    const alone = await play(codePageZip([
+      [ascii('index.html'), page('<img src="img/图片1.png" alt="">')],
+      [tupian, PNG],
+    ]));
+    assert.deepEqual([...alone.project.files.keys()].sort(), ['img/图片1.png', 'index.html']);
+    assert.deepEqual(alone.result.issues.filter((issue) => issue.code === 'missing-file'), []);
+    assert.match(alone.result.issues.find((issue) => issue.code === 'zip-names-code-page')!.message, /read as GBK \(Chinese\)/);
+    // Next to a GBK name that is not valid UTF-8, both are read as GBK.
+    const both = await readDeckArchive(codePageZip([
+      [ascii('index.html'), page('<img src="img/图片1.png" alt=""><img src="img/量子.png" alt="">')],
+      [tupian, PNG],
+      [concat(ascii('img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.deepEqual([...both.files.keys()].sort(), ['img/图片1.png', 'img/量子.png', 'index.html']);
+  });
+
+  it('leaves the UTF-8 names of a ZIP made on macOS (no UTF-8 flag) as they are, with and without evidence', async () => {
+    const names: [Uint8Array, Uint8Array][] = [
+      [ascii('index.html'), page('<img src="img/Übung.png" alt=""><img src="img/图片.png" alt="">')],
+      [strToU8('img/Übung.png'), PNG],
+      [strToU8('img/图片.png'), PNG],
+      [strToU8('Notizen für später.txt'), strToU8('x')],
+    ];
+    const used = await play(codePageZip(names));
+    assert.deepEqual([...used.project.files.keys()].sort(), ['Notizen für später.txt', 'img/Übung.png', 'img/图片.png', 'index.html'].sort());
+    assert.deepEqual(used.result.issues.filter((issue) => /zip-names|missing/.test(issue.code)), []);
+    names[0][1] = page('<p>No pictures.</p>');
+    const unused = await readDeckArchive(codePageZip(names));
+    assert.deepEqual([...unused.files.keys()].sort(), ['Notizen für später.txt', 'img/Übung.png', 'img/图片.png', 'index.html'].sort());
+    assert.deepEqual(unused.issues, []);
+    // A name in an old code page next to them is still read again, and the UTF-8 names stay.
+    names[0][1] = page('<img src="img/Übung.png" alt=""><img src="img/Schrödinger.png" alt="">');
+    names.push([concat(ascii('img/Schr'), hex('94'), ascii('dinger.png')), PNG]);
+    const mixed = await readDeckArchive(codePageZip(names));
+    assert.deepEqual([...mixed.files.keys()].sort(), ['Notizen für später.txt', 'img/Schrödinger.png', 'img/Übung.png', 'img/图片.png', 'index.html'].sort());
+  });
+
+  it('reads the start page first, and a large file up to the limit, when it collects the evidence (W4.3)', async () => {
+    // Nine vendored scripts of 1 MB come before index.html in the directory; together they exceed the 8 MB read.
+    const vendored: [Uint8Array, Uint8Array][] = Array.from({ length: 9 }, (_, index) => [ascii(`assets/lib${index}.js`), new Uint8Array(1024 * 1024).fill(0x20)]);
+    const first = await readDeckArchive(codePageZip([
+      ...vendored,
+      [ascii('index.html'), page('<img src="img/量子.png" alt="">')],
+      [concat(ascii('img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.ok(first.files.has('img/量子.png'));
+    // One start page larger than the whole limit: its first 8 MB still count.
+    const big = await readDeckArchive(codePageZip([
+      [ascii('index.html'), concat(page('<img src="img/量子.png" alt="">'), new Uint8Array(9 * 1024 * 1024).fill(0x20))],
+      [concat(ascii('img/'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.ok(big.files.has('img/量子.png'));
+  });
+
+  it('finds names written as numeric character references, and compares names as the path rule does (W4.6)', async () => {
+    const entity = await readDeckArchive(codePageZip([
+      [ascii('index.html'), page('<img src="img/&#x5149;&#23376;.png" alt="">')],
+      [concat(ascii('img/'), hex('b9e2d7d3'), ascii('.png')), PNG],
+    ]));
+    assert.ok(entity.files.has('img/光子.png'));
+    // "img/./量子.png" in GBK next to a UTF-8 "img/量子.png": the same deck path, so the old spelling stays and the ZIP opens.
+    const dot = await readDeckArchive(codePageZip([
+      [ascii('index.html'), page('<img src="img/量子.png" alt="">')],
+      [strToU8('img/量子.png'), PNG],
+      [concat(ascii('img/./'), hex('c1bfd7d3'), ascii('.png')), PNG],
+    ]));
+    assert.ok(dot.files.has('img/量子.png'));
+    assert.equal(dot.files.size, 3);
+  });
+
+  it('applies the path rule to the name as read again, not to its one-byte-per-character form (W6.11)', async () => {
+    // 表 is 955c in Shift_JIS. Read one byte per character, "表." is "\u0095\\." and passes the path rule; read
+    // as Shift_JIS it ends with a dot, which no presentation path may.
+    const file = codePageZip([
+      [ascii('index.html'), page('<img src="表示.png" alt=""><a href="表.">x</a>')],
+      [concat(hex('955c8ea6'), ascii('.png')), PNG],
+      [hex('955c2e'), PNG],
+    ]);
+    const deck = await readDeckArchive(file);
+    assert.deepEqual([...deck.files.keys()].sort(), ['index.html', '表示.png']);
+    const skipped = deck.issues.find((issue) => issue.code === 'archive-path-skipped');
+    assert.match(skipped?.message ?? '', /the name “表\.” ends with a dot/);
+  });
+
+  it('refuses a ZIP with more names than the entry limit before scoring any of them (W6.8)', async () => {
+    // The 2,000-name bound of the scoring cannot be reached: more than 1,000 entries are refused first.
+    const names: [Uint8Array, Uint8Array][] = [[ascii('index.html'), page('<p>Many</p>')]];
+    for (let index = 0; index < 1000; index += 1) names.push([concat(ascii(`img/${String(index).padStart(4, '0')}`), hex('c1bfd7d3'), ascii('.png')), PNG]);
+    const started = performance.now();
+    await assert.rejects(readDeckArchive(codePageZip(names)), /more than 1,000 files and folders/);
+    assert.ok(performance.now() - started < 5000);
   });
 });

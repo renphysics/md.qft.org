@@ -1,8 +1,8 @@
-import { decodeText, deckFromHtmlFile, isTextPath, readDeckArchive, zipDeckFiles, type DeckArchive } from './deck-archive';
+import { decodeText, deckFromHtmlFile, isTextPath, legacyNamesNote, readDeckArchive, zipDeckFiles, type DeckArchive } from './deck-archive';
 import { detectDeck } from './deck-detect';
 import { cleanReportedText } from './presentation-messages';
 import {
-  inspectDirectory, inspectPresentationArchive, isIgnoredPath, PRESENTATION_LIMITS, PRESENTATION_MANIFEST, PresentationPackageError,
+  inspectDirectory, inspectPresentationArchive, isIgnoredPath, EMPTY_FILE_MESSAGE, PRESENTATION_LIMITS, PRESENTATION_MANIFEST, PresentationPackageError,
   type PresentationPackage,
 } from './presentation-package';
 import {
@@ -214,7 +214,8 @@ function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: Store
 
 /** Names in a ZIP's directory, read without decompressing anything. */
 async function archiveNames(file: File): Promise<string[]> {
-  if (!file.size || file.size > PRESENTATION_LIMITS.archiveBytes) {
+  if (!file.size) throw new PresentationPackageError(EMPTY_FILE_MESSAGE);
+  if (file.size > PRESENTATION_LIMITS.archiveBytes) {
     throw new PresentationPackageError('Choose a presentation ZIP smaller than 60 MB.');
   }
   return inspectDirectory(new Uint8Array(await file.arrayBuffer()), false)
@@ -483,7 +484,7 @@ export function deckSourceNote(project: DeckProject): string {
     case 'slidev-build':
       return 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).';
     case 'slidev-source':
-      return 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, then open a ZIP of the dist folder.';
+      return 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, which makes its dist folder, then open a new ZIP of the project (with dist/ inside).';
     default:
       return 'These files are shown as they were imported.';
   }
@@ -547,7 +548,8 @@ const MISSING_FILE_CODES = new Set(['missing-file', 'missing-local-file', 'skipp
  */
 function withNameWarning(kept: readonly DeckIssue[], all: readonly DeckIssue[]): DeckIssue[] {
   const missing = all.some((issue) => MISSING_FILE_CODES.has(issue.code));
-  return kept.map((issue) => missing && issue.code === 'zip-names-not-utf8' && issue.severity === 'info' ? { ...issue, severity: 'warning' as const } : issue);
+  return kept.map((issue) => missing && issue.code === 'zip-names-not-utf8' && issue.severity === 'info'
+    ? { ...issue, severity: 'warning' as const, message: legacyNamesNote(issue.where ?? '', true) } : issue);
 }
 
 /**
@@ -649,7 +651,7 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
     case 'slidev-source': {
       const issues = project.issues.some((issue) => issue.code === 'slidev-source') ? [...project.issues] : [...project.issues, {
         code: 'slidev-source', severity: 'error' as const,
-        message: 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, then open a ZIP of the dist folder.',
+        message: 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, which makes its dist folder, then open a new ZIP of the project (with dist/ inside).',
       }];
       return failed(mergeIssues([], issues), 'tolerant');
     }

@@ -58,9 +58,11 @@ export interface ArchiveEntry {
   end: number;
   directory: boolean;
   /**
-   * The name's bytes, kept only when the name is in an unknown legacy code
-   * page: not flagged UTF-8, no Unicode Path field, and not valid UTF-8. The
-   * name above then has one character per byte.
+   * The name's bytes, kept (outside the strict profile) when the name may be
+   * in a legacy code page: not flagged UTF-8, no Unicode Path field, and not
+   * plain ASCII. The name above is then the bytes read as UTF-8 when they are
+   * valid UTF-8 (many legacy names are, by accident), and otherwise one
+   * character per byte.
    */
   rawName?: Uint8Array;
 }
@@ -71,6 +73,9 @@ const invalidZip = (detail: string): never => {
 
 /** What to do about a ZIP whose structure is broken: almost always a download that did not finish. */
 const REMAKE = 'Download it again or make the ZIP again, then open the new file.';
+
+/** For a chosen file of 0 bytes. */
+export const EMPTY_FILE_MESSAGE = `This file is empty, perhaps because the download did not finish. ${REMAKE}`;
 
 const damagedZip = (reason: string): never => {
   throw new PresentationPackageError(`This ZIP could not be opened: ${reason}. ${REMAKE}`);
@@ -132,7 +137,8 @@ function filename(bytes: Uint8Array, utf8: boolean, strict: boolean, extra: Uint
   if (unicode) return { name: unicode, legacy: false };
   if (!bytes.some((byte) => byte > 127)) return { name: decodeText(bytes, 'ZIP filename'), legacy: false };
   const decoded = strictUtf8(bytes);
-  if (decoded !== undefined) return { name: decoded, legacy: false };
+  // Valid UTF-8, but a legacy name can be valid UTF-8 by accident: the deck reader may still read it again.
+  if (decoded !== undefined) return { name: decoded, legacy: !strict };
   if (strict) return invalidZip('Its file names are not stored as UTF-8. Make the ZIP with a tool that stores UTF-8 names, then open the new ZIP.');
   return { name: Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''), legacy: true };
 }
@@ -242,6 +248,9 @@ export function inspectDirectory(bytes: Uint8Array, strictPaths = true): Archive
     }
     if (((attributes >>> 16) & 0xf000) === 0xa000) return invalidZip('Symbolic links are not supported. Put the files themselves in the folder, then make the ZIP again.');
     if (method !== 0 && method !== 8) return invalidZip('It uses a compression method the site cannot read. Make the ZIP again with ordinary (Deflate) compression.');
+    // Deflate cannot expand data more than about 1,032 times: a larger declared size is damage, not a big file.
+    if (method === 8 && size > compressedSize * 1032 + 1024) return damagedZip('a file in it declares a size that its data cannot have');
+    if (method === 0 && size !== compressedSize) return damagedZip('an uncompressed file has a wrong size');
     if (size > PRESENTATION_LIMITS.fileBytes) return invalidZip('A file in it is larger than 40 MB. Make that file smaller or leave it out, then make the ZIP again.');
     total += size;
     if (total > PRESENTATION_LIMITS.expandedBytes) return invalidZip('Its files are larger than 120 MB together. Leave out files the slides do not use, or make pictures and videos smaller, then make the ZIP again.');
@@ -263,12 +272,14 @@ export function inspectDirectory(bytes: Uint8Array, strictPaths = true): Archive
       || !nameBytes.every((byte, i) => bytes[localStart + 30 + i] === byte)) {
       return damagedZip('a file does not match its directory record');
     }
+    if (view.getUint32(localStart + 18, true) === 0xffffffff || view.getUint32(localStart + 22, true) === 0xffffffff) {
+      return invalidZip('A file in it is stored in the ZIP64 format, which the site cannot read. Make an ordinary ZIP of the folder, then open it.');
+    }
     if (!(flags & 8) && (view.getUint32(localStart + 14, true) !== crc
       || view.getUint32(localStart + 18, true) !== compressedSize
       || view.getUint32(localStart + 22, true) !== size)) {
       return damagedZip('a file has inconsistent size or checksum data');
     }
-    if (method === 0 && size !== compressedSize) return damagedZip('an uncompressed file has a wrong size');
     ranges.push({ start: localStart, end });
     entries.push({ name, size, compressedSize, method, crc, start, end, directory, ...(legacy ? { rawName: nameBytes.slice() } : {}) });
     position = next;
@@ -334,10 +345,10 @@ export function readEntry(bytes: Uint8Array, entry: ArchiveEntry, retain: boolea
       if (!compressed.length || written !== entry.size) throw new Error('Inflated data does not match its declared size.');
     }
   } catch (error) {
-    throw new PresentationPackageError(`The ZIP contains a damaged file: ${entry.name}. ${REMAKE}`, { cause: error });
+    throw new PresentationPackageError(`This ZIP could not be opened: the file ${entry.name} in it is damaged. ${REMAKE}`, { cause: error });
   }
   if (written !== entry.size || ((crc ^ 0xffffffff) >>> 0) !== entry.crc) {
-    throw new PresentationPackageError(`The ZIP contains a damaged file: ${entry.name}. ${REMAKE}`);
+    throw new PresentationPackageError(`This ZIP could not be opened: the file ${entry.name} in it is damaged. ${REMAKE}`);
   }
   return result;
 }
@@ -395,7 +406,8 @@ export function isTextPath(path: string): boolean {
  * The File bytes stay in the browser and the original ZIP is retained unchanged.
  */
 export async function inspectPresentationArchive(file: File): Promise<PresentationPackage | null> {
-  if (!file.size || file.size > PRESENTATION_LIMITS.archiveBytes) {
+  if (!file.size) throw new PresentationPackageError(EMPTY_FILE_MESSAGE);
+  if (file.size > PRESENTATION_LIMITS.archiveBytes) {
     throw new PresentationPackageError('Choose a presentation ZIP smaller than 60 MB.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());

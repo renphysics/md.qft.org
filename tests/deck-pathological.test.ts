@@ -154,6 +154,13 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     const archive = await readDeckArchive(legacyNamesZip(page(`<p>${text}</p>`), names));
     assert.ok(archive.issues.some((issue) => issue.code === 'zip-names-not-utf8'), 'no code page matched');
   } },
+  // W4.1, W4.2, W4.6: names that are valid UTF-8 and also scored, under an old-style folder, against 8 MB of text full of character references.
+  { name: '999 legacy ZIP names that are valid UTF-8, in an old-style folder, and 8 MB of "&#" text', run: async () => {
+    const names = Array.from({ length: 999 }, (_, index) => Uint8Array.from([0xbf, 0xce, 0x2f, ...strToU8(String(index)), ...new Array(2 * Math.floor((192 - String(index).length) / 2)).fill(0).map((_, at) => at % 2 ? 0xbc : 0xcd), ...strToU8('.png')]));
+    const text = '&#x5149;&#23376;&#&#x;&#99999999;ͼͼ.png/'.repeat(Math.floor(7.5 * KB * KB / 40));
+    const archive = await readDeckArchive(legacyNamesZip(page(`<p>${text}</p>`), names));
+    assert.equal(archive.files.size, 1000);
+  } },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
   { name: 'a Slidev library chunk with 150,000 "export{"', run: () => detectDeck(slidevBuild({ vue: `/*${'export{'.repeat(150_000)}*/` })) },
