@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { detectDeck } from '../src/lib/deck-detect.ts';
-import { linkDeck, type LinkResult } from '../src/lib/deck-linker.ts';
+import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkResult } from '../src/lib/deck-linker.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
 
@@ -73,5 +73,52 @@ describe('class names that Reveal.js uses (VF2a.1)', () => {
     assert.ok(!codes(result).includes('reveal-class-name'), JSON.stringify(result.issues));
     const outsideReveal = await link({ 'index.html': page('<div class="controls">x</div><div class="reveal"><div class="slides"><section>A</section></div></div><script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script><script>Reveal.initialize();</script>', REVEAL_STYLE) });
     assert.ok(!codes(outsideReveal).includes('reveal-class-name'));
+  });
+});
+
+describe('a "<" in a formula (VF2a.2, VM.3)', () => {
+  const dollars = { singleDollar: true };
+
+  it('repairs $ … $ when the presentation typesets single dollars, by the rule that leaves prices alone', () => {
+    assert.deepEqual(repairFormulaTags('<p>Single $a<b$ here</p>', dollars), { html: '<p>Single $a&lt;b$ here</p>', repaired: 1 });
+    assert.deepEqual(repairFormulaTags('<p>$0<x<y$, then $$c<d$$</p>', dollars), { html: '<p>$0&lt;x&lt;y$, then $$c&lt;d$$</p>', repaired: 3 });
+    const untouched = [
+      '<p>Single $a<b$ here</p>'.replace('$a', '$ a'),
+      '<p>It costs $5 and <b>more</b>, or $10.</p>',
+      '<p>$a<b $ here</p>',
+      '<p>$a<b$5 here</p>',
+      '<p>$a<b\nc$</p>',
+      '<p>\\$a<b\\$</p>',
+      `<p>$a<x${'y'.repeat(400)}$</p>`,
+      '<p>$a</p><div>x</div><p>$</p>',
+      '<p>$a<!-- c -->$</p>',
+      '<p title="$a<b$">x</p>',
+    ];
+    for (const html of untouched) assert.deepEqual(repairFormulaTags(html, dollars), { html, repaired: 0 }, html);
+    assert.deepEqual(repairFormulaTags('<p>Single $a<b$ here</p>'), { html: '<p>Single $a<b$ here</p>', repaired: 0 }, 'not without single dollars');
+  });
+
+  it('knows which presentations typeset single dollars', () => {
+    const none = { flags: {} };
+    assert.equal(typesetsSingleDollars('Reveal.initialize({ plugins: [RevealMath.KaTeX] })', none), true);
+    assert.equal(typesetsSingleDollars('x', { flags: { mathPlugin: 'mathjax3' } }), true);
+    assert.equal(typesetsSingleDollars("renderMathInElement(document.body, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }] })", none), true);
+    assert.equal(typesetsSingleDollars("window.MathJax = { tex: { inlineMath: [['\\\\(', '\\\\)'], ['$', '$']] } }", none), true);
+    assert.equal(typesetsSingleDollars("renderMathInElement(document.body, { delimiters: [{ left: '$$', right: '$$', display: true }] })", none), false);
+    assert.equal(typesetsSingleDollars('<p>It costs $5.</p>', none), false);
+  });
+
+  it('repairs single dollars in a Reveal.js presentation with the math plugin', async () => {
+    const result = await link({ 'index.html': reveal('<section><p id="f8">Single $a<b$ here</p><p>After</p></section>', { init: 'Reveal.initialize({ plugins: [RevealMath.KaTeX] });' })
+      .replace(REVEAL_SCRIPT, `${REVEAL_SCRIPT}<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/math/math.js"></script>`) });
+    assert.match(result.html, /Single \$a&lt;b\$ here/);
+    assert.ok(codes(result).includes('formula-less-than'));
+  });
+
+  it('leaves a span with an end tag or a comment, and a span beyond its reach, unchanged', () => {
+    for (const html of ['\\( a</p><div>x</div><p>\\)', `\\( a<x${'y'.repeat(5000)}\\)`, '\\( a<!-- c --> \\)', '$$ a<x</b>$$', `$$ a<x${'y'.repeat(5000)}$$`]) {
+      assert.deepEqual(repairFormulaTags(html), { html, repaired: 0 }, html);
+    }
+    assert.deepEqual(repairFormulaTags(`\\( a<x${'y'.repeat(3000)}\\)`).repaired, 1, 'within reach');
   });
 });

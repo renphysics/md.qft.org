@@ -65,6 +65,8 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F2b.3, F5.2 and F5.3: plugin lists, class names and a "<" inside formulas.
   { name: 'a page with 100,000 formulas holding "<x" and one closing delimiter', run: () => link(deck({ 'index.html': page(`<p>${'\\(a<x '.repeat(100_000)}\\)</p>`) })) },
+  { name: 'a page with 100,000 single-dollar formulas holding "<x" and no closing dollar', run: () => link(deck({ 'index.html': reveal(`<section><p>${'$a<x '.repeat(100_000)}</p></section><script>Reveal.initialize({ plugins: [RevealMath.KaTeX] });</script>`) })) },
+  { name: 'a page of 400,000 dollar signs with the math plugin', run: () => link(deck({ 'index.html': reveal(`<section><p>${'$a'.repeat(200_000)}</p></section><script>Reveal.initialize({ plugins: [RevealMath.KaTeX] });</script>`) })) },
   { name: 'a page with 40,000 "$$" and tags in between', run: () => link(deck({ 'index.html': page(`<p>${'$$<b>x</b>'.repeat(40_000)}</p>`) })) },
   { name: 'Reveal.initialize with 50,000 unknown plugins and 2,000 scripts', run: () => link(deck({
     'index.html': reveal(`<section>A</section>${'<script>x();</script>'.repeat(2000)}<script>Reveal.initialize({ plugins: [${Array.from({ length: 50_000 }, (_, index) => `P${index}`).join(', ')}] });</script>`),

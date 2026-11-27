@@ -1699,7 +1699,7 @@ class DeckLinker {
 
   async link(source: string): Promise<string | undefined> {
     let text = source;
-    const formulas = repairFormulaTags(text);
+    const formulas = repairFormulaTags(text, { singleDollar: typesetsSingleDollars(text, this.detection) });
     if (formulas.repaired) {
       text = formulas.html;
       this.report('formula-less-than', 'info',
@@ -2014,6 +2014,21 @@ function pluginNames(code: string, limit: number): string[] {
   return [...names];
 }
 
+/**
+ * Whether the page typesets $ … $ as a formula: Reveal.js's math plugin does
+ * (KaTeX and MathJax alike), and so does a KaTeX auto-render or MathJax
+ * configuration that lists "$" as a delimiter. Their defaults do not.
+ */
+export function typesetsSingleDollars(text: string, detection: Pick<DeckDetection, 'flags'>): boolean {
+  if (detection.flags.mathPlugin || /\bRevealMath\b/.test(text)) return true;
+  if (/\bleft\s*:\s*(["'])\$\1/.test(text)) return true;
+  const pattern = /\binlineMath\b/g;
+  for (let found = 0, match; found < 20 && (match = pattern.exec(text)); found += 1) {
+    if (/(["'])\$\1/.test(text.slice(match.index, match.index + 300))) return true;
+  }
+  return false;
+}
+
 /** Up to three names, then how many more. */
 function namedList(names: readonly string[]): string {
   const shown = names.slice(0, 3).map((name) => cleanReportedText(name, 80)).join(', ');
@@ -2157,6 +2172,25 @@ const INLINE_TAGS = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code
 const FORMULA_REACH = 4000;
 const FORMULA_DELIMITERS: readonly [string, string][] = [['\\(', '\\)'], ['\\[', '\\]'], ['$$', '$$']];
 
+/** How long a $ … $ formula may be; it never spans lines. */
+const SINGLE_DOLLAR_REACH = 300;
+const isSpace = (character: string | undefined) => character === undefined || /\s/.test(character);
+
+/** The closing "$" of a single-dollar formula whose text starts at `start`, or -1. */
+function singleDollarEnd(html: string, start: number): number {
+  if (isSpace(html[start]) || html[start] === '$') return -1;
+  const limit = Math.min(html.length, start + SINGLE_DOLLAR_REACH);
+  for (let index = start; index < limit; index += 1) {
+    const character = html[index];
+    if (character === '\n' || character === '\r') return -1;
+    if (character === '\\') { index += 1; continue; }
+    if (character !== '$') continue;
+    if (index === start || isSpace(html[index - 1]) || html[index + 1] === '$' || /[0-9]/.test(html[index + 1] ?? '')) return -1;
+    return index;
+  }
+  return -1;
+}
+
 const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 
 /**
@@ -2169,8 +2203,14 @@ const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && 
  * starts a real inline tag such as <b> or <br>; a span that holds an end tag
  * ("</") is markup, not a formula, and is left alone. One forward pass: every
  * search for a closing delimiter is remembered, so the work stays linear.
+ *
+ * With `singleDollar` (the presentation typesets $ … $, review VF2a.2), a
+ * single-dollar span is a formula too, by the rule Pandoc uses so that prices
+ * stay text: on one line, at most SINGLE_DOLLAR_REACH characters, the opening
+ * "$" followed by a non-space character, the closing "$" preceded by one and
+ * not followed by a digit; "\$" is an escaped dollar sign.
  */
-export function repairFormulaTags(html: string): { html: string; repaired: number } {
+export function repairFormulaTags(html: string, { singleDollar = false }: { singleDollar?: boolean } = {}): { html: string; repaired: number } {
   const parts: string[] = [];
   let last = 0;
   let repaired = 0;
@@ -2227,10 +2267,20 @@ export function repairFormulaTags(html: string): { html: string; repaired: numbe
       continue;
     }
     const which = FORMULA_DELIMITERS.findIndex(([open]) => html.startsWith(open, index));
-    if (which < 0) { index += 1; continue; }
-    const start = index + 2;
-    const close = nextCloser(which, start);
-    if (close < 0 || close - start > FORMULA_REACH) { index = start; continue; }
+    let start: number;
+    let close: number;
+    let after: number;
+    if (which >= 0) {
+      start = index + 2;
+      close = nextCloser(which, start);
+      if (close < 0 || close - start > FORMULA_REACH) { index = start; continue; }
+      after = close + 2;
+    } else if (singleDollar && character === '$' && html[index - 1] !== '\\') {
+      start = index + 1;
+      close = singleDollarEnd(html, start);
+      if (close < 0) { index = start; continue; }
+      after = close + 1;
+    } else { index += 1; continue; }
     const body = html.slice(start, close);
     // An end tag, a comment or a raw-text element in between: markup, not a formula.
     if (/<\/|<!--|<(?:script|style|textarea|title|xmp|iframe|noembed|noframes|noscript|plaintext)[\s/>]/i.test(body)) { index = start; continue; }
@@ -2243,7 +2293,7 @@ export function repairFormulaTags(html: string): { html: string; repaired: numbe
       last = start + at + 1;
       repaired += 1;
     }
-    index = close + 2;
+    index = after;
   }
   if (!repaired) return { html, repaired };
   parts.push(html.slice(last));
