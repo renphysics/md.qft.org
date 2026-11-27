@@ -318,6 +318,35 @@ describe('presentation storage version 2', { concurrency: false }, () => {
     await assert.rejects(listPresentations(), new RegExp(STORAGE_OUTDATED_TEXT.replace(/\./g, '\\.')));
   });
 
+  it('tells a tab to reload at its next save once another tab has asked to upgrade, before the upgrade is done', async () => {
+    // Keep the connection the store opens, to fire its versionchange handler as the browser would.
+    const factory = new IDBFactory();
+    let connection: IDBDatabase | undefined;
+    globalThis.indexedDB = new Proxy(factory, {
+      get(target, key) {
+        if (key === 'open') {
+          return (...args: Parameters<IDBFactory['open']>) => {
+            const opening = target.open(...args);
+            opening.addEventListener('success', () => { connection = opening.result; });
+            return opening;
+          };
+        }
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await saveDeck(await revealDeck());
+    assert.ok(connection?.onversionchange, 'the store listens for a newer version');
+    connection.onversionchange.call(connection, new Event('versionchange') as IDBVersionChangeEvent);
+    // The database itself is still at this version, so only the flag can refuse the save.
+    const page = await deckFromHtmlFile(htmlFixture('plain-html'));
+    await assert.rejects(saveDeck({ title: 'Projectile explorer', engine: 'html', kind: 'html', fileName: page.fileName, archive: page.archive }), (error: unknown) => {
+      assert.ok(error instanceof PresentationStorageError);
+      assert.equal(error.message, STORAGE_OUTDATED_TEXT);
+      return true;
+    });
+  });
+
   it('opens the original when a stored overlay is unreadable', async () => {
     const { info } = await saveDeck(await revealDeck());
     const record = await raw('archives', info.id);
