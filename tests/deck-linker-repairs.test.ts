@@ -214,7 +214,7 @@ describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
   });
 
   it('is quiet with the bundled, a local or an inline Reveal.js stylesheet, and for pages that are not Reveal.js', async () => {
-    const quiet = [
+    const quiet: Record<string, string>[] = [
       { 'index.html': reveal('<section>A</section>') },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="dist/reveal.css"><link rel="stylesheet" href="dist/theme/black.css">' }), 'dist/reveal.css': '.reveal .slides{}', 'dist/theme/black.css': 'body{}' },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/theme.css">' }), 'css/theme.css': '@import url(../lib/reveal.min.css);', 'lib/reveal.min.css': '.reveal{}' },
