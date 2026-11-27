@@ -227,3 +227,28 @@ describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
     }
   });
 });
+
+describe('data saved in the browser (VF5.3)', () => {
+  const note = 'The presentation saves data in the browser, for example progress or scores. In the player this lasts only until the presentation is stopped.';
+
+  it('notes writes to localStorage, sessionStorage, indexedDB and cookies in the presentation\'s own scripts', async () => {
+    for (const code of ['localStorage.setItem("slide", 3);', 'window.sessionStorage["score"] = 5;', 'localStorage.best = 7;', 'indexedDB.open("quiz");', 'document.cookie = "seen=1";']) {
+      const result = await link({ 'index.html': page(`<p>x</p><script>${code}</script>`) });
+      assert.deepEqual(result.issues.filter((item) => item.code === 'browser-storage').map((item) => [item.severity, item.message]), [['info', note]], code);
+    }
+    const module = await link({ 'index.html': reveal('<section>A</section>', { init: 'Reveal.initialize();' }).replace('</body>', '<script type="module" src="js/app.js"></script></body>'), 'js/app.js': 'localStorage.setItem("x", "1");' });
+    assert.ok(codes(module).includes('browser-storage'));
+  });
+
+  it('is quiet for reads, comparisons and the deck\'s own copy of Reveal.js', async () => {
+    for (const code of ['const slide = localStorage.getItem("slide");', 'if (document.cookie == "") {}', 'var name = "localStorage";']) {
+      assert.ok(!codes(await link({ 'index.html': page(`<p>x</p><script>${code}</script>`) })).includes('browser-storage'), code);
+    }
+    const local = await link({
+      'index.html': page('<div class="reveal"><div class="slides"><section>A</section></div></div><script src="dist/reveal.js"></script><script>Reveal.initialize();</script>', '<link rel="stylesheet" href="dist/reveal.css">'),
+      'dist/reveal.js': 'window.Reveal = { initialize() { sessionStorage.setItem("reveal-scroll-top", 0); } };',
+      'dist/reveal.css': '.reveal .slides{}',
+    });
+    assert.ok(!codes(local).includes('browser-storage'), JSON.stringify(local.issues));
+  });
+});

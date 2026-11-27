@@ -567,6 +567,8 @@ class DeckLinker {
   private readonly classicTexts: string[] = [];
   private readonly moduleTexts: string[] = [];
   private readonly failedModuleTexts: string[] = [];
+  /** Texts of the deck's own copies of Reveal.js and its plugins, which are not the presentation's code. */
+  private readonly libraryTexts = new Set<string>();
   private document!: Document;
   private baseDir: string;
   private embeddedChars = 0;
@@ -1073,10 +1075,12 @@ class DeckLinker {
       case 'local': {
         this.usedFiles.add(target.path);
         if (this.isMathPlugin(target.path)) return this.mathElements();
-        if (/(?:^|\/)reveal(?:\.min)?\.js$/i.test(target.path)) this.revealScript = true;
+        const library = mapLibraryPath(target.path);
+        if (library?.role === 'reveal-core') this.revealScript = true;
         const code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
         this.inlinedFiles += 1;
         this.classicTexts.push(code);
+        if (library) this.libraryTexts.add(code);
         return [scriptElement(code, { ...attributes, 'data-qft-from': target.path }, namespace)];
       }
       case 'missing': {
@@ -1116,6 +1120,9 @@ class DeckLinker {
       return;
     }
     this.classicTexts.push(code);
+    // A library that an earlier link inlined says where it came from.
+    const from = getAttribute(element, 'data-qft-from');
+    if (from !== undefined && this.libraryOf(from)) this.libraryTexts.add(code);
     const rewritten = this.rewriteConfigFiles(code);
     if (rewritten !== code) { code = rewritten; setText(element, code); }
   }
@@ -1164,6 +1171,7 @@ class DeckLinker {
         const source = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
         this.inlinedFiles += 1;
         this.classicTexts.push(source);
+        if (mapLibraryPath(target.path)) this.libraryTexts.add(source);
         elements.push(scriptElement(source, { 'data-qft-from': target.path }));
         actions[src] = { inlined: true };
         continue;
@@ -1795,6 +1803,19 @@ class DeckLinker {
     this.moduleNote();
     this.linkNote();
     this.runtimeFilesNote();
+    this.storageNote();
+  }
+
+  /**
+   * The presentation's own scripts save data in the browser (review VF5.3).
+   * The player keeps it in memory, so it is gone when the presentation stops.
+   */
+  private storageNote(): void {
+    if (this.detection.engine === 'slidev') return;
+    const writes = /\b(?:local|session)Storage\s*\.\s*setItem\s*\(|\b(?:local|session)Storage\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,200}\])\s*=(?!=)|\bindexedDB\s*\.\s*open\s*\(|\bcookie\s*=(?!=)/;
+    if (![...this.classicTexts, ...this.moduleTexts].some((code) => !this.libraryTexts.has(code) && writes.test(code))) return;
+    this.report('browser-storage', 'info',
+      'The presentation saves data in the browser, for example progress or scores. In the player this lasts only until the presentation is stopped.');
   }
 
   /**

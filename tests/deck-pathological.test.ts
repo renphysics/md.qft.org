@@ -62,6 +62,10 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   { name: 'CSS with 64,000 nested image-set(', run: () => link(deck({ 'index.html': page('', `<style>a{b:${'image-set('.repeat(64 * KB)}}</style>`) })) },
   { name: 'a script with 100,000 fetch("x/" calls', run: () => link(deck({ 'index.html': page(`<script>${'fetch("x/a.json");'.repeat(100_000)}</script>`) })) },
   { name: 'a page with 50,000 links to different missing files', run: () => link(deck({ 'index.html': page(Array.from({ length: 50_000 }, (_, index) => `<a href="p${index}.html">x</a>`).join('')) })) },
+  { name: 'a script with 100,000 "localStorage[" and "sessionStorage .  x" that never assign', run: async () => {
+    const result = await link(deck({ 'index.html': page(`<script>${'localStorage[1; sessionStorage .   x   ; '.repeat(100_000)}</script>`) }));
+    assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
+  } },
   { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F2b.3, F5.2 and F5.3: plugin lists, class names and a "<" inside formulas.
   { name: 'a page with 100,000 formulas holding "<x" and one closing delimiter', run: () => link(deck({ 'index.html': page(`<p>${'\\(a<x '.repeat(100_000)}\\)</p>`) })) },
