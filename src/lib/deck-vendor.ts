@@ -259,6 +259,46 @@ export function mapLibraryUrl(url: string): LibraryReference | undefined {
   return { library, ...match, module: Boolean(match.module || location.module), requested: location.version, host };
 }
 
+/** MathJax's own script names: MathJax.js of version 2; startup.js and the tex-… components of versions 3 and 4. */
+const MATHJAX_FILE = /^(?:mathjax|startup|tex-[a-z-]{1,40})(?:\.min)?\.js$/i;
+
+function mathJaxVersionOf(file: string, version: string): 2 | 3 | 4 {
+  if (/^mathjax\.js$/i.test(file)) return 2;
+  const major = /^[~^=v]?(\d+)/.exec(version)?.[1];
+  return major === '4' ? 4 : major === '2' ? 2 : 3;
+}
+
+/**
+ * MathJax loaded on its own (review VF5.2): a script address on jsDelivr,
+ * unpkg, cdnjs or cdn.mathjax.org such as mathjax@3/es5/tex-svg.js,
+ * mathjax@4/tex-mml-chtml.js or MathJax.js?config=… of version 2, with the
+ * version it names. Not MathML-only components (mml-chtml.js), which leave
+ * TeX alone.
+ */
+export function mathJaxScriptVersion(url: string): 2 | 3 | 4 | undefined {
+  let parsed: URL;
+  try { parsed = new URL(url.trim().startsWith('//') ? `https:${url.trim()}` : url.trim()); }
+  catch { return undefined; }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+  const host = parsed.hostname.toLowerCase();
+  const path = decodePath(parsed.pathname).replace(/\/{2,}/g, '/');
+  const file = path.slice(path.lastIndexOf('/') + 1);
+  if (!MATHJAX_FILE.test(file)) return undefined;
+  if (host === 'cdn.mathjax.org') return /^\/mathjax\//i.test(path) ? mathJaxVersionOf(file, '2') : undefined;
+  const location = packageLocation(host, parsed.pathname, parsed.search);
+  if (!location || (location.name !== 'mathjax' && location.name !== 'mathjax-full')) return undefined;
+  return mathJaxVersionOf(file, location.version);
+}
+
+/** A deck path to MathJax that the deck does not contain, such as lib/mathjax/es5/tex-chtml.js or MathJax/MathJax.js. */
+export function mathJaxPathVersion(path: string): 2 | 3 | 4 | undefined {
+  const parts = path.replace(/\\/g, '/').replace(/[?#].*$/, '').split('/').filter(Boolean);
+  const file = parts.pop() ?? '';
+  if (!MATHJAX_FILE.test(file) || !parts.some((part) => /^mathjax(?:[@-][\w.-]*)?$/i.test(part))) return undefined;
+  const version = parts.map((part) => /^mathjax@(.+)$/i.exec(part)?.[1]).find(Boolean) ?? '';
+  return mathJaxVersionOf(file, version);
+}
+
 /** Folders and file name of the deepest Reveal.js file a deck path can name (dist/theme/fonts/<font>/<file>, with room to spare). */
 const MAX_LIBRARY_DEPTH = 8;
 

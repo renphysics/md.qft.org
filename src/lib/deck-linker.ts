@@ -1,12 +1,12 @@
 import { defaultTreeAdapter, html as parse5Html, parse, serialize, type DefaultTreeAdapterTypes } from 'parse5';
 import { decodeText, mimeFromPath } from './deck-archive';
 import {
-  BUNDLED_VERSIONS, mapLibraryPath, mapLibraryUrl, mapModuleSpecifier, vendorFileKey,
+  BUNDLED_VERSIONS, mapLibraryPath, mapLibraryUrl, mapModuleSpecifier, mathJaxPathVersion, mathJaxScriptVersion, vendorFileKey,
   type LibraryReference, type VendorFile, type VendorLibrary, type VendorProvider,
 } from './deck-vendor';
 import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
-  mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
+  mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
 import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
@@ -529,6 +529,20 @@ const KNOWN_LIBRARIES: readonly { name: string; pattern: RegExp; effect: string;
   { name: 'highlight.js', pattern: /highlight\.js|highlightjs|highlight(?:\.min)?\.js/, effect: 'code will not be coloured by it' },
 ];
 
+/**
+ * polyfill.io and its copies, which old MathJax snippets load beside it: the
+ * features it adds are in every browser the player runs in.
+ */
+function isPolyfillScript(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const polyfillHost = /^(?:cdn\.)?polyfill(?:-fastly)?\.(?:io|net)$/.test(host);
+    const cdnjs = host === 'cdnjs.cloudflare.com' && /^\/polyfill\//i.test(parsed.pathname);
+    return (polyfillHost || cdnjs) && /\/polyfill(?:\.min)?\.js$/i.test(parsed.pathname);
+  } catch { return false; }
+}
+
 function knownLibrary(url: string): { name: string; effect: string; plugin?: true } | undefined {
   let text: string;
   try {
@@ -577,6 +591,10 @@ class DeckLinker {
   private convertedHandlers = 0;
   private nextHandlerId = 1;
   private mathInserted = false;
+  private katexInserted = false;
+  /** The page loads MathJax on its own (review VF5.2); its stand-in is in the document. */
+  private mathJaxPlanned = false;
+  private mathJaxInserted = false;
   private katexInDeck = { script: false, autoRender: false, style: false };
   private mhchem = false;
   /** Reveal.js's own stylesheet is in the finished document (review VF5.1). */
@@ -1017,6 +1035,31 @@ class DeckLinker {
   private async mathElements(): Promise<Element[]> {
     if (this.mathInserted) return [];
     this.mathInserted = true;
+    const elements = await this.katexElements();
+    elements.push(scriptElement(mathStandInSource(), { [LINKER_MARKER]: 'math' satisfies LinkerScript }));
+    return elements;
+  }
+
+  /**
+   * KaTeX, then the stand-in for MathJax loaded on its own, once; `inline` is
+   * the code a version 2 MathJax.js script element holds as its configuration.
+   */
+  private async mathJaxElements(version: 2 | 3 | 4, attributes: Record<string, string>, inline: string): Promise<Element[]> {
+    if (this.mathJaxInserted) return [];
+    this.mathJaxInserted = true;
+    const elements = await this.katexElements();
+    elements.push(scriptElement(mathJaxStandInSource(version), { ...attributes, [LINKER_MARKER]: 'mathjax' satisfies LinkerScript }));
+    if (inline.trim()) {
+      this.classicTexts.push(inline);
+      elements.push(scriptElement(mathJaxConfigSource(inline), { [LINKER_MARKER]: 'mathjax-config' satisfies LinkerScript }));
+    }
+    return elements;
+  }
+
+  /** The bundled KaTeX, its auto-render and stylesheet, unless the deck brings its own; once. */
+  private async katexElements(): Promise<Element[]> {
+    if (this.katexInserted) return [];
+    this.katexInserted = true;
     const elements: Element[] = [];
     const library = 'katex';
     const add = async (role: LibraryReference['role'], path: string) => {
@@ -1026,7 +1069,6 @@ class DeckLinker {
     if (!this.katexInDeck.script) await add('katex', 'dist/katex.min.js');
     if (!this.katexInDeck.autoRender) await add('katex-extension', 'dist/contrib/auto-render.min.js');
     if (this.mhchem) await add('katex-extension', 'dist/contrib/mhchem.min.js');
-    elements.push(scriptElement(mathStandInSource(), { [LINKER_MARKER]: 'math' satisfies LinkerScript }));
     return elements;
   }
 
@@ -1045,6 +1087,15 @@ class DeckLinker {
     const isModule = typeValue === 'module';
     const src = getAttribute(element, 'src') ?? getAttribute(element, 'href') ?? getAttribute(element, 'xlink:href');
     if (typeValue === 'importmap' || typeValue === 'speculationrules') { this.edits.remove(element); return; }
+    if (typeValue === 'text/x-mathjax-config' && this.mathJaxPlanned) {
+      // MathJax 2 runs these when it starts; the stand-in runs them the same way.
+      const code = textOf(element);
+      this.classicTexts.push(code);
+      for (const name of ['type', 'src', 'href', 'xlink:href']) removeAttribute(element, name);
+      setText(element, escapeScriptText(mathJaxConfigSource(code)));
+      setAttribute(element, LINKER_MARKER, 'mathjax-config' satisfies LinkerScript);
+      return;
+    }
     if (!isModule && !JAVASCRIPT_TYPES.test(typeValue)) {
       // A data block (templates, JSON): the browser never loads its src.
       for (const name of ['src', 'href', 'xlink:href']) removeAttribute(element, name);
@@ -1084,12 +1135,21 @@ class DeckLinker {
         return [scriptElement(code, { ...attributes, 'data-qft-from': target.path }, namespace)];
       }
       case 'missing': {
+        const mathJax = mathJaxPathVersion(target.path);
+        if (mathJax) return this.mathJaxElements(mathJax, attributes, textOf(element));
         const reference = mapLibraryPath(target.path);
         if (reference) return this.vendorScripts(reference, target.path, attributes);
         this.reportMissing(target.path);
         return [];
       }
       case 'remote': {
+        const mathJax = mathJaxScriptVersion(target.url);
+        if (mathJax) return this.mathJaxElements(mathJax, attributes, textOf(element));
+        if (isPolyfillScript(target.url)) {
+          this.report('polyfill-not-needed', 'info',
+            `The script ${target.where} only adds features that old browsers lack. This browser has them, so it is left out.`, cleanReportedText(target.url, 200));
+          return [];
+        }
         const reference = mapLibraryUrl(target.url);
         if (reference && !['reveal-style', 'reveal-theme', 'highlight-theme', 'katex-style', 'katex-font'].includes(reference.role)) {
           return this.vendorScripts(reference, target.url, attributes);
@@ -1696,6 +1756,7 @@ class DeckLinker {
           } catch { /* An unreadable import map maps nothing. */ }
         }
         const src = getAttribute(element, 'src');
+        if (src !== undefined && this.mathJaxOf(src)) this.mathJaxPlanned = true;
         const reference = src === undefined ? undefined : this.libraryOf(src);
         if (reference?.role === 'katex') this.katexInDeck.script = true;
         if (reference?.global === 'renderMathInElement') this.katexInDeck.autoRender = true;
@@ -1706,6 +1767,14 @@ class DeckLinker {
         if (href !== undefined && this.libraryOf(href)?.role === 'katex-style') this.katexInDeck.style = true;
       }
     }
+  }
+
+  /** The MathJax version a script reference loads on its own, from a CDN or a deck path that is missing. */
+  private mathJaxOf(value: string): 2 | 3 | 4 | undefined {
+    const target = this.resolve(value, this.baseDir);
+    if (target.kind === 'remote') return mathJaxScriptVersion(target.url);
+    if (target.kind === 'missing') return mathJaxPathVersion(target.path);
+    return undefined;
   }
 
   /** The library a script or stylesheet reference names, whether the deck has the file or not. */
@@ -1984,6 +2053,10 @@ class DeckLinker {
   }
 
   private mathNote(): void {
+    if (this.mathJaxInserted) {
+      this.report('math-rendered-with-katex', 'info', 'Formulas are typeset with the copy of KaTeX that comes with this site instead of MathJax. A few MathJax-only commands may show as errors.');
+      return;
+    }
     if (!this.mathInserted) return;
     const flavour = this.detection.flags.mathPlugin;
     const code = [...this.classicTexts, ...this.moduleTexts].join('\n');

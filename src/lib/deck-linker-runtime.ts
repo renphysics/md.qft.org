@@ -8,7 +8,7 @@
 export const LINKER_MARKER = 'data-qft-linker';
 
 /** Names of the inserted scripts, as the values of data-qft-linker. */
-export type LinkerScript = 'math' | 'dependencies' | 'media' | 'handlers' | 'plugins';
+export type LinkerScript = 'math' | 'mathjax' | 'mathjax-config' | 'dependencies' | 'media' | 'handlers' | 'plugins';
 
 /**
  * The HTML tokenizer ends a script at "</script" and, after "<!--" followed
@@ -46,35 +46,43 @@ export function stripSourceMapComment(code: string): string {
 }
 
 /**
- * Reveal's math plugin in all its forms (RevealMath, RevealMath.KaTeX,
- * MathJax2, MathJax3, MathJax4) loads MathJax or KaTeX from a CDN at run time.
- * This stand-in has the same shape and typesets with the bundled KaTeX
- * auto-render, using the delimiters and macros from the deck's configuration.
+ * Helpers that both math stand-ins share, as script source: the delimiter
+ * pairs of a configuration, the macros for MathJax-only commands, the
+ * eqnarray rewrite, and the placeholder for references written in ordinary
+ * text. They are written into each stand-in's own function scope.
  */
-export function mathStandInSource(): string {
-  return `(function () {
-  if (window.RevealMath && window.RevealMath.qftStandIn) return;
-  var ignored = ['script', 'noscript', 'style', 'textarea', 'pre', 'code'];
-  var katexDelimiters = [
-    { left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false },
-    { left: '\\\\(', right: '\\\\)', display: false }, { left: '\\\\[', right: '\\\\]', display: true }
-  ];
-  var mathjaxInline = [['$', '$'], ['\\\\(', '\\\\)']];
-  var mathjaxDisplay = [['$$', '$$'], ['\\\\[', '\\\\]']];
+function mathHelpersSource(): string {
+  return `  var ignored = ['script', 'noscript', 'style', 'textarea', 'pre', 'code'];
   function pairs(list, display) {
     return (Array.isArray(list) ? list : []).filter(function (pair) {
       return Array.isArray(pair) && typeof pair[0] === 'string' && typeof pair[1] === 'string' && pair[0];
     }).map(function (pair) { return { left: pair[0], right: pair[1], display: display }; });
   }
-  // MathJax-only commands that KaTeX does not know: \\label and \\require
-  // produce nothing, \\eqref and \\ref a placeholder (KaTeX numbers nothing).
-  // The deck's own macros of the same names win.
+  // \\\\unicode[font]{x2192} or \\\\unicode{8594}: the character itself, or nothing.
+  function unicodeMacro(context) {
+    try {
+      if (context.future().text === '[') {
+        for (var guard = 0; guard < 100; guard += 1) {
+          var token = context.popToken();
+          if (!token || token.text === ']' || token.text === 'EOF') break;
+        }
+      }
+      var text = context.consumeArgs(1)[0].slice().reverse().map(function (item) { return item.text; }).join('').replace(/\\s+/g, '');
+      var hex = /^(?:0?x|U\\+)([0-9a-f]{1,6})$/i.exec(text);
+      var code = hex ? parseInt(hex[1], 16) : /^\\d{1,7}$/.test(text) ? parseInt(text, 10) : -1;
+      return code > 31 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff) ? '{\\\\char"' + code.toString(16).toUpperCase() + '}' : '';
+    } catch (error) { return ''; }
+  }
+  // MathJax-only commands that KaTeX does not know: \\\\label and \\\\require
+  // produce nothing, \\\\eqref and \\\\ref a placeholder (KaTeX numbers nothing),
+  // \\\\unicode the character. The deck's own macros of the same names win.
   function defaultMacros() {
     return {
       '\\\\label': { tokens: [], numArgs: 1 },
       '\\\\require': { tokens: [], numArgs: 1 },
       '\\\\eqref': '(\\\\text{?})\\\\label{#1}',
-      '\\\\ref': '\\\\text{?}\\\\label{#1}'
+      '\\\\ref': '\\\\text{?}\\\\label{#1}',
+      '\\\\unicode': unicodeMacro
     };
   }
   // eqnarray is MathJax's; align lays out the same rows.
@@ -94,6 +102,47 @@ export function mathStandInSource(): string {
       return b[0].left.length - a[0].left.length || a[1] - b[1];
     }).map(function (entry) { return entry[0]; });
   }
+  // MathJax also reads \\\\eqref{…} and \\\\ref{…} in ordinary text (review
+  // VF2b.3); show the same placeholder as inside a formula. One walk over
+  // the text, skipping typeset formulas and the ignored elements.
+  var reference = /\\\\(eqref|ref)\\s*\\{[^{}\\n]{0,200}\\}/g;
+  function replaceReferences(root, skip) {
+    if (!root || !root.nodeType) return;
+    var skipped = {};
+    (Array.isArray(skip) ? skip : ignored).forEach(function (name) { skipped[String(name).toLowerCase()] = true; });
+    var stack = [root];
+    while (stack.length) {
+      var node = stack.pop();
+      if (node.nodeType === 3) {
+        var value = node.nodeValue;
+        if (value.indexOf('ref') < 0 || value.indexOf('\\\\') < 0) continue;
+        var next = value.replace(reference, function (whole, name) { return name === 'eqref' ? '(?)' : '?'; });
+        if (next !== value) node.nodeValue = next;
+        continue;
+      }
+      if (node.nodeType !== 1 && node.nodeType !== 9 && node.nodeType !== 11) continue;
+      if (node.nodeType === 1 && (skipped[String(node.localName).toLowerCase()] || (node.classList && node.classList.contains('katex')))) continue;
+      for (var child = node.lastChild; child; child = child.previousSibling) stack.push(child);
+    }
+  }`;
+}
+
+/**
+ * Reveal's math plugin in all its forms (RevealMath, RevealMath.KaTeX,
+ * MathJax2, MathJax3, MathJax4) loads MathJax or KaTeX from a CDN at run time.
+ * This stand-in has the same shape and typesets with the bundled KaTeX
+ * auto-render, using the delimiters and macros from the deck's configuration.
+ */
+export function mathStandInSource(): string {
+  return `(function () {
+  if (window.RevealMath && window.RevealMath.qftStandIn) return;
+${mathHelpersSource()}
+  var katexDelimiters = [
+    { left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false },
+    { left: '\\\\(', right: '\\\\)', display: false }, { left: '\\\\[', right: '\\\\]', display: true }
+  ];
+  var mathjaxInline = [['$', '$'], ['\\\\(', '\\\\)']];
+  var mathjaxDisplay = [['$$', '$$'], ['\\\\[', '\\\\]']];
   function options(id, config) {
     if (id === 'katex') {
       var given = config.katex || {}, result = { throwOnError: false };
@@ -124,7 +173,9 @@ export function mathStandInSource(): string {
         init: function (deck) {
           var typeset = function () {
             if (typeof window.renderMathInElement !== 'function') return;
-            window.renderMathInElement(deck.getSlidesElement(), options(id, deck.getConfig() || {}));
+            var settings = options(id, deck.getConfig() || {});
+            window.renderMathInElement(deck.getSlidesElement(), settings);
+            if (id !== 'katex') try { replaceReferences(deck.getSlidesElement(), settings.ignoredTags); } catch (error) {}
             deck.layout();
           };
           var run = function () {
@@ -144,6 +195,215 @@ export function mathStandInSource(): string {
   math.qftStandIn = true;
   window.RevealMath = math;
 })();`;
+}
+
+/** The global that converted text/x-mathjax-config scripts queue their code in until the stand-in exists. */
+export const MATHJAX_CONFIG_QUEUE = '__qftMathJaxConfig';
+
+/**
+ * MathJax loaded on its own (review VF5.2): a script from a CDN such as
+ * mathjax@3/es5/tex-svg.js, or MathJax.js of version 2. This stand-in takes
+ * its place as `window.MathJax` and typesets with the bundled KaTeX
+ * auto-render when the page has loaded, with the delimiters and macros of the
+ * page's configuration (a `window.MathJax = { tex: … }` object of version 3
+ * and 4, or `tex2jax` and `TeX.Macros` of version 2, also given later to
+ * MathJax.Hub.Config) and otherwise MathJax's defaults: \( \) inline, $$ $$
+ * and \[ \] display, no single dollars. It offers the calls presentations
+ * make after changing a slide; each typesets the given elements (or the
+ * body) again and never throws. A configuration object assigned after it
+ * runs is merged into its configuration.
+ */
+export function mathJaxStandInSource(version: 2 | 3 | 4 = 3): string {
+  const versionText = version === 2 ? '2.7.9' : version === 4 ? '4.0.0' : '3.2.2';
+  return `(function () {
+  var current = window.MathJax;
+  if (current && current.qftStandIn) return;
+${mathHelpersSource()}
+  var skipTags = ignored.concat(['annotation', 'annotation-xml']);
+  var config = {};
+  function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value) && !value.nodeType; }
+  function merge(target, source, depth) {
+    if (!plain(source)) return target;
+    Object.keys(source).forEach(function (key) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+      var value = source[key];
+      if (plain(value) && depth < 5) target[key] = merge(plain(target[key]) ? target[key] : {}, value, depth + 1);
+      else target[key] = value;
+    });
+    return target;
+  }
+  function later(error) { setTimeout(function () { throw error; }); }
+  function nothing() {}
+  function settings() {
+    var tex = plain(config.tex) ? config.tex : {}, two = plain(config.tex2jax) ? config.tex2jax : {};
+    var options = plain(config.options) ? config.options : {};
+    var skip = Array.isArray(options.skipHtmlTags) ? options.skipHtmlTags : Array.isArray(two.skipTags) ? two.skipTags : skipTags;
+    var inline = Array.isArray(tex.inlineMath) ? tex.inlineMath : Array.isArray(two.inlineMath) ? two.inlineMath : [['\\\\(', '\\\\)']];
+    var display = Array.isArray(tex.displayMath) ? tex.displayMath : Array.isArray(two.displayMath) ? two.displayMath : [['$$', '$$'], ['\\\\[', '\\\\]']];
+    var given = {};
+    if (plain(config.TeX) && plain(config.TeX.Macros)) Object.assign(given, config.TeX.Macros);
+    if (plain(tex.macros)) Object.assign(given, tex.macros);
+    return {
+      throwOnError: false,
+      delimiters: longestFirst(pairs(display, true).concat(pairs(inline, false))),
+      ignoredTags: skip,
+      ignoredClasses: ['tex2jax_ignore', 'mathjax_ignore'],
+      macros: macros(given),
+      preProcess: preProcess
+    };
+  }
+  function roots(elements) {
+    var list = [];
+    function add(item) {
+      if (typeof item === 'string') {
+        var byId = document.getElementById(item);
+        if (byId) { list.push(byId); return; }
+        try { Array.prototype.push.apply(list, document.querySelectorAll(item)); } catch (error) {}
+      } else if (item && item.nodeType) list.push(item);
+    }
+    if (elements == null) add(document.body);
+    else if (typeof elements === 'string' || elements.nodeType) add(elements);
+    else if (typeof elements.length === 'number') for (var index = 0; index < elements.length && index < 10000; index += 1) add(elements[index]);
+    return list;
+  }
+  function typeset(elements) {
+    try {
+      if (typeof window.renderMathInElement !== 'function') return;
+      var options = settings();
+      roots(elements).forEach(function (root) {
+        try { window.renderMathInElement(root, options); } catch (error) {}
+        try { replaceReferences(root, options.ignoredTags); } catch (error) {}
+      });
+      var reveal = window.Reveal;
+      if (reveal && typeof reveal.layout === 'function' && (typeof reveal.isReady !== 'function' || reveal.isReady())) reveal.layout();
+    } catch (error) {}
+  }
+  function typesetPromise(elements) { typeset(elements); return Promise.resolve(); }
+  function convert(math, options) {
+    var node = document.createElement('mjx-container');
+    try {
+      window.katex.render(String(math), node, { displayMode: !options || options.display !== false, throwOnError: false, macros: settings().macros });
+    } catch (error) { node.textContent = String(math); }
+    return node;
+  }
+  var started = false, resolveStartup = nothing, waiting = [];
+  var startupPromise = new Promise(function (resolve) { resolveStartup = resolve; });
+  function startupConfig() { return plain(config.startup) ? config.startup : {}; }
+  function defaultPageReady() {
+    var own = startupConfig();
+    if (own.typeset !== false && config.skipStartupTypeset !== true) typeset(own.elements == null ? null : own.elements);
+    return Promise.resolve();
+  }
+  function defaultReady() {
+    var own = startupConfig();
+    var done = function () { resolveStartup(); };
+    try {
+      if (typeof own.pageReady === 'function') Promise.resolve(own.pageReady.call(startup)).then(done, function (error) { done(); later(error); });
+      else { defaultPageReady(); done(); }
+    } catch (error) { done(); later(error); }
+    return startupPromise;
+  }
+  // Version 2 callbacks: a function, [function, data…], or ["method", object, data…].
+  function call(item) {
+    try {
+      if (typeof item === 'function') return item();
+      if (!Array.isArray(item)) return undefined;
+      if (typeof item[0] === 'function') return item[0].apply(window, item.slice(1));
+      if (typeof item[0] === 'string' && item[1] && typeof item[1][item[0]] === 'function') return item[1][item[0]].apply(item[1], item.slice(2));
+      if (item[0] && typeof item[1] === 'function') return item[1].apply(item[0], item.slice(2));
+    } catch (error) { later(error); }
+    return undefined;
+  }
+  function queue(items) {
+    items.forEach(function (item) { if (started) call(item); else waiting.push(item); });
+  }
+  var startup = {
+    promise: startupPromise,
+    defaultReady: defaultReady,
+    defaultPageReady: defaultPageReady,
+    getComponents: nothing,
+    toMML: function () { return ''; },
+    document: { state: function () { return startup.document; }, clear: function () { return startup.document; }, updateDocument: function () { return startup.document; }, reset: function () { return startup.document; } }
+  };
+  var hub = {
+    Config: function (value) { merge(config, value, 0); },
+    Configured: nothing,
+    Queue: function () { queue(Array.prototype.slice.call(arguments)); },
+    Typeset: function (element, callback) {
+      queue([function () { typeset(element == null ? null : element); }].concat(callback ? [callback] : []));
+    },
+    Reprocess: function (element, callback) { hub.Typeset(element, callback); },
+    Rerender: function (element, callback) { hub.Typeset(element, callback); },
+    Update: function (element, callback) { hub.Typeset(element, callback); },
+    getAllJax: function () { return []; },
+    Register: {
+      StartupHook: function (name, callback) { queue([callback]); },
+      MessageHook: nothing,
+      LoadHook: nothing
+    },
+    signal: { Interest: nothing },
+    config: config
+  };
+  var api = {
+    qftStandIn: true,
+    version: '${versionText}',
+    config: config,
+    startup: startup,
+    typeset: function (elements) { typeset(elements); },
+    typesetPromise: typesetPromise,
+    typesetClear: nothing,
+    texReset: nothing,
+    tex2chtml: convert,
+    tex2svg: convert,
+    tex2chtmlPromise: function (math, options) { return Promise.resolve(convert(math, options)); },
+    tex2svgPromise: function (math, options) { return Promise.resolve(convert(math, options)); },
+    Hub: hub,
+    Callback: { Queue: function () { queue(Array.prototype.slice.call(arguments)); } },
+    Ajax: { config: {}, Require: nothing, loadComplete: nothing }
+  };
+  function adopt(value) {
+    if (!plain(value) || value === api) return;
+    merge(config, value, 0);
+  }
+  adopt(current);
+  try {
+    Object.defineProperty(window, 'MathJax', {
+      configurable: true, enumerable: true,
+      get: function () { return api; },
+      set: function (value) { adopt(value); }
+    });
+  } catch (error) { window.MathJax = api; }
+  // text/x-mathjax-config scripts of version 2 that ran before this one.
+  var queued = window.${MATHJAX_CONFIG_QUEUE};
+  if (Array.isArray(queued)) queued.splice(0, queued.length).forEach(function (run) { call(run); });
+  function start() {
+    if (started) return;
+    var own = startupConfig();
+    if (typeof config.AuthorInit === 'function') call(config.AuthorInit);
+    if (typeof own.ready === 'function') {
+      try { own.ready.call(startup); } catch (error) { later(error); defaultReady(); }
+      resolveStartup();
+    } else defaultReady();
+    started = true;
+    waiting.splice(0, waiting.length).forEach(call);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+  else setTimeout(start, 0);
+})();`;
+}
+
+/**
+ * A version 2 `text/x-mathjax-config` script, as an ordinary script: its code
+ * runs once the MathJax stand-in exists, before the first typesetting.
+ */
+export function mathJaxConfigSource(code: string): string {
+  return `(function (run) {
+  var current = window.MathJax;
+  if (current && current.qftStandIn) { try { run(); } catch (error) { setTimeout(function () { throw error; }); } }
+  else (window.${MATHJAX_CONFIG_QUEUE} = window.${MATHJAX_CONFIG_QUEUE} || []).push(run);
+})(function () {
+${code}
+});`;
 }
 
 /**

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { strToU8 } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
+import vm from 'node:vm';
 import { linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
+import { mathJaxStandInSource } from '../src/lib/deck-linker-runtime.ts';
 import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
@@ -87,6 +89,20 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     'index.html': reveal(`<section>${'<meta http-equiv="x-ua" content="1"><video><track src="a.vtt"></video><iframe src="https://x.example/"></iframe><script src="m.js"></script><link rel="preload" href="a.css">'.repeat(12_000)}</section>`),
   })) },
   { name: 'a script path of 25,000 folders', run: () => link(deck({ 'index.html': page(`<script src="${'a/'.repeat(25_000)}reveal/x.js"></script><link rel="stylesheet" href="${'b/'.repeat(25_000)}theme/x.css">`) })) },
+  // VF5.2 and VF2b.3: MathJax scripts and configuration blocks, and the scan for \\ref{…} in the text when the deck plays.
+  { name: '20,000 MathJax scripts and 20,000 text/x-mathjax-config blocks', run: async () => {
+    const result = await link(deck({ 'index.html': page('<script type="text/x-mathjax-config">MathJax.Hub.Config({});</script><script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'.repeat(20_000)) }));
+    assert.equal(result.html.split('data-qft-linker="mathjax"').length, 2, 'one stand-in');
+  } },
+  { name: 'MathJax script addresses with 200 KB paths', run: () => link(deck({ 'index.html': page(`<script src="https://cdn.jsdelivr.net/npm/mathjax@3/${'es5/'.repeat(50_000)}tex-${'a-'.repeat(50_000)}.js"></script><script src="${'mathjax/'.repeat(25_000)}x.js"></script>`) })) },
+  { name: 'a text of 100,000 "\\ref{" with long arguments and no closing brace, in the MathJax stand-in', run: () => {
+    const node = { nodeType: 3, nodeValue: `\\ref{${'a'.repeat(199)}`.repeat(100_000) + `\\eqref ${' '.repeat(100_000)}` };
+    const body = { nodeType: 1, localName: 'body', classList: { contains: () => false }, lastChild: node };
+    const context: Record<string, unknown> = { setTimeout: () => {}, renderMathInElement: () => {}, document: { readyState: 'complete', body, addEventListener: () => {} } };
+    context.window = context;
+    vm.runInNewContext(`${mathJaxStandInSource()}\nMathJax.typeset();`, context);
+    assert.ok(node.nodeValue.startsWith('\\ref{a'), 'nothing to replace');
+  } },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
   { name: 'a Slidev library chunk with 150,000 "export{"', run: () => detectDeck(slidevBuild({ vue: `/*${'export{'.repeat(150_000)}*/` })) },
