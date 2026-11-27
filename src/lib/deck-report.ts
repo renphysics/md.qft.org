@@ -117,6 +117,19 @@ export function isSiteSideCode(code: string): boolean {
 /** The reply when only the site's side failed. */
 const SITE_SIDE_REPLY = 'Reply: nothing to change in the presentation; the site could not load its converter.';
 
+/**
+ * A presentation opened as one HTML file is kept under the entry name
+ * index.html. A note names the file as it was opened instead: in its place
+ * (`where`) and at the very start of its message ("index.html is empty. …").
+ * Nothing else in the note changes.
+ */
+export function namedAsOpened(issue: DeckIssue, entry: string | undefined, singleFile: string | undefined): DeckIssue {
+  if (!entry || !singleFile) return issue;
+  const starts = issue.message.startsWith(entry) && !/^[\w./-]/.test(issue.message.slice(entry.length));
+  if (issue.where !== entry && !starts) return issue;
+  return { ...issue, ...(issue.where === entry ? { where: singleFile } : {}), ...(starts ? { message: `${singleFile}${issue.message.slice(entry.length)}` } : {}) };
+}
+
 /** A fence longer than any run of tildes inside, so the text cannot close it. */
 function fenceFor(lines: readonly string[]): string {
   let longest = 0;
@@ -195,7 +208,7 @@ export function formatDeckReport(input: DeckReportInput): string {
   const entry = one(input.entry, 200);
   if (singleFile) notes.push(`entry: ${singleFile} (a single HTML file)`);
   else if (entry) notes.push(`entry: ${entry}`);
-  for (const issue of issues) {
+  for (const issue of issues.map((item) => namedAsOpened(item, input.entry, singleFile))) {
     const where = one(issue.where, 200);
     notes.push(`- ${issue.severity} ${one(issue.code, 60)}${where ? ` (${where})` : ''}: ${one(issue.message, 500)}`);
   }

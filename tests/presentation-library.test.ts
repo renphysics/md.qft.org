@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath } from '../src/lib/presentation-messages';
 import { EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError } from '../src/lib/presentation-store';
-import { HOST_MARK, formatDeckReport, isSiteSideCode } from '../src/lib/deck-report';
+import { HOST_MARK, formatDeckReport, isSiteSideCode, namedAsOpened } from '../src/lib/deck-report';
 import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../src/lib/load-failure';
 
 function deferred<T>() {
@@ -76,7 +76,7 @@ function library(dependencies: Dependencies = {}) {
   const sandbox: Record<string, any> = {
     // The host realm's Error, so errors from the real store module are recognised.
     exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
-    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, isSiteSideCode,
+    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, isSiteSideCode, namedAsOpened,
     // The real one builds elements with the page's document; here it records where the sentence and its Reload button went.
     reloadButton() { return { tag: 'button', textContent: 'Reload the page' }; },
     showLoadFailure(area: any) { calls.loadFailures.push(area); area.replaceChildren({ textContent: LOAD_FAILURE_TEXT }, ' ', { textContent: 'Reload the page' }); area.textContent = LOAD_FAILURE_TEXT; },
@@ -499,7 +499,7 @@ test('Copy report names a presentation opened as one HTML file by its own name, 
   g.calls.players[0].options.onWarning('Something failed');
   await g.instance.copyReport();
   assert.match(g.calls.copied.at(-1)!, /^entry: index\.html$/m);
-  assert.match(g.calls.copied.at(-1)!.split('\n').at(-1)!, /as a ZIP with index\.html at the top/);
+  assert.match(g.calls.copied.at(-1)!.split('\n').at(-1)!, /as a ZIP with the same file names \(the entry above at the top\)/);
 });
 
 test('Copy report falls back to a selected text field when the clipboard is refused', async () => {
@@ -1078,6 +1078,19 @@ test('a Slidev converter whose page script cannot be fetched is reported as unav
   });
   const g = library();
   assert.deepEqual(await g.instance.buildDeps(g.instance.operation).convertSlidev(new Map(), {}, {}), { html: '<p>converted</p>', issues: [] });
+});
+
+test('the notes name a presentation opened as one HTML file as it was opened, not index.html', async () => {
+  const f = library({ original: async () => ({ blob: new Blob(['<p>']), name: 'lesson-empty.html' }) });
+  f.show(revealProject(), fixturePlayable({ issues: [{ code: 'page-empty', severity: 'error', where: 'index.html', message: 'index.html is empty. Ask your AI assistant for the presentation again.' }] }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const [issue] = f.control('[data-pres-notes-list]').children;
+  assert.equal(issue.children[1].textContent, 'lesson-empty.html is empty. Ask your AI assistant for the presentation again.');
+  assert.equal(issue.children[2].textContent, 'lesson-empty.html');
+  const g = library();
+  g.show(revealProject(), fixturePlayable({ issues: [{ code: 'page-empty', severity: 'error', where: 'index.html', message: 'index.html is empty.' }] }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(g.control('[data-pres-notes-list]').children[0].children[2].textContent, 'index.html', 'a ZIP keeps its names');
 });
 
 test('the fixed load-failure sentence in the stage\'s problem box has a Reload button; the presentation\'s own words never do', () => {

@@ -2,7 +2,7 @@ import type { BuildDeps, DeckProject, PlayableDeck, StoredDeckSource } from '../
 import type { StoredPresentation, StoredPresentationInfo } from '../lib/presentation-store';
 import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
-import { formatDeckReport, isSiteSideCode, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
+import { formatDeckReport, isSiteSideCode, namedAsOpened, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
 import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, reloadButton, showLoadFailure } from '../lib/load-failure';
 import {
   PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath,
@@ -99,6 +99,8 @@ interface ActiveDeck {
    * save is refused when the stored record is newer (another tab saved since).
    */
   savedAt?: number;
+  /** The name of the one HTML file the deck was opened from, once known, for the notes. */
+  singleFile?: string;
 }
 
 /** What persistEdits says about where applied edits are kept. */
@@ -533,7 +535,7 @@ export class PresentationLibrary extends HTMLElement {
    */
   private renderNotes(): void {
     const area = this.q<HTMLDetailsElement>('[data-pres-notes]');
-    const issues = this.active?.playable.issues ?? [];
+    const issues = (this.active?.playable.issues ?? []).map((issue) => namedAsOpened(issue, this.active?.project.entry, this.active?.singleFile));
     const items = issues.map((issue) => {
       const item = document.createElement('li');
       item.dataset.severity = issue.severity;
@@ -976,6 +978,19 @@ export class PresentationLibrary extends HTMLElement {
     this.q('[data-pres-report-text]').hidden = true;
     this.renderNotes();
     this.renderPlayback();
+    const active = this.active;
+    void this.singleFileName(project).then((name) => {
+      if (!name || active !== this.active) return;
+      active.singleFile = name;
+      this.renderNotes();
+    }).catch(() => {});
+  }
+
+  /** A presentation opened as one HTML file is kept as index.html: the name it was opened with, else undefined. */
+  private async singleFileName(project: DeckProject): Promise<string | undefined> {
+    const { originalDownload } = await import('../lib/deck-project');
+    const { name } = await originalDownload(project);
+    return /\.html$/i.test(name) ? name : undefined;
   }
 
   /** The deck's size and edited state in the heading, and the downloads that depend on it. */
@@ -1420,10 +1435,8 @@ export class PresentationLibrary extends HTMLElement {
     if (!active) return;
     const { project, playable } = active;
     // A presentation opened as one HTML file is kept as index.html; the report names the file as it was opened.
-    const { originalDownload } = await import('../lib/deck-project');
-    const original = await originalDownload(project);
+    const singleFile = await this.singleFileName(project);
     if (active !== this.active) return;
-    const singleFile = /\.html$/i.test(original.name) ? original.name : undefined;
     // `stalled` sets the report's result line ('does not start' or 'starts with basic settings').
     const input: DeckReportInput = {
       kind: project.kind, engine: project.engine, edited: project.edits.size > 0,

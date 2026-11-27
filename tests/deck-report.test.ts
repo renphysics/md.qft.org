@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { DECK_REPORT_FORMAT, DECK_REPORT_NOTES_LABEL, HOST_MARK, formatDeckReport, isSiteSideCode } from '../src/lib/deck-report.ts';
+import { DECK_REPORT_FORMAT, DECK_REPORT_NOTES_LABEL, HOST_MARK, formatDeckReport, isSiteSideCode, namedAsOpened } from '../src/lib/deck-report.ts';
 import { BUNDLED_TEXT_FILES } from '../src/lib/deck-vendor.ts';
 
 describe('deck check report', () => {
@@ -219,6 +219,21 @@ describe('deck check report', () => {
       assert.ok(entryAt > lines.indexOf(DECK_REPORT_NOTES_LABEL));
     }
     assert.match(formatDeckReport({ kind: 'reveal', engine: 'reveal', entry: 'lesson/index.html', issues: notes }), /^entry: lesson\/index\.html$/m, 'a ZIP keeps its entry path');
+  });
+
+  it('names a single HTML file as it was opened in the notes too, where the site wrote index.html', () => {
+    const empty = { code: 'page-empty', severity: 'error' as const, message: 'index.html is empty. Ask your AI assistant for the presentation again.', where: 'index.html' };
+    const none = { code: 'no-slides-found', severity: 'info' as const, message: 'No slides were recognized in this page.', where: 'index.html' };
+    const other = { code: 'missing-file', severity: 'warning' as const, message: 'index.html refers to a.png, which is not in index.html.', where: 'css/index.html' };
+    assert.deepEqual(namedAsOpened(empty, 'index.html', 'lesson-empty.html'), { ...empty, message: 'lesson-empty.html is empty. Ask your AI assistant for the presentation again.', where: 'lesson-empty.html' });
+    assert.deepEqual(namedAsOpened(none, 'index.html', 'quiz.html'), { ...none, where: 'quiz.html' });
+    assert.deepEqual(namedAsOpened(other, 'index.html', 'quiz.html'), { ...other, message: 'quiz.html refers to a.png, which is not in index.html.' }, 'only the start of the message');
+    assert.equal(namedAsOpened({ ...none, message: 'index.html.bak is empty.' }, 'index.html', 'quiz.html').message, 'index.html.bak is empty.', 'not a longer name');
+    assert.equal(namedAsOpened(empty, 'index.html', undefined), empty, 'a ZIP keeps its names');
+    const report = formatDeckReport({ kind: 'html', engine: 'html', entry: 'index.html', singleFile: 'lesson-empty.html', issues: [empty, none] });
+    assert.ok(report.split('\n').includes('- error page-empty (lesson-empty.html): lesson-empty.html is empty. Ask your AI assistant for the presentation again.'));
+    assert.ok(report.split('\n').includes('- info no-slides-found (lesson-empty.html): No slides were recognized in this page.'));
+    assert.doesNotMatch(report, /index\.html/);
   });
 
   it('marks a player line whose host name the presentation chose, so an assistant reads it as data', () => {
