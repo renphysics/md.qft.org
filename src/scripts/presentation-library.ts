@@ -787,18 +787,19 @@ export class PresentationLibrary extends HTMLElement {
    * workspace's importer handles them as before.
    */
   async tryOpenFile(file: File): Promise<boolean> {
-    // A file dropped on the open presentation would replace it: ask first, as Close does.
-    if (this.mustConfirmLeaving() && !(await this.confirmLeaving())) return true;
     if (this.busy) throw new Error('A presentation is already opening. Please wait a moment.');
     this.busy = true;
-    const operation = this.nextOperation();
+    let operation = this.operation;
     try {
       // Chosen from the open library: say at once that the file is being read.
       if (this.q<HTMLDialogElement>('[data-pres-dialog]').open) this.notice(`Opening ${visiblePath(file.name).slice(0, 120)}…`);
       const deckProject = await import('../lib/deck-project');
       const project = await deckProject.openDeck(file);
-      if (!project) return false;
+      if (!project) { this.notice(); return false; }
       if (operation !== this.operation) return true;
+      // A presentation dropped on the open one would replace it: ask first, as Close does.
+      if (this.mustConfirmLeaving() && !(await this.confirmLeaving())) { this.notice(); return true; }
+      operation = this.nextOperation();
       // From here on the dialog shows this file, never the presentation shown before.
       this.showOpening(project.title, 'Checking the presentation…');
       const playable = await this.whileOpening(operation, () => deckProject.buildPlayable(project, this.buildDeps(operation)));

@@ -321,6 +321,33 @@ export default async function run(t) {
     await dialog.waitFor({ state: 'hidden' });
   });
 
+  await t.step('A lesson ZIP dropped on the open dialog asks nothing and keeps the typing; the workspace opens the lesson', async () => {
+    await page.locator('[data-open-presentations]').click();
+    await page.locator('.presentation-saved-open', { hasText: 'Optics workshop' }).click();
+    await page.locator('[data-pres-start-button]').waitFor({ state: 'visible', timeout: 60_000 });
+    await openSourceFiles(page);
+    await selectFile(page, 'css/custom.css', '');
+    await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.insertText('\n/* lesson-dropped-on */');
+    await until(async () => (await badge(page, 'css/custom.css').textContent()) === 'Not applied', 'the unapplied change');
+    const lesson = [...zipSync({ 'lesson.md': strToU8('# Dropped lesson notes\n\nNo slides here.\n') })];
+    await page.locator('[data-pres-stage]').evaluate((stage, bytes) => {
+      const data = new DataTransfer();
+      data.items.add(new File([new Uint8Array(bytes)], 'lesson.zip', { type: 'application/zip' }));
+      stage.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, composed: true, dataTransfer: data }));
+    }, lesson);
+    await until(async () => /^Lesson opened\./.test(await page.locator('[data-toast]').textContent() ?? ''), 'the workspace to open the lesson');
+    assert.equal(await page.locator('[data-pres-confirm]').isVisible(), false, 'no question');
+    assert.equal(await page.locator('[data-pres-notice]').isVisible(), false, 'no "Opening lesson.zip…" left behind');
+    assert.equal(await page.locator('[data-pres-title]').textContent(), 'Optics workshop');
+    assert.equal(await badge(page, 'css/custom.css').textContent(), 'Not applied');
+    assert.match(await editorText(page), /lesson-dropped-on/, 'the typing stays');
+    await page.locator('[data-pres-close]').click();
+    await page.locator('[data-pres-confirm-accept]').click();
+    await dialog.waitFor({ state: 'hidden' });
+  });
+
   await t.step('After a reload the deck reopens from the library with its edit', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.locator('.cm-editor').waitFor();
