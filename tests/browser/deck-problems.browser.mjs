@@ -63,7 +63,7 @@ async function exported(t, context, page, name) {
 }
 
 export default async function run(t) {
-  t.allowPageError(/missingHelper is not defined|undefinedSetting is not defined/);
+  t.allowPageError(/missingHelper is not defined|undefinedSetting is not defined|gtag is not defined/);
   const { context, page } = await t.newPage({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
   await t.openWorkspace(page);
   await page.locator('[data-open-presentations]').click();
@@ -86,7 +86,7 @@ export default async function run(t) {
     const [stripBox, frameBox] = await Promise.all([strip.boundingBox(), page.locator('[data-pres-host] iframe').boundingBox()]);
     assert.ok(stripBox.y + stripBox.height <= frameBox.y + 1, `strip ${JSON.stringify(stripBox)} frame ${JSON.stringify(frameBox)}`);
     await page.keyboard.press('ArrowRight');
-    await until(() => frame.evaluate(() => Reveal.getIndices().h === 1), 'the keyboard to change slides');
+    await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h === 1), 'the keyboard to change slides');
     await page.screenshot({ path: resolve(t.artifacts, 'deck-problems-rescued.png') });
   });
 
@@ -172,7 +172,7 @@ export default async function run(t) {
 
   await t.step('The link strip shows in Present, inside the fullscreen stage', async () => {
     const frame = await deckFrame(page, '.reveal .slides');
-    await frame.evaluate(() => Reveal.slide(0, 0));
+    await frame.evaluate(() => /** @type {any} */ (window).Reveal.slide(0, 0));
     await frame.locator('section.present #wiki').waitFor({ state: 'visible' });
     await page.locator('[data-pres-present]').click();
     await until(() => page.evaluate(() => document.fullscreenElement === document.querySelector('[data-pres-stage]')), 'Present');
@@ -207,6 +207,7 @@ export default async function run(t) {
     assert.equal(newTab.url(), 'https://en.wikipedia.org/wiki/Wave');
     await newTab.close();
     assert.equal(await strip.isVisible(), false);
+    await until(() => standalone.evaluate(() => document.activeElement?.localName === 'iframe'), 'the keyboard to go back to the slides after Open');
     await standalone.close();
 
     await back(page);
@@ -218,7 +219,53 @@ export default async function run(t) {
     const rescuedFrame = await deckFrame(rescued, '.reveal .slides');
     await until(() => rescuedFrame.evaluate(() => /** @type {any} */ (window).Reveal?.isReady?.()), 'the export to start the slides');
     assert.equal(await rescued.locator('#stalled').isVisible(), false);
+    // Both Dismiss buttons look alike; only Start is the primary button.
+    const looks = await rescued.evaluate(() => ['rescued-dismiss', 'link-dismiss', 'start'].map((id) => getComputedStyle(document.getElementById(id)).backgroundColor));
+    assert.equal(looks[0], looks[1], `Dismiss buttons: ${looks.join(' / ')}`);
+    assert.notEqual(looks[0], looks[2]);
     await rescued.close();
+  });
+
+  await t.step('A deck that starts Reveal.js late, after the rescue, keeps its own settings and the strip goes', async () => {
+    await back(page);
+    // The error first, the deck's own start three and a half seconds later (after its fonts, say).
+    const deck = revealDeck('Late lesson', 'setTimeout(() => Reveal.initialize({ hash: true, slideNumber: "c/t", controls: false }), 3500); const theme = undefinedSetting.colour;');
+    await open(page, 'late.html', deck);
+    const frame = await start(page);
+    await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal?.getConfig?.().slideNumber === 'c/t'), 'the deck\'s own settings', 15_000);
+    await until(async () => !(await page.locator('[data-pres-rescued]').isVisible()), 'the basic-settings strip to go');
+    const config = await frame.evaluate(() => { const c = /** @type {any} */ (window).Reveal.getConfig(); return { controls: c.controls, hash: c.hash }; });
+    assert.deepEqual(config, { controls: false, hash: true });
+    assert.equal(await status(page), 'Playing locally · 1 problem reported', 'the deck\'s own error only');
+    assert.doesNotMatch(await page.locator('[data-pres-runtime-list]').textContent(), /already been initialized/);
+    await page.keyboard.press('ArrowRight');
+    await until(() => frame.evaluate(() => /** @type {any} */ (window).Reveal.getIndices().h === 1), 'the slides to play');
+  });
+
+  await t.step("A plain page with Reveal.js-like markup and an error is not taken over, and the player's limits read as its own words", async () => {
+    await back(page);
+    const own = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Own slides</title>
+<style>.slides section{display:none}.slides section.on{display:block}</style></head>
+<body><div class="reveal"><div class="slides"><section class="on"><h1>Own slide one</h1><button id="ask" type="button">Ask</button></section><section><h2>Own slide two</h2></section></div></div>
+<script>document.getElementById('ask').addEventListener('click', () => { window.answer = confirm('Ready?'); });
+document.addEventListener('keydown', (event) => { if (event.key === 'ArrowRight') { const all = document.querySelectorAll('.slides section'); all[0].classList.remove('on'); all[1].classList.add('on'); } });
+gtag('config', 'G-1');</script></body></html>`);
+    await open(page, 'own-slides.html', own);
+    await page.locator('[data-pres-start-button]').click();
+    const frame = await deckFrame(page, '#ask');
+    await until(async () => (await status(page)) === 'Playing locally · 1 problem reported', 'the ordinary run-time note');
+    await page.waitForTimeout(3500);
+    assert.equal(await page.locator('[data-pres-stalled]').isVisible(), false, 'no "did not start" box');
+    assert.equal(await page.locator('[data-pres-rescued]').isVisible(), false);
+    assert.equal(await status(page), 'Playing locally · 1 problem reported');
+    await frame.locator('#ask').click();
+    await until(async () => (await status(page)) === 'Playing locally · 2 problems reported', 'the question to be noted');
+    const items = await page.locator('[data-pres-runtime-list] > li').allTextContents();
+    assert.ok(items.some((text) => /^The presentation reported: .*gtag is not defined/.test(text)), items.join(' | '));
+    assert.ok(items.includes('The presentation asked a question in a pop-up window. The player cannot show those, so the question got no answer. Ask your AI assistant to put the question on the slide instead.'),
+      `the player's sentence, without the label: ${items.join(' | ')}`);
+    await page.keyboard.press('ArrowRight');
+    await until(() => frame.locator('h2').isVisible(), 'its own navigation to work');
   });
 
   await t.step('Applying an edit to a plain page says it starts again from the beginning', async () => {

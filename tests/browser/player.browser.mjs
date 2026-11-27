@@ -50,8 +50,8 @@ async function revealDeck({ heading = 'Waves', note = 'In phase', handler = true
 
 const events = (page) => page.evaluate(() => /** @type {any} */ (window).events);
 
-const NEW_WINDOW = 'This presentation tried to open a new window, for example the speaker view (S key), which the player cannot do.';
-const QUESTION = 'This presentation asked a question in a pop-up window, which the player cannot show.';
+/** The codes of the limits the player reported, with their host where they have one. */
+const limitCodes = (reported) => reported.limits.map((limit) => (limit.host ? `${limit.code} ${limit.host}` : limit.code));
 
 /**
  * A Reveal.js deck that does what AI-made lessons often do: read and write
@@ -144,6 +144,8 @@ export default async function run(t) {
   t.allowBlockedRequest(/^https:\/\/images\.example\.invalid\//);
   // The strict profile stops at Reveal's refused History call, as before.
   t.allowPageError(/replaceState/);
+  // Promise.reject() without a reason, on purpose.
+  t.allowPageError(/^undefined$/);
 
   const deck = await revealDeck();
   const { context, page } = await t.newPage({ viewport: { width: 1320, height: 760 } });
@@ -153,7 +155,7 @@ export default async function run(t) {
   await t.step('A Reveal.js deck with hash: true and no id on its first slide starts under the tolerant profile', async () => {
     assert.equal(await page.evaluate((html) => window.play(html, 'tolerant'), deck), 'ready');
     frame = await revealFrame(page);
-    await until(async () => (await events(page)).warnings.includes('A picture in the presentation could not be shown.'), 'the broken picture to be a warning');
+    await until(async () => limitCodes(await events(page)).includes('missing-picture'), 'the broken picture to be a limit');
     const reported = await events(page);
     assert.deepEqual(reported.errors, []);
     assert.deepEqual(reported.states, ['stopped', 'loading', 'ready']);
@@ -211,15 +213,18 @@ export default async function run(t) {
     await until(() => page.evaluate(() => !document.fullscreenElement), 'fullscreen to end');
 
     await page.keyboard.press('s');
-    await until(async () => (await events(page)).warnings.includes(NEW_WINDOW), 'the speaker view to be a plain warning');
+    await until(async () => limitCodes(await events(page)).includes('speaker-view'), 'the speaker view to be a limit');
     await page.keyboard.press('ArrowLeft');
     await until(async () => (await events(page)).positions.at(-1) === '1/0/1', 'the deck to keep playing after S');
     await page.keyboard.press('s');
     await page.keyboard.press('ArrowRight');
     await until(async () => (await events(page)).positions.at(-1) === '2/0', 'the deck to keep playing after a second S');
     const reported = await events(page);
-    assert.equal(reported.warnings.filter((text) => text === NEW_WINDOW).length, 1, 'one warning per playback');
-    assert.ok(!reported.warnings.some((text) => /setting 'marked'/.test(text)), 'the TypeError that follows is not a second, raw warning');
+    const speaker = reported.limits.filter((limit) => limit.code === 'speaker-view');
+    assert.equal(speaker.length, 1, 'one per playback');
+    assert.equal(speaker[0].counted, false, 'information, not a problem');
+    assert.equal(speaker[0].text, 'The speaker view (S key) is not available in the player.');
+    assert.ok(!reported.warnings.some((text) => /setting 'marked'|new window|speaker view/.test(text)), `no warning of the presentation's for it: ${reported.warnings.join(' | ')}`);
     await press(page, 'ArrowLeft', '1/0/1');
     assert.deepEqual(reported.errors, []);
     assert.equal(reported.states.at(-1), 'ready');
@@ -236,15 +241,15 @@ export default async function run(t) {
       picture.src = 'https://images.example.invalid/cat.png';
       document.body.append(picture);
     });
-    const expected = [
-      /Late failure in a click handler/, /Location\.hash setter/, /Rejected inside the deck/,
-      /^The player blocked a picture \(img-src, images\.example\.invalid\)\.$/,
-    ];
+    const expected = [/Late failure in a click handler/, /Location\.hash setter/, /Rejected inside the deck/];
     await until(async () => {
-      const { warnings } = await events(page);
-      return expected.every((pattern) => warnings.some((text) => pattern.test(text)));
-    }, 'each problem to arrive as a warning');
+      const reported = await events(page);
+      return expected.every((pattern) => reported.warnings.some((text) => pattern.test(text))) && limitCodes(reported).includes('blocked-picture images.example.invalid');
+    }, 'each problem of the deck to arrive as a warning, and the blocked picture as a limit');
     const reported = await events(page);
+    assert.equal(reported.limits.find((limit) => limit.code === 'blocked-picture').text,
+      'A picture from images.example.invalid needs the internet, so it is not shown. Put the file in the ZIP.');
+    assert.ok(!reported.warnings.some((text) => /blocked|picture/i.test(text)), 'the player\'s own sentences are no warnings');
     assert.deepEqual(reported.errors, []);
     assert.equal(reported.states.at(-1), 'ready');
     assert.ok(reported.warnings.every((text) => typeof text === 'string' && text.length <= 350));
@@ -296,10 +301,11 @@ export default async function run(t) {
     await quizFrame.click('#ask');
     await until(async () => (await quizFrame.locator('#answer').textContent()) === 'Hello (nobody), not sure', 'confirm and prompt to answer as the sandbox does');
     await quizFrame.click('#ask');
-    await until(async () => (await events(page)).warnings.includes(QUESTION), 'the question warning');
+    await until(async () => limitCodes(await events(page)).includes('question'), 'the question limit');
+    await page.waitForTimeout(500);
     const reported = await events(page);
-    assert.equal(reported.warnings.filter((text) => text === QUESTION).length, 1, 'one warning per playback');
-    assert.ok(!reported.warnings.some((text) => /video or sound/.test(text)), `no warning for the caption track: ${reported.warnings.join(' | ')}`);
+    assert.equal(limitCodes(reported).filter((code) => code === 'question').length, 1, 'one per playback');
+    assert.ok(!limitCodes(reported).some((code) => code.startsWith('missing-')), `no note for the caption track: ${limitCodes(reported).join(' | ')}`);
     assert.deepEqual(reported.errors, []);
   });
 
@@ -393,6 +399,81 @@ export default async function run(t) {
     assert.deepEqual(reported.stalls, [], 'no Reveal.js slides, so no stall');
     assert.equal(await pageFrame.evaluate(() => location.protocol), 'blob:', 'the page did not navigate');
     await page.evaluate(() => window.player.destroy());
+  });
+
+  await t.step("One picture from the internet gives one note, and the deck's own texts stay its own", async () => {
+    const html = '<!doctype html><html><head><title>Pictures</title></head><body><p id="text">Pictures</p><script>'
+      + 'const late = new Image(); late.src = "https://images.example.invalid/late.png";'
+      + 'const shown = document.createElement("img"); shown.src = "https://images.example.invalid/shown.png"; document.body.append(shown);'
+      + 'void Promise.reject();</script></body></html>';
+    assert.equal(await page.evaluate((value) => window.play(value, 'tolerant'), html), 'ready');
+    await until(async () => limitCodes(await events(page)).includes('blocked-picture images.example.invalid'), 'the blocked picture');
+    await page.waitForTimeout(1200);
+    const reported = await events(page);
+    assert.deepEqual(limitCodes(reported).sort(), ['blocked-picture images.example.invalid', 'failed-step'], 'no second note for the same pictures');
+    assert.deepEqual(reported.warnings, [], 'a rejection without a message is the player\'s sentence, not the deck\'s');
+    await page.evaluate(() => window.player.destroy());
+  });
+
+  await t.step('Links: a trusted click or middle click is offered; a scripted click, a link the deck handles itself and an over-long link are not', async () => {
+    const long = `https://example.org/${'a'.repeat(2100)}`;
+    const html = `<!doctype html><html><head><title>Links</title></head><body>
+<p><a id="web" href="https://example.org/web">Web</a> <a id="middle" href="https://example.org/middle">Middle</a>
+<a id="own" href="https://example.org/own">Handled by the page</a> <a id="scripted" href="https://example.org/scripted">Scripted</a>
+<a id="long" href="${long}">Long</a></p><p id="out"></p>
+<script>document.getElementById('own').addEventListener('click', (event) => { event.preventDefault(); document.getElementById('out').textContent = 'handled'; });</script>
+</body></html>`;
+    assert.equal(await page.evaluate((value) => window.play(value, 'tolerant'), html), 'ready');
+    const linkFrame = await deckFrame(page, '#web');
+    await linkFrame.locator('#own').click();
+    await until(async () => (await linkFrame.locator('#out').textContent()) === 'handled', 'the page to handle its own link');
+    await linkFrame.evaluate(() => document.getElementById('scripted').click());
+    await linkFrame.locator('#long').click();
+    await linkFrame.locator('#middle').click({ button: 'middle' });
+    await until(async () => (await events(page)).links.length === 1, 'the middle click to be offered');
+    await linkFrame.locator('#web').click();
+    await until(async () => (await events(page)).links.length === 2, 'the click to be offered');
+    await page.waitForTimeout(500);
+    const reported = await events(page);
+    assert.deepEqual(reported.links, ['https://example.org/middle', 'https://example.org/web']);
+    assert.deepEqual(limitCodes(reported), ['link-too-long']);
+    assert.equal(await linkFrame.evaluate(() => location.protocol), 'blob:', 'nothing navigated');
+    await page.evaluate(() => window.player.destroy());
+  });
+
+  await t.step('A long message keeps OK in view in a frame 286 by 161 pixels, and the slides behind it are inert', async () => {
+    await page.evaluate(() => { const stage = document.getElementById('stage'); stage.style.width = '286px'; stage.style.height = '161px'; });
+    const html = `<!doctype html><html><head><title>Message</title></head><body><main id="slides"><button id="ask" type="button">Ask</button></main><aside id="already" inert>Kept inert</aside>
+<script>document.getElementById('ask').addEventListener('click', () => alert(${JSON.stringify('A long explanation. '.repeat(100))}));</script></body></html>`;
+    assert.equal(await page.evaluate((value) => window.play(value, 'tolerant'), html), 'ready');
+    const boxFrame = await deckFrame(page, '#ask');
+    await boxFrame.locator('#ask').click();
+    await until(async () => (await messageBox(page, boxFrame))?.button, 'the message box');
+    const session = await page.context().newCDPSession(boxFrame).catch(() => page.context().newCDPSession(page));
+    try {
+      const { root } = await session.send('DOM.getDocument', { depth: -1, pierce: true });
+      const find = (node) => {
+        if (node.nodeName === 'BUTTON' && node.children?.some((child) => child.nodeValue === 'OK')) return node;
+        for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? []), ...(node.contentDocument ? [node.contentDocument] : [])]) {
+          const found = find(child);
+          if (found) return found;
+        }
+        return undefined;
+      };
+      const button = find(root);
+      assert.ok(button, 'the OK button');
+      const { model } = await session.send('DOM.getBoxModel', { nodeId: button.nodeId });
+      const ys = model.border.filter((_, index) => index % 2 === 1);
+      const viewport = await boxFrame.evaluate(() => innerHeight);
+      assert.ok(Math.min(...ys) >= 0 && Math.max(...ys) <= viewport, `OK at ${ys.join(',')} in a frame ${viewport} pixels high`);
+    } finally { await session.detach(); }
+    await page.screenshot({ path: resolve(t.artifacts, 'player-message-small.png'), clip: { x: 0, y: 0, width: 300, height: 175 } });
+    assert.deepEqual(await boxFrame.evaluate(() => [document.getElementById('slides').inert, document.getElementById('already').inert]), [true, true]);
+    await page.keyboard.press('Enter');
+    await until(async () => (await messageBox(page, boxFrame)) === undefined, 'OK to close the box');
+    assert.deepEqual(await boxFrame.evaluate(() => [document.getElementById('slides').inert, document.getElementById('already').inert]), [false, true],
+      'exactly what was inert before stays so');
+    await page.evaluate(() => { window.player.destroy(); const stage = document.getElementById('stage'); stage.style.width = ''; stage.style.height = ''; });
   });
 
   await t.step('Nothing left the page', async () => {

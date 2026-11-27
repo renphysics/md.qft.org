@@ -18,6 +18,9 @@ export async function runtimeBundle() {
 }
 
 /**
+ * play(html, profile, start, extra) passes `extra` on as further player
+ * options (for example { startCheck: 'reveal' }); limits arrive in
+ * events.limits as the player gives them ({ code, host, text, counted }).
  * Each of play(), update() and begin() resolves with 'ready', or with
  * "<origin>: <message>" when the player reports an error. A fullscreen request
  * from the deck is carried out on #stage, as the library does, and recorded
@@ -28,21 +31,22 @@ export function hostPage(runtime) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Player test host</title>
 <style>html,body{margin:0}#present{position:fixed;right:4px;bottom:4px}#stage{width:1280px;height:720px;background:#fff}#stage:fullscreen{width:100vw;height:100vh}#host{width:100%;height:100%}</style></head>
 <body><button id="present" type="button">Present</button><main id="stage"><div id="host"></div></main><script>${runtime.replace(/<\/script/gi, '<\\/script')}</script><script>
-const fresh = () => ({ states: [], errors: [], warnings: [], positions: [], slides: [], fullscreen: [], escapes: 0, stalls: [], links: [] });
+const fresh = () => ({ states: [], errors: [], warnings: [], limits: [], positions: [], slides: [], fullscreen: [], escapes: 0, stalls: [], links: [] });
 window.events = fresh();
 let settle;
 const pending = () => new Promise((resolve) => { settle = resolve; });
-window.play = (html, profile = 'strict', start = {}) => {
+window.play = (html, profile = 'strict', start = {}, extra = {}) => {
   window.player?.destroy();
   window.events = fresh();
   const done = pending();
   const events = window.events;
   window.player = QftRuntime.createPresentationPlayer(document.getElementById('host'), html, {
-    title: 'Test deck', profile,
+    title: 'Test deck', profile, ...extra,
     sandboxUrl: new URL('../presentation-sandbox.html', location.href).href,
     onState(state) { events.states.push(state); if (state === 'ready') settle?.('ready'); },
     onError(message, origin) { events.errors.push(origin + ': ' + message); settle?.(origin + ': ' + message); },
     onWarning(message) { events.warnings.push(message); },
+    onLimit(limit) { events.limits.push(limit); },
     onEscape() { events.escapes += 1; },
     onPosition(position) { events.positions.push(position); },
     onSlides(count) { events.slides.push(count); },
