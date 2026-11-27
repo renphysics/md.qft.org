@@ -1,5 +1,111 @@
 # Verification history
 
+## Independent verification, three more fix rounds and the closing — 2026-11-27
+
+The fixes described in the next section were checked by verifiers who had not written them. What they found was fixed, and the fixes were checked again, seven times in all. Every verifier worked read-only in a folder of their own, with their own scripts and test presentations, and compared the build before a round with the build after it in the same Chromium, and with the same files served over plain HTTP where a reference was needed. A fix counted as confirmed only when the verifier's own run showed the defect before the round and not after it.
+
+| Step | Tree | Result |
+| --- | --- | --- |
+| Review | 9109318 | 7 reviewers, 58 findings |
+| First fix round | 7881c10 | |
+| First verification | 7881c10 | 9 verifiers. Of the 58 findings: 50 fixed, 6 partly fixed, 2 kept as documented limits. 56 new findings (5 major, 36 minor, 15 polish), 19 of them caused by the first fix round |
+| Second fix round | 942ac7b | |
+| Second verification | 942ac7b | 8 verifiers. Of the 56 findings: 51 fixed, 4 partly fixed, 1 not applicable. 45 new findings (6 major, 25 minor, 14 polish), 25 of them caused by the second fix round |
+| Third fix round | d1247f5 | |
+| Third verification | d1247f5 | 7 verifiers. Of the 49 open findings (the 45, and the 4 partly fixed before): 46 fixed, 2 partly fixed, 1 not applicable. 31 new findings (1 major, 15 minor, 15 polish), 19 of them caused by the third fix round |
+| Fourth fix round | d5b14ea | |
+| Fourth verification | d5b14ea | 4 verifiers. Of the 33 open findings: 29 fixed, 3 partly fixed, 1 not applicable (it could not be reproduced on either build). 9 new findings (1 major, 5 minor, 3 polish), 5 of them caused by the fourth fix round |
+| Closing fixes | 57eda1a | Eight of the nine new findings of the fourth verification and what was left of two of its partly fixed ones; one defect found by replaying the research report's baseline table; and one found by measuring equation numbers against MathJax. The ninth new finding stays as a documented limit, with what was left of the third partly fixed one (below) |
+| Closing check | 57eda1a | 3 verifiers. All 11 fixed. 12 new findings (none major, 7 minor, 5 polish), 10 of them caused by the closing fixes; 3 of the 12 were missing tests and 3 were wording |
+| Follow-up fixes | f894d93 | All 12; for one of them the fix is a corrected sentence about a limit that stays |
+| Re-check | f894d93 | 2 verifiers. All 12 fixed, no regression. 3 new findings (none major, 2 minor, 1 polish): 2 of them older than the follow-up fixes, 1 a wrong example in the documentation those fixes added |
+| Last fixes | 4db721a | The 3 findings of the re-check |
+| Last check | 4db721a | 1 verifier: all 3 fixed, no regression, no new finding. 2 more checked this record and the status note in the research report, claim by claim, against the stored results and the code; their corrections are in both texts |
+
+The 6 findings that the first verification called partly fixed were not judged again under their own numbers. Three of them had become new findings of that verification, which the second round fixed; the other three were leftover wordings. None of the six is left in the last tree; that was checked by the author of the fixes, not by a verifier.
+
+No verifier in any round found a way out of the sandbox, markup injected into the app page, or a request that left the browser while a presentation played. The sandbox attributes, the `allow` list and the Content Security Policies are the same strings as before the review, and unit tests pin them; each verification compared them again. One thing was deliberately not tested: the documented browser-level side channels (link prerender and preconnect, WebRTC), see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+Of the 156 new findings of the six verifications that found any, 79 were caused by the fix round before them: between a third and five sixths per round. That is why the fixes were checked by others every time, and why the last rounds were kept small.
+
+### What the verifications found
+
+- **First verification (major findings).** ZIP file names stored in an old code page (GBK, cp437) were lost, and the note said the files were missing. A tab left open across a new release showed an empty library and a raw import error. The report's rules line made an AI assistant delete `reveal.css`, and the broken result was then reported as needing no changes. A MathJax script loaded on its own was not recognised, so formulas stayed raw. At phone widths the player's notices left almost no room for the slides.
+- **Second verification (major findings).** The `onload` code of a script that the linker replaces was lost, so KaTeX's documented snippet typeset nothing. `\begin{align}` written directly in the text of a MathJax presentation stayed raw. A ZIP of a folder with a non-ASCII name got no file-name repair, and common Chinese names that happen to be valid UTF-8 (图片1.png) were misread. Escape could close the dialog without the leave question, so unapplied typing was lost. A button that set `location.href` to a website stopped playback with a developer's sentence shown as the presentation's own words. Also found: quiz forms never received their submit event in the sandbox.
+- **Third verification.** One major finding, older than the round: a file dropped on the open dialog replaced the presentation without the leave question, so unapplied typing was lost. The rest were smaller: a presentation that left its slides by itself within seconds of Start was started again once; a Print button gave no visible answer; the report's rules for a single Reveal.js file asked for a ZIP; one misleading name in the page text renamed every file of a correct UTF-8 ZIP; bare `multline` and `flalign` stayed raw; eight behaviours had no test that would notice their removal.
+- **Fourth verification.** One major finding, again older than the round and found with a presentation an AI assistant had just written: its "Print handout" button hid the slides and showed them again on the browser's `afterprint` event, which the player never sent, so the slides were gone until Restart, and the report said no changes were needed. Smaller: unused pictures of a Windows ZIP whose names happen to be valid UTF-8 kept a garbled name (a regression of the fourth round); `multline` got a number on every line; for a single HTML file a note still said "Add the file to the ZIP."; a file that was not a presentation, dropped on unapplied typing, asked the leave question and then discarded nothing; the print sentence pushed the basic-settings sentence off the notice. One finding stays as a documented limit: in a correct UTF-8 ZIP of a folder with a non-ASCII name, one mis-encoded name in the page text still makes the site read the names of that folder in the old code page (naming the ZIP after its folder avoids it). All 18 AI-made presentations of the earlier rounds behaved on the fourth-round build exactly as before it or better.
+- **Found by the author of the fixes on the fourth-round build.** Replaying the nine kinds of file in the research report's baseline table (section 3): eight played or were explained; the ninth, a Slidev `slides.md` on its own, still opened as a Markdown document without a word, and Check lesson passed it (a defect of the report's section 9). And a measurement nobody had made: in a Reveal.js presentation whose MathJax numbers its equations, the twelfth slide showed (1) where MathJax shows (5), references showed "(?)", and with MathJax's default setting numbers appeared where MathJax shows none. KaTeX's own numbers come from a CSS counter, which skips slides that are not displayed.
+- **Closing check.** Nothing major. The equation numbers were compared with real MathJax on 51 generated pages (860 formulas and references, in MathJax 2, 3 and 4 pages and Reveal's plugin forms): every difference traced to a documented limit, to a formula that MathJax itself rejects, or to six edge cases, among them MathJax 4's numbering of a `\label` on a row without a number (now a documented limit) and Reveal.js's hidden text copy for screen readers (see the re-check). Two findings were regressions of the closing fixes that a teacher could meet: a numbered environment became an error box from 84 rows that use a macro six times each, or 167 plain rows, because KaTeX counts the added `\tag` against its limit of macro expansions; and the new test for Slidev source took time with the square of the length of one odd line, so a Markdown file with a line of 100,000 letters after `<A` froze the tab for 13 seconds. The rest: the new ZIP-name rule also renamed the unused neighbours of one mis-encoded name in a correct UTF-8 ZIP; the long Slidev notice was a column half a phone's screen wide; "Opening NAME…" stayed in the dialog when a dropped ZIP was refused (older than the closing fixes); repeated typesetting typeset the formulas again inside KaTeX's hidden copy of their TeX when a presentation set its own skipped tags (also older); a documented limit said that MathJax leaves a later-pass reference unresolved, which it does not, and another sentence named the wrong source of a ZIP-name rule; three behaviours of the closing fixes had no test that would notice their removal; two sentences could be clearer. All 20 AI-made presentations behaved on the closing build as on the build before it, except the two that the closing fixes repaired.
+- **Re-check of the follow-up fixes.** No regression: the 860 formulas and references were compared again and one differed, by timing (next sentence); the 20 AI-made presentations and their 4 repaired copies played as on the closing build. Three findings. Reveal.js keeps a hidden text copy of the current slide for screen readers; whether it still held raw TeX when the formulas were first typeset depended on timing, and then its equations took numbers too, so a formula added to a slide later was numbered (5) in some runs and (7) in others (the numbers of the slides' own formulas never changed). A presentation ZIP of 2 MB or more, opened while the presentation dialog was open, left "Opening NAME…" at the top of the dialog after it had opened. Both are older than the follow-up fixes. And the documentation's new example of a long environment, 120 rows, was one that MathJax itself rejects.
+- **Last check.** The three fixes hold. A formula added later is now (5) in 10 of 10 runs, as in MathJax, where the build before gave (5) six times and (7) four times; the 860 formulas and references are unchanged. The price is a documented difference: when the numbered equations of the first slide have no label, MathJax counts the hidden copy and numbers a formula added later higher than this site does. The copy of "Opening NAME…" goes when the file has opened, also after a real drop and when one large file follows another, and the notices that should stay in a dialog (why a file was refused) stay. Each of the five mutants the verifier made of the changed lines fails a test.
+
+### Presentations written by AI assistants
+
+In the review and in each of the first four verifications, role-played chat assistants (Claude models that never saw this repository) wrote new presentations: 7 from the site's own prompts (p1 to p3, q1 to q3, s1) and 13 from casual requests. From the first verification on, when the check asked for changes, the assistant received only the text of **Copy report for AI** and answered it once; the 7 presentations of the review were not sent back. The closing check, the re-check and a last replay by the author of the fixes on the last tree played all 20, and the 4 repaired copies, again. In that last replay 23 of the 24 runs matched the re-check's records in every step, note, status line and report; the 24th differed in one reading of a running simulation, which also differs between two runs on the same build. On the last tree all 20 open; 12 play completely as they were first written, 3 more after the assistant's one answer to the report, and for the other 5 the notes say what to change:
+
+| Presentation | Plays completely as first written | After one answer to the report | What does not work, and why |
+| --- | --- | --- | --- |
+| Simple Harmonic Motion (p1), 傅里叶级数 (p2), Bayes and Medical Testing (p3): single Reveal.js files | No | Not sent back | Their own `controls` class collides with Reveal.js's; the notes say so |
+| The Water Cycle (n5), The French Revolution (n6) | Yes | | |
+| Sorting Algorithms (n7): Mermaid and Chart.js from a CDN | No, it starts with basic settings | Not sent back | Libraries from the internet are left out (a documented limit); the notes say so |
+| Photosynthesis (n8): Font Awesome and a missing picture | No | Not sent back | The assistant's file; the notes say so |
+| Solving Linear Inequalities (q1), La ley de Ohm (q2), Projectile Motion (q3) | Yes | | |
+| The normal distribution (s1): a Slidev build of 118 files | Yes, converted | | |
+| Comparing Fractions (m1), Climate Data (m2) | No (1 problem; 8 notes) | Yes | |
+| The Pythagorean Theorem (m3) | Yes | | Its Print button does not print (a documented limit, with a notice) |
+| The Time-Independent Schrödinger Equation (k1) | Yes | | |
+| Chemical Equilibrium (k2) | No (2 notes) | Yes | |
+| Newton's Second Law (t1) | Yes | | |
+| The Quadratic Formula (t2): a form and a Print button | Yes | | Print does not print (a documented limit, with a notice) |
+| The Water Cycle (u1): a quiz and a "Print handout" button | Yes, since the closing fixes | | Printing itself (a documented limit, with a notice); before, the button hid the slides |
+| Quantum Harmonic Oscillator (u2): MathJax with numbered equations | Yes, since the closing fixes | | `multline` and `flalign` are laid out like `gather` and `align` (a documented limit); before, the numbers and references were wrong |
+
+All 20 were written by Claude models. No presentation from ChatGPT, Gemini or Copilot was tested.
+
+### The research report's baseline, replayed on the last tree
+
+The first nine rows of the table in section 3 of [the research report](research/presentation-platform/README.md) ("Baseline: what the site does today"), with the same files:
+
+| What the user opens | Before | On the last tree |
+| --- | --- | --- |
+| Single Reveal.js `.html` file | Could not be chosen | Plays |
+| The same file inside a ZIP | Refused as not a Markdown document | Plays |
+| Standard Reveal.js project ZIP (`index.html` + `dist/`) | Refused as a website build | Plays |
+| Reveal.js project ZIP that also contains a `README.md` | Opened the README as a lesson | Plays |
+| Slidev source project ZIP | Refused | Explained: it has to be built first, and how |
+| Ordinary `slidev build` output ZIP | Refused as a website build | Converted and plays |
+| ZIP with Slidev source and build together | Refused as Slidev source | Plays the build |
+| A lone Slidev `slides.md` | Opened as a document without a word; Check lesson reported success | Opens as a document with a notice that it has to be built first; Check lesson says the same |
+| Package made with `tools/slidev/pack.mjs` | Played | Plays |
+
+### Automated checks on the last tree
+
+A clean clone of the commit that adds this record, on 2026-11-27, with the steps of the repository's Check workflow (`npm ci`, the checks below, and `npm ci` for the Slidev tooling) and the Chromium already on the machine in place of the workflow's browser download:
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 155 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 857 tests in 104 suites; 855 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
+| `npm test --prefix tools/slidev` | Passed: 11 tests |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 12 of 12 suites, 145 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
+
+New unit tests since the closing fixes cover the room KaTeX gets for the added equation numbers (a 90-row environment, the plugin forms, `tex2chtml`, a macro that calls itself), the classes the stand-in never typesets and Reveal.js's text copy for screen readers (`deck-linker-mathjax-numbers`), the time the Slidev test takes on long lines (`slidev-source`), the ZIP-name rule in four two-byte code pages and the rule for a part of the ZIP on its own (`deck-zip-code-pages`), the print sentence between the two print events (`presentation-runtime`), and the advice for a single HTML file (`deck-report`, `docs-quotes`). New browser steps cover the long environment with repeated typesetting and the text copy (`deck-linker`), a ZIP refused while it is read and a large file opened over an open presentation (`deck-editing`), and the width of the long notice at 320 px (`decks`).
+
+The browser suites now take about four and a half minutes on four cores, so the commit that adds this record raises the time limit of the Check workflow from 15 to 30 minutes. The workflow itself was not run on GitHub: it runs for pull requests, pushes to `main` and manual dispatch, and none was made for this branch.
+
+### Not verified
+
+- **Browsers.** Only full Chromium ran the suites and the verifiers' scripts. Firefox and Safari were not tested.
+- **Phones, touch and screen readers.** Phone widths were emulated in Chromium; no phone, tablet, touch input or screen reader was used. What a screen reader reads from Reveal.js's text copy, which is no longer typeset, was not checked.
+- **Presentations from other assistants.** The 20 test presentations were written by Claude models.
+- **Drag and drop by hand.** Drops were simulated with a drop event in the page, never made from the desktop, and no file over 40 MB was dropped.
+- **Some forms and builds.** Reveal's plugin form `RevealMath.MathJax4` was not run (MathJax 4 loaded by itself was). The two unit tests and the browser check that build Slidev projects were skipped, as the tables say.
+- **ZIP names.** Only Chromium's decoders were used. Names of rare characters (GB2312 level 2, Big5) can still keep the garbled name of an unused picture, and so can a ZIP that mixes parts in an old code page with UTF-8 parts; one such case was built by hand, and Big5 and Shift_JIS level-2 names were not enumerated.
+- **The browser-level side channels** named above, on purpose.
+- **The deployed site.** These changes were not deployed; nothing was checked on the live host, and the Check workflow did not run on GitHub.
+- **Not built, so not verified:** editing Slidev source in the browser, a served mode for files loaded while playing, a speaker view, PDF export of imported presentations, dropped folders and pasted HTML.
+
 ## Fixes after an independent review — 2026-11-26
 
 Seven reviewers examined the presentation-library work (commits a73456b..9109318) independently of its authors, each with their own scripts and test presentations. None of them found a way out of the sandbox or markup injected into the app page; they found two ways to lose saved edits and one way to lose files with non-ASCII names (all fixed below). They reported 58 findings, nearly all demonstrated with a file or script. Every fix below started with a test that failed on the reviewed code.
@@ -68,7 +174,7 @@ New browser steps cover a presentation file dropped on the open dialog with unap
 
 ### Not verified in this round
 
-- **The review's own tools on the fixed tree.** The fixes rest on the regression tests above, each of which reproduced its finding first. The reviewers' scripts and the seven AI-made presentations were not run again for this record.
+- **The review's own tools on the fixed tree.** The fixes rest on the regression tests above, each of which reproduced its finding first. The reviewers' scripts and the seven AI-made presentations were not run again for this record of 2026-11-26; the independent verification at the top of this page did so afterwards.
 - **Browsers.** Only full Chromium ran the suites. Firefox and Safari were not tested; neither was the message box, the link strip or `navigator.userActivation` in them (where that property is missing, the link and fullscreen checks let the request through, and opening a link still needs the button).
 - **Phones and touch.** Several problems on the stage were checked in Chromium at 1280×800 and 390×844; the strips' compact phone layout and their place beside Exit fullscreen were not checked in a suite, and no phone, tablet or touch input was used.
 - **Screen readers.** Roles, labels and live regions were checked in code and in the suites; no screen reader was used.
