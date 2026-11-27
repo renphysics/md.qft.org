@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { DECK_REPORT_FORMAT, DECK_REPORT_NOTES_LABEL, HOST_MARK, formatDeckReport, isSiteSideCode, namedAsOpened } from '../src/lib/deck-report.ts';
 import { BUNDLED_TEXT_FILES } from '../src/lib/deck-vendor.ts';
+import { strToU8, zipSync } from 'fflate';
+import { buildPlayable, openDeck } from '../src/lib/deck-project.ts';
+import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
 
 describe('deck check report', () => {
   it('starts with the format line and lists kind, engine, version, issues and the reply', () => {
@@ -264,4 +268,44 @@ describe('deck check report', () => {
     const failed = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [{ code: 'x', severity: 'error', message: 'm' }], stalled: 'blank' });
     assert.match(failed, /^result: cannot play here$/m, 'an error from the check still wins');
   });
+});
+
+describe('advice for a presentation opened as one HTML file', () => {
+  const R = 'https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist';
+  const reveal = (head: string, body: string, scripts = '<script>Reveal.initialize();</script>') => `<!doctype html><html><head><title>T</title><link rel="stylesheet" href="${R}/reveal.css">${head}</head><body><div class="reveal"><div class="slides"><section><h1>One</h1>${body}</section></div></div><script src="${R}/reveal.js"></script>${scripts}</body></html>`;
+  // Every note of the check that can reach a single HTML file and sends the teacher to a ZIP or to index.html.
+  // (The detection's notes about files from the internet or missing from the ZIP are replaced by the linker's for such a file.)
+  const cases: [code: string, html: string, today: string, advice: string][] = [
+    ['missing-file', reveal('', '<img src="pics/missing.png">'), ' Add the file to the ZIP.',
+      ' Put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.'],
+    ['es-modules-unsupported', reveal('', '', '<script type="module">import { x } from "https://example.org/x.mjs"; console.log(x);</script><script>Reveal.initialize();</script>'),
+      ' directly in index.html.', ' directly in the HTML file.'],
+    ['es-modules-unsupported', reveal('', '', '<script type="module">import Menu from "reveal-menu"; Reveal.initialize({ plugins: [Menu] });</script>'),
+      ' directly in index.html.', ' directly in the HTML file.'],
+    ['runtime-files', reveal('', '', '<script>fetch("data/values.json"); Reveal.initialize();</script>'), ' inside index.html.', ' inside the HTML file.'],
+    ['deck-unreadable', `<!doctype html><html><head><title>T</title></head><body>${'<div>'.repeat(20000)}x</body></html>`, ' for a simpler index.html.', ' for a simpler HTML file.'],
+    ['document-base', reveal('<base href="https://example.org/deck/">', ''), '; the files in your ZIP are used instead.', '; only what is inside the HTML file is used.'],
+    // Random picture data, so that the ZIP of it is not refused as one that expands too much.
+    ['deck-too-large', reveal('', `<img src="data:image/png;base64,${randomBytes(18 * 1024 * 1024 - 3000).toString('base64')}">`), '; then open the new ZIP.', '; then open the new HTML file.'],
+  ];
+  const check = async (file: File, code: string) => {
+    const project = (await openDeck(file))!;
+    const issue = (await buildPlayable(project, { vendor: () => nodeVendorProvider() })).issues.find((item) => item.code === code);
+    assert.ok(issue, `${file.name} gets ${code}`);
+    return { project, issue };
+  };
+  for (const [code, html, today, advice] of cases) {
+    it(`${code}: ${today.trim()}`, async () => {
+      const single = await check(new File([html], 'lesson.html', { type: 'text/html' }), code);
+      const shown = namedAsOpened(single.issue, single.project.entry, 'lesson.html').message;
+      assert.ok(shown.endsWith(advice), shown);
+      assert.equal(shown, `${single.issue.message.slice(0, -today.length)}${advice}`, 'what was found stays as it is');
+      for (const words of ['ZIP next to', 'to the ZIP.', 'in the ZIP.', 'your ZIP', 'new ZIP', 'index.html']) assert.ok(!shown.includes(words), `${words}: ${shown}`);
+      const asIndex = namedAsOpened(single.issue, single.project.entry, 'index.html').message;
+      assert.ok(asIndex.endsWith(advice), 'a single file called index.html gets the same advice');
+      const zip = await check(new File([new Uint8Array(zipSync({ 'index.html': strToU8(html) }))], 'lesson.zip', { type: 'application/zip' }), code);
+      assert.ok(zip.issue.message.endsWith(today), `a ZIP keeps today's text: ${zip.issue.message}`);
+      assert.equal(namedAsOpened(zip.issue, zip.project.entry, undefined), zip.issue);
+    });
+  }
 });

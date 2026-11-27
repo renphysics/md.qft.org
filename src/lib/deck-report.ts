@@ -118,16 +118,31 @@ export function isSiteSideCode(code: string): boolean {
 const SITE_SIDE_REPLY = 'Reply: nothing to change in the presentation; the site could not load its converter.';
 
 /**
+ * The advice at the end of the check's notes that sends the teacher to a ZIP
+ * or to index.html, and the advice for a presentation opened as one HTML file.
+ */
+const SINGLE_FILE_ADVICE: readonly (readonly [string, string])[] = [
+  [' Add the file to the ZIP.', ' Put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.'],
+  [' directly in index.html.', ' directly in the HTML file.'],
+  [' inside index.html.', ' inside the HTML file.'],
+  [' for a simpler index.html.', ' for a simpler HTML file.'],
+  ['; the files in your ZIP are used instead.', '; only what is inside the HTML file is used.'],
+  ['; then open the new ZIP.', '; then open the new HTML file.'],
+];
+
+/**
  * A presentation opened as one HTML file is kept under the entry name
  * index.html. A note names the file as it was opened instead: in its place
- * (`where`) and at the very start of its message ("index.html is empty. …").
- * Nothing else in the note changes.
+ * (`where`) and at the very start of its message ("index.html is empty. …"),
+ * and its advice at the end is for one file rather than a ZIP.
  */
 export function namedAsOpened(issue: DeckIssue, entry: string | undefined, singleFile: string | undefined): DeckIssue {
   if (!entry || !singleFile) return issue;
-  const starts = issue.message.startsWith(entry) && !/^[\w./-]/.test(issue.message.slice(entry.length));
-  if (issue.where !== entry && !starts) return issue;
-  return { ...issue, ...(issue.where === entry ? { where: singleFile } : {}), ...(starts ? { message: `${singleFile}${issue.message.slice(entry.length)}` } : {}) };
+  const advice = SINGLE_FILE_ADVICE.find(([ending]) => issue.message.endsWith(ending));
+  const message = advice ? `${issue.message.slice(0, -advice[0].length)}${advice[1]}` : issue.message;
+  const starts = message.startsWith(entry) && !/^[\w./-]/.test(message.slice(entry.length));
+  if (issue.where !== entry && !starts && !advice) return issue;
+  return { ...issue, ...(issue.where === entry ? { where: singleFile } : {}), ...(starts || advice ? { message: starts ? `${singleFile}${message.slice(entry.length)}` : message } : {}) };
 }
 
 /** A fence longer than any run of tildes inside, so the text cannot close it. */
