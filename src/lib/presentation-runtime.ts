@@ -71,9 +71,11 @@ export interface PresentationLeft {
    */
   host?: string;
   /**
-   * Whether this page had user activation when the message arrived
-   * (navigator.userActivation.isActive), that is, whether the person had
-   * just acted, most likely with a click in the deck.
+   * Whether the runner had user activation when the deck left
+   * (navigator.userActivation.isActive there), that is, whether the person
+   * had just acted inside the presentation. Only input in the deck's frame
+   * or the runner gives the runner activation, not the click on Start in
+   * this page. False when the runner says nothing about it.
    */
   active: boolean;
 }
@@ -323,7 +325,11 @@ function presentationRuntimeFactory() {
         const url = new URL(String(event.blockedURI ?? ''));
         if ((url.protocol === 'http:' || url.protocol === 'https:') && isHost(url.host)) host = url.host;
       } catch { /* No address. */ }
-      send('left', host);
+      // Whether the person just acted inside the deck (or this shell): only
+      // input there gives this frame activation, not the click on Start.
+      let active = false;
+      try { active = navigator.userActivation?.isActive === true; } catch { /* Not known: not active. */ }
+      parent.postMessage({ qftPresentation: 1, token, kind: 'left', detail: host, active }, '*');
     });
     window.addEventListener('pagehide', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); }, { once: true });
   }
@@ -1466,8 +1472,8 @@ function presentationRuntimeFactory() {
         if (timeout !== undefined) window.clearTimeout(timeout);
         timeout = undefined;
         const host = detail || undefined;
-        const activation = typeof navigator === 'undefined' ? undefined : navigator.userActivation;
-        if (tolerant && options.onLeft) options.onLeft({ ...(host ? { host } : {}), active: activation?.isActive === true });
+        // The runner's own activation: this page still has the Start click's.
+        if (tolerant && options.onLeft) options.onLeft({ ...(host ? { host } : {}), active: message.active === true });
         else fail(presentationLeftText(host, 'Choose Start to play it again.'), 'player');
       } else if (kind === 'ready' && state === 'loading') {
         if (timeout !== undefined) window.clearTimeout(timeout);

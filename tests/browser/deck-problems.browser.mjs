@@ -357,13 +357,14 @@ document.getElementById('sim').addEventListener('click', () => { const site = 'h
 
   await t.step('A presentation that goes to a website by itself, with no click, is stopped with the player\'s own sentence', async () => {
     await back(page);
-    // Later than the browser's few seconds of activation after the click on Start.
+    // Within the browser's few seconds of activation after the click on Start:
+    // only the person's input inside the presentation counts (X1.2).
     const lesson = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Leaving lesson</title></head><body>
-<h1>Leaving lesson</h1><script>setTimeout(function () { var site = 'https://phet.colorado.edu/en/simulations'; location.href = site; }, 6500);</script></body></html>`);
+<h1>Leaving lesson</h1><script>setTimeout(function () { var site = 'https://phet.colorado.edu/en/simulations'; location.href = site; }, 1000);</script></body></html>`);
     await open(page, 'leaving-lesson.html', lesson);
     await page.locator('[data-pres-start-button]').click();
     // Wait without looking: Playwright's checks in the page count as the person's activity.
-    await page.waitForTimeout(11_000);
+    await page.waitForTimeout(4_000);
     const problem = page.locator('[data-pres-problem]');
     assert.equal(await problem.isVisible(), true, 'stopped with a problem');
     const sentence = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.';

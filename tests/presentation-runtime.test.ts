@@ -12,7 +12,7 @@ const runnerHtml = readFileSync(new URL('../public/presentation-sandbox.html', i
 const runnerScript = runnerHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 assert.ok(runnerScript);
 
-function runner(origin: string, topLevel = false, script = runnerScript!) {
+function runner(origin: string, topLevel = false, script = runnerScript!, navigator?: object) {
   const messages: any[] = [];
   const parent = { postMessage(value: unknown) { messages.push(value); } };
   const packages: Blob[] = [];
@@ -24,7 +24,7 @@ function runner(origin: string, topLevel = false, script = runnerScript!) {
   const window = { origin, parent: parent as object, addEventListener(name: string, listener: any) { if (name === 'message') receive = listener; if (name === 'pagehide') dispose = listener; } };
   if (topLevel) window.parent = window;
   vm.runInNewContext(script, {
-    window, parent, Blob,
+    window, parent, Blob, ...(navigator ? { navigator } : {}),
     URL: class extends URL {
       static override createObjectURL(value: Blob) { packages.push(value); return `blob:null/package-${packages.length}`; }
       static override revokeObjectURL(value: string) { revoked.push(value); }
@@ -136,6 +136,20 @@ test('the shell says that the deck left with a plain host name only, and not bef
     frame.send(frame.parent, { type: 'qft-presentation-load', token: 'a'.repeat(36), html: '<p>Deck</p>' });
     frame.violate({ effectiveDirective: 'frame-src', blockedURI });
     assert.deepEqual(frame.messages.map((message) => [message.kind, message.detail]), [['left', host]], String(blockedURI));
+  }
+});
+
+test('the shell says whether the person had just acted in the presentation when it left, by its own activation (X1.2)', () => {
+  const cases: [object | undefined, boolean][] = [
+    [{ userActivation: { isActive: true } }, true], [{ userActivation: { isActive: false } }, false],
+    [{ userActivation: { isActive: 'yes' } }, false], [{ userActivation: { isActive: 1 } }, false], [{}, false], [undefined, false],
+    [{ get userActivation() { throw new Error('no'); } }, false],
+  ];
+  for (const [index, [navigator, active]] of cases.entries()) {
+    const frame = runner('null', false, runnerScript!, navigator);
+    frame.send(frame.parent, { type: 'qft-presentation-load', token: 'a'.repeat(36), html: '<p>Deck</p>' });
+    frame.violate({ effectiveDirective: 'frame-src', blockedURI: 'https://example.org' });
+    assert.deepEqual(JSON.parse(JSON.stringify(frame.messages)), [{ qftPresentation: 1, token: 'a'.repeat(36), kind: 'left', detail: 'example.org', active }], `case ${index}`);
   }
 });
 
@@ -260,7 +274,7 @@ function playerFixture(settings: { profile?: string; activation?: { isActive: bo
     const frame = frames.at(-1);
     frame.load();
     const token = frame.sent.at(-1).token;
-    return { frame, token, deck: (kind: string, detail?: unknown) => receive({ source: frame.contentWindow, data: { qftPresentation: 1, token, kind, detail } }) };
+    return { frame, token, deck: (kind: string, detail?: unknown, extra?: object) => receive({ source: frame.contentWindow, data: { qftPresentation: 1, token, kind, detail, ...extra } }) };
   };
   return {
     player, frames, states, errors, origins, warnings, positions, slides, fullscreen, stalls, links, limits, prepared, timers, host, document, play, lefts,
@@ -1700,16 +1714,17 @@ test('host names in the player\'s sentences pass one strict check, in the runner
   assert.ok(performance.now() - started < 1000);
 });
 
-test('a deck that replaces itself with another page ends its playback; the host is told once, with its own activation (W1.1)', () => {
-  const f = playerFixture({ profile: 'tolerant', onLeft: true, activation: { isActive: true } });
+test('a deck that replaces itself with another page ends its playback; the host is told once, with the runner\'s activation (W1.1, X1.2)', () => {
+  // This page's own activation (the click on Start) does not count.
+  const f = playerFixture({ profile: 'tolerant', onLeft: true, activation: { isActive: false } });
   const { deck } = f.play();
   deck('ready');
-  deck('left', 'Bad Host');
-  deck('left', 'example.com.');
-  deck('left', 7);
+  deck('left', 'Bad Host', { active: true });
+  deck('left', 'example.com.', { active: true });
+  deck('left', 7, { active: true });
   assert.deepEqual(f.lefts, [], 'a detail that fails the host check is dropped');
-  deck('left', 'phet.colorado.edu');
-  deck('left', '');
+  deck('left', 'phet.colorado.edu', { active: true });
+  deck('left', '', { active: true });
   deck('limit', 'question');
   deck('ready');
   deck('position', '1/0');
@@ -1721,9 +1736,13 @@ test('a deck that replaces itself with another page ends its playback; the host 
   next.deck('limit', 'question');
   next.deck('left', '');
   assert.equal(f.limits.length, 1);
-  const idle = playerFixture({ profile: 'tolerant', onLeft: true, activation: { isActive: false } });
-  idle.play().deck('left', '');
-  assert.deepEqual(idle.lefts, [{ active: false }]);
+  assert.deepEqual(f.lefts.at(-1), { active: false });
+  // Not active unless the runner says true: false, missing or not a boolean, also while this page has the Start click's activation.
+  for (const extra of [{ active: false }, {}, { active: 'true' }, { active: 1 }, { active: { valueOf: () => true } }]) {
+    const idle = playerFixture({ profile: 'tolerant', onLeft: true, activation: { isActive: true } });
+    idle.play().deck('left', '', extra);
+    assert.deepEqual(idle.lefts, [{ active: false }], JSON.stringify(extra));
+  }
   // Without onLeft, and always in the strict profile: the player stops, in its own words.
   for (const plain of [playerFixture({ profile: 'tolerant' }), playerFixture({ onLeft: true })]) {
     plain.play().deck('left', 'phet.colorado.edu');
