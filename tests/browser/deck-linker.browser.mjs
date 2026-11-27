@@ -210,6 +210,7 @@ export default async function run(t) {
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script></head><body>
 <p id="inline">Inline \\(x^2 + \\RR\\) and a price of $5 and $6.</p>
 <p id="display">$$\\int_0^1 x\\,dx = \\frac12$$</p>
+<div id="env">\\begin{align} a &= b + c \\label{eq:one} \\\\ d &= e \\tag{*} \\end{align}</div>
 <p id="later"></p>
 <script>window.addLater = function () { var later = document.getElementById('later'); later.textContent = 'Added \\\\(z^3\\\\) later'; return MathJax.typesetPromise([later]).then(function () { return later.querySelectorAll('.katex').length; }); };</script>
 </body></html>`;
@@ -222,11 +223,51 @@ export default async function run(t) {
       inline: document.querySelectorAll('#inline .katex').length,
       errors: document.querySelectorAll('.katex-error').length,
       text: document.querySelector('#inline').textContent,
+      environment: document.querySelectorAll('#env .katex-display').length,
+      environmentText: document.querySelector('#env .katex-html')?.textContent ?? document.querySelector('#env').textContent,
     }));
     assert.equal(state.inline, 1, 'one inline formula: MathJax does not read single dollars by default');
+    // MathJax typesets an environment written directly in the text (review W3.2).
+    assert.equal(state.environment, 1, 'the bare align environment is typeset');
+    assert.doesNotMatch(state.environmentText, /\\begin|\\label/);
     assert.equal(state.errors, 0, 'the macro from the configuration is known');
     assert.match(state.text, /a price of \$5 and \$6\.$/);
     assert.equal(await frame.evaluate(() => window.addLater()), 1, 'MathJax.typesetPromise typesets the added text');
+  });
+
+  // KaTeX's own documented snippet starts auto-render from the script's onload (review W3.1).
+  const katexSnippet = (base) => `<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="${base}katex.min.css">
+<script defer src="${base}katex.min.js"></script>
+<script defer src="${base}contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+</head><body><p id="inline">Inline \\(\\frac{a}{b}\\)</p><div id="display">$$\\int_0^1 x^2\\,dx$$</div></body></html>`;
+  const katexTypeset = async (html, label) => {
+    const result = await linkDeck(html instanceof Map ? html : new Map([['index.html', new TextEncoder().encode(html)]]), { kind: 'html', engine: 'html', issues: [], flags: {} }, nodeVendorProvider());
+    assert.deepEqual(result.issues.filter((issue) => issue.severity === 'error'), [], `${label}: linking`);
+    const frame = await play(page, result.html, label);
+    await until(() => frame.evaluate(() => document.querySelectorAll('#inline .katex').length === 1 && document.querySelectorAll('#display .katex-display').length === 1), `${label}: the formulas to be typeset`);
+  };
+
+  await step("KaTeX's documented auto-render snippet (onload) typesets with the CDN addresses", async () => {
+    await katexTypeset(katexSnippet('https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/'), 'KaTeX from a CDN');
+  });
+
+  await step("KaTeX's documented auto-render snippet (onload) typesets with a KaTeX copy inside the ZIP", async () => {
+    const dist = fileURLToPath(new URL('../../node_modules/katex/dist/', import.meta.url));
+    const files = new Map([['index.html', new TextEncoder().encode(katexSnippet('katex/'))]]);
+    for (const name of ['katex.min.js', 'katex.min.css', 'contrib/auto-render.min.js']) files.set(`katex/${name}`, new Uint8Array(readFileSync(join(dist, name))));
+    await katexTypeset(files, 'KaTeX in the ZIP');
+  });
+
+  await step('<script src="…/reveal.js" onload="Reveal.initialize()"> starts the slides', async () => {
+    const html = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css"></head><body>
+<div class="reveal"><div class="slides"><section><p id="m">waiting</p></section><section>Two</section></div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js" onload="Reveal.initialize(); document.getElementById('m').textContent = 'started by onload';"></script>
+</body></html>`;
+    const frame = await play(page, await linked(new Map([['index.html', new TextEncoder().encode(html)]]), 'reveal onload'), 'reveal onload');
+    const state = await revealState(frame);
+    assert.equal(state.slides, 2);
+    assert.equal(await frame.locator('#m').textContent(), 'started by onload');
   });
 
   await step('A raw "<" inside a formula (the AI-made deck p2) no longer cuts the formula and the text after it', async () => {

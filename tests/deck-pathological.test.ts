@@ -4,7 +4,7 @@ import { strToU8, zipSync, type Zippable } from 'fflate';
 import { readDeckArchive } from '../src/lib/deck-archive.ts';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import vm from 'node:vm';
-import { linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
+import { hasRevealLayoutRule, linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
 import { mathJaxStandInSource } from '../src/lib/deck-linker-runtime.ts';
 import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
@@ -94,6 +94,17 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     const result = await link(deck({ 'index.html': page(`<script>${'localStorage[1; sessionStorage .   x   ; '.repeat(100_000)}</script>`) }));
     assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
   } },
+  // W3.4: the storage scan reads the code without its comments.
+  { name: 'a script of 50,000 comments and "document.cookie" reads', run: async () => {
+    const result = await link(deck({ 'index.html': page(`<script>${'/* localStorage.setItem( */ var c = document.cookie; // x = 1\n'.repeat(50_000)}</script>`) }));
+    assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
+  } },
+  // W1.1 (linker side): literal changes of the page address become window.open, at most 200 per script.
+  { name: 'a script with 30,000 "location.href = \'https://…\'" and 30,000 look-alikes', run: async () => {
+    const code = 'location.href = "https://a.example/";'.repeat(30_000) + 'window.location . href == "//x" ; location = '.repeat(30_000);
+    const result = await link(deck({ 'index.html': page(`<script>${code}</script><button onclick='${'top.location.assign("https://b.example/");'.repeat(10_000)}'>x</button>`) }));
+    assert.equal(result.html.split('window.open(').length - 1, 400);
+  } },
   { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F2b.3, F5.2 and F5.3: plugin lists, class names and a "<" inside formulas.
   { name: 'a page with 100,000 formulas holding "<x" and one closing delimiter', run: () => link(deck({ 'index.html': page(`<p>${'\\(a<x '.repeat(100_000)}\\)</p>`) })) },
@@ -104,6 +115,13 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     'index.html': reveal(`<section>A</section>${'<script>x();</script>'.repeat(2000)}<script>Reveal.initialize({ plugins: [${Array.from({ length: 50_000 }, (_, index) => `P${index}`).join(', ')}] });</script>`),
   })) },
   { name: 'a stylesheet of 100,000 ".reveal" followed by white space and ">"', run: () => link(deck({ 'index.html': reveal(`<section>A</section><style>${'.reveal >  > '.repeat(100_000)}</style>`) })) },
+  // W3.3: the content test for the Reveal.js layout in a <style> element and in a stylesheet file.
+  { name: 'a stylesheet of 100,000 ".reveal .slides section{" and "/*" that never close', run: async () => {
+    const css = '.reveal .slides  >  section {position:'.repeat(50_000) + '/* .reveal .slides'.repeat(50_000);
+    const result = await link(deck({ 'index.html': reveal('<section>A</section>').replace('</head>', `<style>${css}</style><link rel="stylesheet" href="a.css"></head>`), 'a.css': css }));
+    assert.ok(result.issues.some((issue) => issue.code === 'reveal-style-missing'));
+  } },
+  { name: 'hasRevealLayoutRule on 2 MB of ".reveal" and white space', run: () => assert.equal(hasRevealLayoutRule(`.slides{${'.reveal      '.repeat(170_000)}`), false) },
   { name: '40,000 elements with class names inside one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<div class="a controls b">x</div>'.repeat(40_000)}</section>`) })) },
   // VF1.1 and VF1.3: one sibling search per removed element (6.5 s in the site), and every <base> resolved against the one before.
   { name: '150,000 sibling <noscript> elements in one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<noscript>x</noscript>'.repeat(150_000)}</section>`) })) },
@@ -135,6 +153,13 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     const text = 'ö%C3%B6 Schr\u00f6dinger.png%'.repeat(Math.floor(7.5 * KB * KB / 32)); // just under the 8 MB read
     const archive = await readDeckArchive(legacyNamesZip(page(`<p>${text}</p>`), names));
     assert.ok(archive.issues.some((issue) => issue.code === 'zip-names-not-utf8'), 'no code page matched');
+  } },
+  // W4.1, W4.2, W4.6: names that are valid UTF-8 and also scored, under an old-style folder, against 8 MB of text full of character references.
+  { name: '999 legacy ZIP names that are valid UTF-8, in an old-style folder, and 8 MB of "&#" text', run: async () => {
+    const names = Array.from({ length: 999 }, (_, index) => Uint8Array.from([0xbf, 0xce, 0x2f, ...strToU8(String(index)), ...new Array(2 * Math.floor((192 - String(index).length) / 2)).fill(0).map((_, at) => at % 2 ? 0xbc : 0xcd), ...strToU8('.png')]));
+    const text = '&#x5149;&#23376;&#&#x;&#99999999;ͼͼ.png/'.repeat(Math.floor(7.5 * KB * KB / 40));
+    const archive = await readDeckArchive(legacyNamesZip(page(`<p>${text}</p>`), names));
+    assert.equal(archive.files.size, 1000);
   } },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },

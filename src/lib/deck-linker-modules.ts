@@ -326,3 +326,100 @@ export function defaultImportBindings(clause: string): ImportBinding[] | undefin
   }
   return bindings.length ? bindings : undefined;
 }
+
+/**
+ * The code's tokens joined by spaces, without its comments (review W3.4):
+ * for scans that must not count text in a comment. The code itself when it
+ * could not be read to its end.
+ */
+export function withoutComments(code: string): string {
+  if (!code.includes('/')) return code;
+  const { tokens, complete } = tokenize(code);
+  return complete ? tokens.map((token) => token.value).join(' ') : code;
+}
+
+export interface NavigationRewrite {
+  code: string;
+  /** The web addresses, in source order, as the literals give them. */
+  addresses: string[];
+}
+
+/** At most this many rewrites in one piece of code; the rest is left as it is. */
+const MAX_NAVIGATION_REWRITES = 200;
+const LOCATION_OWNERS = new Set(['window', 'self', 'top', 'parent', 'document']);
+/** Tokens after which `location = …` starts a statement (not a declaration or a parameter). */
+const STATEMENT_STARTS = new Set([';', '{', '}', ')', '=>', 'else']);
+const STATEMENT_ENDS = new Set([';', '}', ')', ',']);
+
+/**
+ * A script that sends the page to a website by changing its address
+ * (review W1.1): `location.href = "https://…"`, `location = "…"`,
+ * `location.assign("…")` and `location.replace("…")`, with an optional
+ * window., self., top., parent. or document. before location and a complete
+ * string literal (quotes, or a template without substitutions) that starts
+ * with http://, https:// or //. Each becomes `window.open(LITERAL, "_blank")`,
+ * which the player offers as a link. Anything else is left alone; undefined
+ * when nothing changes.
+ */
+export function rewriteScriptedNavigation(code: string): NavigationRewrite | undefined {
+  if (!code.includes('location')) return undefined;
+  const { tokens, complete } = tokenize(code);
+  if (!complete) return undefined;
+  const isLiteral = (token: Token | undefined) => !!token && (token.type === 'string'
+    || (token.type === 'template' && token.value === '`' && token.end - token.start >= 2 && code[token.end - 1] === '`'));
+  const web = (token: Token) => {
+    const value = unquote(code.slice(token.start, token.end));
+    return /^(?:https?:)?\/\//i.test(value) ? value : undefined;
+  };
+  const newLine = (from: number, to: number) => /[\n\r\u2028\u2029]/.test(code.slice(from, to));
+  const edits: { start: number; end: number; literal: Token }[] = [];
+  const addresses: string[] = [];
+  for (let index = 0; index < tokens.length && edits.length < MAX_NAVIGATION_REWRITES; index += 1) {
+    const token = tokens[index];
+    if (token.type !== 'name' || token.value !== 'location') continue;
+    let first = index;
+    const dot = tokens[index - 1];
+    if (dot && (dot.value === '.' || dot.value === '?.')) {
+      const owner = tokens[index - 2];
+      if (dot.value !== '.' || owner?.type !== 'name' || !LOCATION_OWNERS.has(owner.value)) continue;
+      const before = tokens[index - 3];
+      if (before && (before.value === '.' || before.value === '?.')) continue;
+      first = index - 2;
+    }
+    const at = (offset: number) => tokens[index + offset];
+    let literal: Token | undefined;
+    let last: Token | undefined;
+    if (at(1)?.value === '.' && at(2)?.type === 'name' && (at(2).value === 'assign' || at(2).value === 'replace')
+      && at(3)?.value === '(' && isLiteral(at(4)) && at(5)?.value === ')') {
+      literal = at(4);
+      last = at(5);
+    } else {
+      const property = at(1)?.value === '.' && at(2)?.type === 'name' && at(2).value === 'href';
+      const equals = property ? 3 : 1;
+      if (at(equals)?.value !== '=' || at(equals)?.type !== 'punct' || !isLiteral(at(equals + 1))) continue;
+      if (!property && first === index) {
+        // `var location = …` or a parameter's default value is not the page's address.
+        const previous = tokens[index - 1];
+        if (previous && !STATEMENT_STARTS.has(previous.value) && !newLine(previous.end, token.start)) continue;
+      }
+      literal = at(equals + 1);
+      const next = at(equals + 2);
+      if (next && !STATEMENT_ENDS.has(next.value) && !newLine(literal.end, next.start)) continue;
+      last = literal;
+    }
+    const address = web(literal);
+    if (address === undefined) continue;
+    edits.push({ start: tokens[first].start, end: last.end, literal });
+    addresses.push(address);
+    index = tokens.indexOf(last, index);
+  }
+  if (!edits.length) return undefined;
+  const parts: string[] = [];
+  let position = 0;
+  for (const { start, end, literal } of edits) {
+    parts.push(code.slice(position, start), `window.open(${code.slice(literal.start, literal.end)}, "_blank")`);
+    position = end;
+  }
+  parts.push(code.slice(position));
+  return { code: parts.join(''), addresses };
+}

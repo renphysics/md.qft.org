@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { zipSync } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
-import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
+import { hasRevealLayoutRule, linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
 import { buildPlayable, isPlayable, openDeck } from '../src/lib/deck-project.ts';
 import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
@@ -163,8 +164,8 @@ describe('too large (VUX.6)', () => {
   const nextStep = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
 
   it('ends the per-file note and the error with what to do, also with long file names', async () => {
-    const one = await link({ 'index.html': page('<video src="b.mp4"></video>'), 'b.mp4': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
-    assert.equal(issue(one, 'asset-too-large')?.message, `b.mp4 (3 KB) is too large to include, so it is left out. ${nextStep}`);
+    const one = await link({ 'index.html': page('<img src="b.png" alt="">'), 'b.png': new Uint8Array([...PNG, ...new Uint8Array(3000)]) }, { maxHtmlLength: 2000 });
+    assert.match(issue(one, 'asset-too-large')?.message ?? '', new RegExp(`^b\\.png \\(3 KB\\) is too large to include, so it is left out\\. ${nextStep.replace(/[.()]/g, '\\$&')}$`));
     const name = (letter: string) => `pictures/${letter.repeat(120)}.png`;
     const files: Record<string, string | Uint8Array> = { 'index.html': page(['a', 'b', 'c'].map((letter) => `<img src="${name(letter)}" alt="">`).join('')) };
     for (const letter of ['a', 'b', 'c']) files[name(letter)] = new Uint8Array([...PNG, ...new Uint8Array(400)]);
@@ -173,6 +174,71 @@ describe('too large (VUX.6)', () => {
     assert.equal(error?.severity, 'error');
     assert.ok(error!.message.endsWith(nextStep), error!.message);
     assert.match(error!.message, /The largest files? (?:is|are) pictures\//);
+  });
+});
+
+describe('too large: the next step fits the largest file (review W3.5)', () => {
+  const video = 'Make the video shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  const recording = 'Make the recording shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  const other = 'Leave out files the slides do not use; then open the new ZIP.';
+
+  it('names videos, recordings and other files in the per-file note and the error', async () => {
+    const one = await link({ 'index.html': page('<video src="b.mp4"></video>'), 'b.mp4': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.equal(issue(one, 'asset-too-large')?.message, `b.mp4 (3 KB) is too large to include, so it is left out. ${video}`);
+    const sound = await link({ 'index.html': page('<audio src="a.mp3"></audio>'), 'a.mp3': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.ok(issue(sound, 'asset-too-large')?.message.endsWith(recording));
+    const many = await link({
+      'index.html': page('<video src="media/lecture.mp4"></video><img src="photo.png" alt="">'),
+      'media/lecture.mp4': new Uint8Array(900).fill(7), 'photo.png': new Uint8Array([...PNG, ...new Uint8Array(400)]),
+    }, { maxHtmlLength: 1800 });
+    const error = issue(many, 'deck-too-large');
+    assert.match(error?.message ?? '', /The largest files are media\/lecture\.mp4 \(1 KB\), photo\.png/);
+    assert.ok(error!.message.endsWith(video), error!.message);
+    const font = await link({ 'index.html': page('<style>@font-face{font-family:x;src:url(f.woff2)}</style><p>x</p>'), 'f.woff2': new Uint8Array(3000).fill(7) }, { maxHtmlLength: 2000 });
+    assert.ok(issue(font, 'asset-too-large')?.message.endsWith(other), JSON.stringify(font.issues));
+  });
+
+  it('gives only the error, not also the note that the page plays as an ordinary page', async () => {
+    const big = new Uint8Array(10 * 1024 * 1024).fill(7);
+    // Stored, not compressed: the ZIP reader refuses files that expand far beyond their compressed size.
+    const zip = zipSync({ 'index.html': encoder.encode(page('<video src="a.mp4"></video><video src="b.mp4"></video>')), 'a.mp4': [big, { level: 0 }], 'b.mp4': [big, { level: 0 }] });
+    const project = await openDeck(new File([new Uint8Array(zip).buffer], 'big.zip', { type: 'application/zip' }));
+    assert.ok(project);
+    const playable = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
+    assert.equal(isPlayable(playable), false);
+    assert.ok(playable.issues.some((item) => item.code === 'deck-too-large' && item.message.endsWith(video)), JSON.stringify(playable.issues.map((item) => item.message)));
+    assert.ok(!playable.issues.some((item) => item.code === 'no-slides-found'));
+  });
+});
+
+describe('conditions the mutation run found unpinned (review W6.1, W6.2, W6.7, W6.10)', () => {
+  it('gives no browser-storage note for a Slidev build, whose own app code writes localStorage', async () => {
+    const files = deck({ 'index.html': page('<div id="app"></div><script>localStorage.setItem("slidev-color-schema", "dark");</script>') });
+    const slidev = await linkDeck(files, { kind: 'slidev-build', engine: 'slidev', entry: 'index.html', issues: [], flags: {} }, nodeVendorProvider());
+    assert.ok(!codes(slidev).includes('browser-storage'));
+    const plain = await linkDeck(files, { kind: 'html', engine: 'html', entry: 'index.html', issues: [], flags: {} }, nodeVendorProvider());
+    assert.ok(codes(plain).includes('browser-storage'));
+  });
+
+  it('repairs "<" in a single-dollar formula only when the presentation typesets single dollars', async () => {
+    const without = await link({ 'index.html': reveal('<section><p id="f">$a<b$</p></section>') });
+    // Left to the HTML parser as written: no "&lt;" is put in.
+    assert.doesNotMatch(without.html, /\$a&lt;b\$/);
+    assert.ok(!codes(without).includes('formula-less-than'));
+    const katex = await link({ 'index.html': reveal('<section><p id="f">$a<b$</p></section>', { init: 'Reveal.initialize({ plugins: [RevealMath.KaTeX] });' }).replace('</body>', '<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/math/math.js"></script></body>') });
+    assert.match(katex.html, /<p id="f">\$a&lt;b\$<\/p>/);
+    assert.ok(codes(katex).includes('formula-less-than'));
+  });
+
+  it('gives no reveal-style-missing to a plain page that loads reveal.js without reveal.css', async () => {
+    const result = await link({ 'index.html': page(`<main><h1>Not slides</h1></main>${REVEAL_SCRIPT}`) });
+    assert.ok(!codes(result).includes('reveal-style-missing'), JSON.stringify(result.issues));
+  });
+
+  it('leaves a formula alone that holds a comment followed by a tag', () => {
+    for (const html of ['<p>\\( a<!-- x --><b>y \\)</p>', '<p>$a<!-- c --><b>x$</p>', '<p>\\( x <!-- --><x \\)</p>', '<p>$a<!-- c --><x$</p>']) {
+      assert.deepEqual(repairFormulaTags(html, { singleDollar: true }), { html, repaired: 0 }, html);
+    }
   });
 });
 
@@ -208,9 +274,24 @@ describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
   const warning = 'This Reveal.js presentation has no Reveal.js stylesheet (reveal.css), so the slides will be laid out wrongly. Ask your AI assistant to keep the links to reveal.css and a theme.';
   const handWritten = '.reveal { position: relative; } .reveal .slides { position: absolute; } .reveal .slides > section { display: none; }';
 
-  it('warns when reveal.css was replaced by a hand-written file', async () => {
-    const result = await link({ 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-base.css">' }), 'css/reveal-base.css': handWritten });
-    assert.deepEqual(result.issues.filter((item) => item.code === 'reveal-style-missing').map((item) => [item.severity, item.message]), [['warning', warning]]);
+  // The layout rule of reveal.css, as the browser check of the review measured it (review W3.3).
+  const layout = '.reveal .slides>section,.reveal .slides>section>section{display:none;position:absolute;width:100%}';
+
+  it('warns when reveal.css was replaced by a hand-written file or a cosmetic rule, in a file or a style element', async () => {
+    const cosmetic = '.reveal .slides section { background: #eef; }';
+    const cases: Record<string, string>[] = [
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-base.css">' }), 'css/reveal-base.css': handWritten },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${handWritten}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${cosmetic}</style>` }) },
+      // The rule in a comment, or inside the body of another rule, does not count.
+      { 'index.html': reveal('<section>A</section>', { head: `<style>/* ${layout} */ ${cosmetic}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal .slides > section { color: red } .other { position: absolute }</style>' }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal .slides > section-like { position: absolute }</style>' }) },
+    ];
+    for (const files of cases) {
+      const result = await link(files);
+      assert.deepEqual(result.issues.filter((item) => item.code === 'reveal-style-missing').map((item) => [item.severity, item.message]), [['warning', warning]], files['index.html']);
+    }
   });
 
   it('is quiet with the bundled, a local or an inline Reveal.js stylesheet, and for pages that are not Reveal.js', async () => {
@@ -218,14 +299,37 @@ describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
       { 'index.html': reveal('<section>A</section>') },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="dist/reveal.css"><link rel="stylesheet" href="dist/theme/black.css">' }), 'dist/reveal.css': '.reveal .slides{}', 'dist/theme/black.css': 'body{}' },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/theme.css">' }), 'css/theme.css': '@import url(../lib/reveal.min.css);', 'lib/reveal.min.css': '.reveal{}' },
-      { 'index.html': reveal('<section>A</section>', { head: `<style>${handWritten}</style>` }) },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="https://unpkg.com/reveal.js/dist/reveal.css">' }) },
+      // By content, under any name and with any combinator spelling (review W3.3).
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/styles.css">' }), 'css/styles.css': `body{margin:0}\n${layout}` },
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-5.1.0.min.css">' }), 'css/reveal-5.1.0.min.css': layout },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${layout}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>@media screen { .reveal  .slides\n>\nsection { display: none; POSITION : absolute; } }</style>' }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal>.slides>section{transition:none;position:absolute}</style>' }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal .slides section { position: absolute; top: 0 }</style>' }) },
       { 'index.html': page('<div class="reveal"><div class="slides"><section>A</section></div></div><style>body{}</style>') },
     ];
     for (const files of quiet) {
       const result = await link(files);
       assert.ok(!codes(result).includes('reveal-style-missing'), files['index.html']);
     }
+  });
+});
+
+describe('the content test for the Reveal.js layout (review W3.3)', () => {
+  it('finds the layout in the real reveal.css of versions 3 to 6, under any name', async () => {
+    const real = readFileSync(new URL('../node_modules/reveal.js/dist/reveal.css', import.meta.url), 'utf8');
+    assert.equal(hasRevealLayoutRule(real), true);
+    assert.equal(hasRevealLayoutRule('.reveal .slides > section, .reveal .slides > section > section {\n  display: none;\n  position: absolute;\n  width: 100%; }'), true, 'the 3.x file');
+    const result = await link({ 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/styles.css">' }), 'css/styles.css': real });
+    assert.ok(!codes(result).includes('reveal-style-missing'));
+  });
+
+  it('does not count a rule that is not closed, or a comment that is not closed', () => {
+    assert.equal(hasRevealLayoutRule('.reveal .slides > section { position: absolute'), false);
+    assert.equal(hasRevealLayoutRule('/* .reveal .slides > section { position: absolute }'), false);
+    assert.equal(hasRevealLayoutRule('.reveal .slides > section { position: relative } x { position: absolute }'), false);
+    assert.equal(hasRevealLayoutRule(''), false);
   });
 });
 
@@ -242,7 +346,9 @@ describe('data saved in the browser (VF5.3)', () => {
   });
 
   it('is quiet for reads, comparisons and the deck\'s own copy of Reveal.js', async () => {
-    for (const code of ['const slide = localStorage.getItem("slide");', 'if (document.cookie == "") {}', 'var name = "localStorage";']) {
+    for (const code of ['const slide = localStorage.getItem("slide");', 'if (document.cookie == "") {}', 'var name = "localStorage";',
+      // Review W3.4: a cookie read into a variable named cookie, and writes that are only mentioned in comments.
+      'var cookie = document.cookie;', '// localStorage.setItem("x", 1);\nvar y = 1;', '/* document.cookie = "a=1"; sessionStorage.x = 2; */ var z = "//";']) {
       assert.ok(!codes(await link({ 'index.html': page(`<p>x</p><script>${code}</script>`) })).includes('browser-storage'), code);
     }
     const local = await link({
@@ -269,7 +375,7 @@ describe('wording (VF6.5, VF6.8)', () => {
   it('says what to do about a script that is not part of a Slidev build', async () => {
     const converted = await convert(slidevBuild({ head: '<script src="/extra.js"></script>' }));
     assert.equal(converted.issues.find((item) => item.code === 'script-left-out')?.message,
-      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with “npx slidev build”, then open a new ZIP of the project (with dist/ inside).');
+      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).');
   });
 
   it('ends the inline-script notes with a next step, and says "AI assistant"', async () => {
@@ -280,6 +386,25 @@ describe('wording (VF6.5, VF6.8)', () => {
     assert.ok(issue(template, 'inline-script-unsupported')?.message.endsWith(next));
     const source = detectDeck(deck({ 'slides.md': '---\ntheme: default\n---\n# Hi\n', 'package.json': '{"dependencies":{"@slidev/cli":"52.0.0"}}' }));
     assert.match(source.issues.find((item) => item.code === 'slidev-source')?.message ?? '', /ask your AI assistant for the built presentation/);
+  });
+
+  it('asks for a new ZIP of the project with dist/ inside in every Slidev rebuild note, with straight quotes', async () => {
+    const files = deck({ 'slides.md': '---\ntheme: default\n---\n# Hi\n', 'package.json': '{"dependencies":{"@slidev/cli":"52.0.0"}}' });
+    assert.match(detectDeck(files).issues.find((item) => item.code === 'slidev-source')?.message ?? '',
+      /Run "npx slidev build" in the project, which makes its dist folder, then open a new ZIP of the project \(with dist\/ inside\)/);
+    const project = await openDeck(new File([zipSync({ 'slides.md': files.get('slides.md')!, 'package.json': files.get('package.json')! })], 'waves.zip'));
+    assert.ok(project);
+    const result = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
+    for (const item of result.issues.filter((entry) => entry.code === 'slidev-source')) {
+      assert.match(item.message, /open a new ZIP of the project \(with dist\/ inside\)/);
+      assert.doesNotMatch(item.message, /ZIP of the dist folder/);
+    }
+    const build = slidevBuild();
+    build.set('index.html', new TextEncoder().encode(new TextDecoder().decode(build.get('index.html')).replace('src="/assets/index-abc.js"', 'src="https://example.org/app.js"')));
+    const noApp = await convert(build);
+    assert.equal(noApp.issues.find((item) => item.code === 'slidev-entry-missing')?.message,
+      'The build\'s index.html does not start its app from a script in the ZIP. Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside and its whole assets folder).');
+    assert.doesNotMatch(readFileSync('src/lib/slidev-convert.ts', 'utf8'), /[“”]npx/);
   });
 });
 

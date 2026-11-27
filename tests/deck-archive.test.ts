@@ -114,13 +114,19 @@ describe('deck archive reading', () => {
     await assert.rejects(readDeckArchive(await mutate(base, (_bytes, view, central) => {
       view.setUint32(central + 24, 0xffffffff, true);
     })), /ZIP64|exceeds/);
+    // Python's force_zip64 writes small entries with ZIP64 sizes in the local header only (W4.6).
+    await assert.rejects(readDeckArchive(await mutate(base, (_bytes, view, central) => {
+      const local = view.getUint32(central + 42, true);
+      view.setUint32(local + 18, 0xffffffff, true);
+      view.setUint32(local + 22, 0xffffffff, true);
+    })), /^PresentationPackageError: This ZIP could not be opened\. A file in it is stored in the ZIP64 format, which the site cannot read\. Make an ordinary ZIP of the folder, then open it\.$/);
     await assert.rejects(readDeckArchive(await mutate(base, (bytes, view) => {
       view.setUint16(bytes.length - 22 + 4, 1, true);
     })), /Multi-volume/);
     await assert.rejects(readDeckArchive(await mutate(base, (bytes, view, central) => {
       const local = view.getUint32(central + 42, true);
       bytes[local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true)] ^= 1;
-    })), /damaged file/);
+    })), /^PresentationPackageError: This ZIP could not be opened: the file .+ in it is damaged\. Download it again or make the ZIP again, then open the new file\.$/);
     await assert.rejects(readDeckArchive(new File([strToU8('not a zip at all, sorry')], 'x.zip')),
       /^PresentationPackageError: This ZIP is damaged or incomplete, perhaps because the download did not finish\. Download it again or make the ZIP again, then open the new file\.$/);
   });
@@ -152,7 +158,7 @@ describe('deck archive reading', () => {
         at += 46 + nameSize + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
       }
     });
-    await assert.rejects(readDeckArchive(file), /damaged file: \.DS_Store/);
+    await assert.rejects(readDeckArchive(file), /could not be opened: the file \.DS_Store in it is damaged\./);
   });
 
   it('rejects empty and oversized archives before reading them', async () => {
@@ -160,7 +166,8 @@ describe('deck archive reading', () => {
     const big = { name: 'big.zip', size: PRESENTATION_LIMITS.archiveBytes + 1, arrayBuffer: () => { read = true; } } as unknown as File;
     await assert.rejects(readDeckArchive(big), /smaller than 60 MB/);
     assert.equal(read, false);
-    await assert.rejects(readDeckArchive(new File([], 'empty.zip')), /smaller than 60 MB/);
+    await assert.rejects(readDeckArchive(new File([], 'empty.zip')),
+      /^PresentationPackageError: This file is empty, perhaps because the download did not finish\. Download it again or make the ZIP again, then open the new file\.$/);
     await assert.rejects(readDeckArchive(zipFile({ '.DS_Store': 'x', '__MACOSX/a': 'b' })), /no usable files/);
   });
 
@@ -189,7 +196,7 @@ describe('single HTML files as decks', () => {
   });
 
   it('rejects empty and oversized pages', async () => {
-    await assert.rejects(deckFromHtmlFile(new File([], 'empty.html')), /This HTML file is empty\. Export the presentation again\./);
+    await assert.rejects(deckFromHtmlFile(new File([], 'empty.html')), /^PresentationPackageError: This HTML file is empty, perhaps because the download did not finish\. Download it again or ask your AI assistant for the presentation again, then open the new file\.$/);
     const big = { name: 'big.html', size: PRESENTATION_LIMITS.htmlBytes + 1, arrayBuffer: () => { throw new Error('read'); } } as unknown as File;
     await assert.rejects(deckFromHtmlFile(big), /smaller than 24 MB/);
   });

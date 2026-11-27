@@ -43,6 +43,7 @@ describe('recognising MathJax scripts', () => {
     const cases: [string, 2 | 3 | 4 | undefined][] = [
       ['https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js', 3],
+      ['https://cdn.jsdelivr.net/npm/mathjax-full@3.2.2/es5/tex-chtml.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax@3/es5/startup.js', 3],
       ['https://cdn.jsdelivr.net/npm/mathjax/es5/tex-svg-full.js', 3],
@@ -141,6 +142,17 @@ function element(localName: string, children: FakeNode[], classes: string[] = []
 }
 const textNode = (value: string): FakeNode => ({ nodeType: 3, nodeValue: value });
 
+/** The delimiter pairs other than the LaTeX environments. */
+const delimitersOf = (options: any): { left: string; right: string; display: boolean }[] =>
+  JSON.parse(JSON.stringify(options.delimiters)).filter((pair: { left: string }) => !pair.left.startsWith('\\begin{'));
+/** The environments typeset without delimiters around them. */
+const environmentsOf = (options: any): string[] =>
+  [...options.delimiters].filter((pair: { left: string }) => pair.left.startsWith('\\begin{')).map((pair: { left: string; right: string; display: boolean }) => {
+    assert.equal(pair.right, pair.left.replace('\\begin', '\\end'));
+    assert.equal(pair.display, true);
+    return pair.left.slice(7, -1);
+  }).sort();
+
 /** Runs the stand-in in a sandbox; `before` runs first, as the page's earlier scripts. */
 function standIn(before = '', { readyState = 'complete', version = 3 as 2 | 3 | 4, render }: { readyState?: string; version?: 2 | 3 | 4; render?: (root: unknown, options: any) => void } = {}) {
   const rendered: { root: unknown; options: any }[] = [];
@@ -181,7 +193,7 @@ describe('the MathJax stand-in', () => {
     await flush();
     assert.equal(rendered.length, 1);
     assert.equal(rendered[0].root, body);
-    assert.deepEqual(JSON.parse(JSON.stringify(rendered[0].options.delimiters)), [
+    assert.deepEqual(delimitersOf(rendered[0].options), [
       { left: '$$', right: '$$', display: true }, { left: '\\[', right: '\\]', display: true }, { left: '\\(', right: '\\)', display: false }]);
     assert.ok(rendered[0].options.ignoredTags.includes('code'));
     assert.equal(context.Reveal.layouts, 1, 'Reveal.js lays the slides out again');
@@ -201,12 +213,42 @@ describe('the MathJax stand-in', () => {
     await context.MathJax.typesetPromise(['slide']);
     assert.equal(rendered.length, 1);
     const options = rendered[0].options;
-    assert.deepEqual(JSON.parse(JSON.stringify(options.delimiters)), [{ left: '\\[', right: '\\]', display: true }, { left: '$', right: '$', display: false }]);
+    assert.deepEqual(delimitersOf(options), [{ left: '\\[', right: '\\]', display: true }, { left: '$', right: '$', display: false }]);
     assert.equal(options.macros['\\RR'], '\\mathbb{R}');
     assert.equal(options.macros['\\bold'], '{\\bf #1}');
     assert.equal(options.macros['\\CC'], '\\mathbb{C}');
     assert.equal(typeof options.preProcess, 'function');
     assert.equal(options.preProcess('\\begin{eqnarray}a&=&b\\end{eqnarray}'), '\\begin{align}a&=&b\\end{align}');
+  });
+
+  it('typesets LaTeX environments written directly in the text, unless processEnvironments is false (review W3.2)', async () => {
+    const all = ['CD', 'align', 'align*', 'alignat', 'alignat*', 'eqnarray', 'eqnarray*', 'equation', 'equation*', 'gather', 'gather*'];
+    for (const [before, version, expected] of [
+      ['', 3, all],
+      ['window.MathJax = { tex: { processEnvironments: true } };', 3, all],
+      ['window.MathJax = { tex: { processEnvironments: false } };', 3, []],
+      ['window.MathJax = { tex: { processEnvironments: false } };', 4, []],
+      ['', 2, all],
+      [mathJaxConfigSource('MathJax.Hub.Config({ tex2jax: { processEnvironments: false } });'), 2, []],
+    ] as const) {
+      const { rendered, flush } = standIn(before, { version });
+      await flush();
+      assert.deepEqual(environmentsOf(rendered[0].options), expected, `${version}: ${before}`);
+      // The longer name comes first, so that align* is not read as align.
+      const lefts = rendered[0].options.delimiters.map((pair: { left: string }) => pair.left);
+      if (expected.length) assert.ok(lefts.indexOf('\\begin{align*}') < lefts.indexOf('\\begin{align}'));
+    }
+  });
+
+  it('gives KaTeX auto-render environments it can typeset, with eqnarray read as align', async () => {
+    const { rendered, flush } = standIn();
+    await flush();
+    const options = rendered[0].options;
+    for (const name of environmentsOf(options)) {
+      const body = name.startsWith('alignat') ? '{2}a&=b&c&=d\\\\e&=f' : name === 'CD' ? 'A @>a>> B' : name.startsWith('equation') ? 'a=b' : 'a&=b\\\\c&=d';
+      const tex = options.preProcess(`\\begin{${name}}${body}\\end{${name}}`);
+      assert.doesNotThrow(() => katex.renderToString(tex, { displayMode: true, throwOnError: true, macros: { ...options.macros } }), name);
+    }
   });
 
   it('calls a configured startup.ready, which calls defaultReady', async () => {
@@ -226,7 +268,7 @@ describe('the MathJax stand-in', () => {
     await flush();
     assert.deepEqual(rendered.map((entry) => entry.root), [context.document.body, slide]);
     assert.equal(queued, 1);
-    assert.deepEqual(JSON.parse(JSON.stringify(rendered[0].options.delimiters)), [
+    assert.deepEqual(delimitersOf(rendered[0].options), [
       { left: '$$', right: '$$', display: true }, { left: '\\(', right: '\\)', display: false }, { left: '$', right: '$', display: false }]);
     assert.equal(rendered[0].options.macros['\\half'], '\\frac12');
     // After the start: at once, and a config script that comes later runs at once too.
@@ -286,6 +328,20 @@ describe('the MathJax stand-in', () => {
 });
 
 describe('Reveal\'s math plugin stand-in', () => {
+  it('typesets bare LaTeX environments for MathJax configurations, not for KaTeX', () => {
+    for (const [factory, config, expected] of [
+      ['MathJax3', {}, 11], ['MathJax3', { mathjax3: { tex: { processEnvironments: false } } }, 0],
+      ['MathJax2', {}, 11], ['MathJax2', { math: { tex2jax: { processEnvironments: false } } }, 0], ['KaTeX', {}, 0],
+    ] as const) {
+      const seen: any[] = [];
+      const context: Record<string, any> = { document: { readyState: 'complete' }, renderMathInElement: (_root: unknown, options: any) => seen.push(options) };
+      context.window = context;
+      vm.runInNewContext(mathStandInSource(), context);
+      context.RevealMath[factory]().init({ getConfig: () => config, isReady: () => true, getSlidesElement: () => element('div', []), layout: () => {} });
+      assert.equal(seen[0].delimiters.filter((pair: { left: string }) => pair.left.startsWith('\\begin{')).length, expected, `${factory} ${JSON.stringify(config)}`);
+    }
+  });
+
   it('also shows the placeholder for references in text, for MathJax configurations only', () => {
     for (const [factory, expected] of [['MathJax3', 'See (?).'], ['KaTeX', 'See \\eqref{a}.']] as const) {
       const text = textNode('See \\eqref{a}.');

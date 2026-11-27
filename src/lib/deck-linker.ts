@@ -6,9 +6,9 @@ import {
 } from './deck-vendor';
 import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
-  mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
+  mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, scriptEventSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
-import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
+import { defaultImportBindings, rewriteScriptedNavigation, scanModuleImports, scanStringLiterals, withoutComments } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
 import { PRESENTATION_LIMITS } from './presentation-package';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
@@ -499,6 +499,15 @@ const MAX_NOTE_LENGTH = 350;
 /** The last sentence of a note about files too large to include (review VUX.6). */
 const SMALLER_FILES = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
 
+/** That sentence for the kind of the largest file (review W3.5); pictures when no file is named. */
+function smallerFiles(path: string | undefined): string {
+  const extension = /\.([a-z0-9]{1,5})$/i.exec(path ?? '')?.[1]?.toLowerCase() ?? '';
+  if (/^(?:mp4|m4v|webm|ogv|mov|mkv|avi|mpe?g)$/.test(extension)) return 'Make the video shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  if (/^(?:mp3|wav|ogg|oga|opus|m4a|aac|flac|weba)$/.test(extension)) return 'Make the recording shorter or smaller, or leave it out and link to it online; then open the new ZIP.';
+  if (path === undefined || /^(?:png|jpe?g|gif|webp|avif|svg|bmp|ico|tiff?|jfif)$/.test(extension)) return SMALLER_FILES;
+  return 'Leave out files the slides do not use; then open the new ZIP.';
+}
+
 /** The last sentence of a note about something left out that the AI can fix. */
 const NEXT_STEP = 'Copy the report for your AI assistant to get a version that works here.';
 
@@ -576,6 +585,11 @@ class DeckLinker {
   private readonly bundled: string[] = [];
   private readonly versionNotes = new Set<string>();
   private readonly deferred: ChildNode[] = [];
+  /** The first website that the presentation's own scripts go to by changing the page address. */
+  private navigationHost: string | undefined;
+  private navigationRewritten = false;
+  /** The last classic script with a src could not be supplied (its onerror applies). */
+  private scriptLeftOut = false;
   private readonly handlerScripts: Element[] = [];
   private readonly importMap = new Map<string, string>();
   private readonly classicTexts: string[] = [];
@@ -778,7 +792,7 @@ class DeckLinker {
     if (length > this.maxLength || this.embeddedChars + length > this.maxLength * 2) {
       this.dataUris.set(key, null);
       this.removedReferences += 1;
-      this.report('asset-too-large', 'warning', `${cleanReportedText(key, 120)} (${formatBytes(bytes.length)}) is too large to include, so it is left out. ${SMALLER_FILES}`, key);
+      this.report('asset-too-large', 'warning', `${cleanReportedText(key, 120)} (${formatBytes(bytes.length)}) is too large to include, so it is left out. ${smallerFiles(key)}`, key);
       return undefined;
     }
     const uri = `data:${type};base64,${base64(bytes)}`;
@@ -971,8 +985,10 @@ class DeckLinker {
       if (chain.includes(key) || chain.length >= MAX_IMPORT_DEPTH) return '';
       this.inlinedFiles += 1;
       this.usedFiles.add(target.path);
-      if (/(?:^|\/)reveal(?:\.min)?\.css$/i.test(target.path)) this.revealStylesheet = true;
-      return this.rewriteCss(decodeText(this.files.get(target.path)!, target.path), { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
+      const css = decodeText(this.files.get(target.path)!, target.path);
+      // A copy of reveal.css under its own name, or any file that holds its layout (review W3.3).
+      if (!this.revealStylesheet && (mapLibraryPath(target.path)?.role === 'reveal-style' || hasRevealLayoutRule(css))) this.revealStylesheet = true;
+      return this.rewriteCss(css, { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
     }
     if (target.kind === 'missing') {
       const reference = mapLibraryPath(target.path);
@@ -1108,15 +1124,39 @@ class DeckLinker {
       return;
     }
     const replacement = await this.classicScript(src, element);
+    const elements = [...replacement, ...this.scriptEvent(element, replacement, this.scriptLeftOut)];
     const deferred = hasAttribute(element, 'defer') && !hasAttribute(element, 'async');
-    if (deferred && replacement.length) {
+    if (deferred && elements.length) {
       this.edits.remove(element);
-      this.deferred.push(...replacement);
-    } else this.edits.replace(element, replacement);
+      this.deferred.push(...elements);
+    } else this.edits.replace(element, elements);
   }
 
-  /** The inline elements that replace a classic script with a src. */
+  /**
+   * The element's onload code, run once right after its replacement, or its
+   * onerror code when the script was left out (review W3.1): KaTeX's own
+   * documentation starts auto-render from onload. Scripts never reach
+   * collectHandlers, so neither runs twice.
+   */
+  private scriptEvent(element: Element, replacement: Element[], leftOut: boolean): Element[] {
+    const type = leftOut ? 'error' : 'load';
+    const code = getAttribute(element, `on${type}`);
+    if (code === undefined || !code.trim()) return [];
+    this.classicTexts.push(code);
+    const own = this.ownScript(code);
+    const last = replacement.at(-1);
+    let target: string | undefined;
+    if (last) {
+      const id = String(this.nextHandlerId++);
+      setAttribute(last, 'data-qft-on', id);
+      target = `[data-qft-on="${id}"]`;
+    }
+    return [scriptElement(scriptEventSource(type, own, target), { [LINKER_MARKER]: 'script-event' satisfies LinkerScript })];
+  }
+
+  /** The inline elements that replace a classic script with a src; sets scriptLeftOut. */
   private async classicScript(src: string, element: Element): Promise<Element[]> {
+    this.scriptLeftOut = false;
     const target = this.resolve(src, this.baseDir);
     const attributes: Record<string, string> = {};
     const id = getAttribute(element, 'id');
@@ -1132,7 +1172,7 @@ class DeckLinker {
         this.inlinedFiles += 1;
         this.classicTexts.push(code);
         if (library) this.libraryTexts.add(code);
-        return [scriptElement(code, { ...attributes, 'data-qft-from': target.path }, namespace)];
+        return [scriptElement(library ? code : this.ownScript(code), { ...attributes, 'data-qft-from': target.path }, namespace)];
       }
       case 'missing': {
         const mathJax = mathJaxPathVersion(target.path);
@@ -1140,6 +1180,7 @@ class DeckLinker {
         const reference = mapLibraryPath(target.path);
         if (reference) return this.vendorScripts(reference, target.path, attributes);
         this.reportMissing(target.path);
+        this.scriptLeftOut = true;
         return [];
       }
       case 'remote': {
@@ -1155,6 +1196,7 @@ class DeckLinker {
           return this.vendorScripts(reference, target.url, attributes);
         }
         this.reportRemote(target, 'script');
+        this.scriptLeftOut = true;
         return [];
       }
       case 'data': {
@@ -1164,10 +1206,12 @@ class DeckLinker {
           return [scriptElement(code, attributes, namespace)];
         }
         this.reportOther('a script written as a data: address');
+        this.scriptLeftOut = true;
         return [];
       }
       default:
         if (target.kind === 'other') this.reportOther(target.value);
+        this.scriptLeftOut = true;
         return [];
     }
   }
@@ -1182,9 +1226,30 @@ class DeckLinker {
     this.classicTexts.push(code);
     // A library that an earlier link inlined says where it came from.
     const from = getAttribute(element, 'data-qft-from');
-    if (from !== undefined && this.libraryOf(from)) this.libraryTexts.add(code);
-    const rewritten = this.rewriteConfigFiles(code);
+    const library = from !== undefined && !!this.libraryOf(from);
+    if (library) this.libraryTexts.add(code);
+    const rewritten = this.rewriteConfigFiles(library ? code : this.ownScript(code));
     if (rewritten !== code) { code = rewritten; setText(element, code); }
+  }
+
+  /**
+   * The presentation's own script code with `location.href = "https://…"` and
+   * its literal kin turned into window.open, which the player offers as a link
+   * (review W1.1). Library files are not passed here.
+   */
+  private ownScript(code: string): string {
+    const result = rewriteScriptedNavigation(code);
+    if (!result) return code;
+    this.navigationRewritten = true;
+    if (this.navigationHost === undefined) {
+      for (const address of result.addresses) {
+        try {
+          const host = new URL(address.startsWith('//') ? `https:${address}` : address).host;
+          if (/^[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(host)) { this.navigationHost = host; break; }
+        } catch { /* An address that does not parse names no host. */ }
+      }
+    }
+    return result.code;
   }
 
   /** parallaxBackgroundImage in a Reveal configuration names a file; embed it. */
@@ -1272,14 +1337,15 @@ class DeckLinker {
       else if (target.kind === 'remote') reference = mapLibraryUrl(target.url);
       else if (target.kind === 'local') reference = mapLibraryPath(target.path);
       if (reference && reference.role !== 'not-needed') {
-        this.edits.replace(element, await this.vendorScripts(reference, src));
+        const replacement = await this.vendorScripts(reference, src);
+        this.edits.replace(element, [...replacement, ...this.scriptEvent(element, replacement, false)]);
         return;
       }
       if (target.kind !== 'local') {
         if (target.kind === 'missing') this.reportMissing(target.path);
         else if (target.kind === 'remote') this.reportRemote(target, 'script');
         else if (target.kind === 'other') this.reportOther(target.value);
-        this.edits.remove(element);
+        this.edits.replace(element, this.scriptEvent(element, [], true));
         return;
       }
       code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
@@ -1292,7 +1358,7 @@ class DeckLinker {
 
     const { imports, complete } = scanModuleImports(code);
     if (!imports.length && complete) {
-      const rewritten = this.rewriteConfigFiles(code);
+      const rewritten = this.rewriteConfigFiles(this.ownScript(code));
       if (src !== undefined || rewritten !== code) {
         this.edits.replace(element, [scriptElement(rewritten, { type: 'module', ...(src ? { 'data-qft-from': where } : {}) })]);
       }
@@ -1341,7 +1407,7 @@ class DeckLinker {
     for (const { start, end, text } of replacements.sort((a, b) => b.start - a.start)) {
       rewritten = rewritten.slice(0, start) + text + rewritten.slice(end);
     }
-    rewritten = this.rewriteConfigFiles(`${bindings.join('\n')}${bindings.length ? '\n' : ''}${rewritten}`);
+    rewritten = this.rewriteConfigFiles(`${bindings.join('\n')}${bindings.length ? '\n' : ''}${this.ownScript(rewritten)}`);
     nodes.push(scriptElement(rewritten, { type: 'module', 'data-qft-from': where }));
     this.edits.replace(element, nodes);
   }
@@ -1385,7 +1451,11 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    this.edits.replace(element, css ? [styleElement(css, attributes)] : []);
+    // Other onload code runs once the style is in place (review W3.1); the
+    // two forms above are already applied to the style element.
+    const style = css ? [styleElement(css, attributes)] : [];
+    const handled = /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload) || media !== undefined;
+    this.edits.replace(element, style.length && !handled ? [...style, ...this.scriptEvent(element, style, false)] : style);
   }
 
   /* --------------------------------------------------------- Markdown */
@@ -1702,12 +1772,12 @@ class DeckLinker {
     const handlers: HandlerSource[] = [];
     for (const attribute of attributes) {
       const event = attribute.name.slice(2).toLowerCase();
-      const handler = { event, code: attribute.value };
+      const handler = { event, code: this.ownScript(attribute.value) };
       if ((tag === 'body' || tag === 'frameset') && WINDOW_EVENTS.has(event)) windowHandlers.push(handler);
       else handlers.push(handler);
     }
     if (script !== undefined && !/^(?:void\s*(?:\(\s*0\s*\)|0)\s*;?|;)?$/.test(script.trim())) {
-      handlers.push({ event: 'click', code: script, prevent: true });
+      handlers.push({ event: 'click', code: this.ownScript(script), prevent: true });
       handlers.push({ event: 'keydown', code: "if (event.key === 'Enter') this.click();" });
       if (!hasAttribute(element, 'tabindex')) setAttribute(element, 'tabindex', '0');
       if (!hasAttribute(element, 'role')) setAttribute(element, 'role', 'button');
@@ -1811,8 +1881,9 @@ class DeckLinker {
     }
     this.edits.apply();
     if (isEmptyPage(this.document)) {
-      const name = cleanReportedText(this.entry.split('/').pop() || 'The start page', 120);
-      this.report('page-empty', 'error', `${name} is empty. Export the presentation again.`, this.entry || undefined);
+      // The entry's path in the ZIP, which the person can find there (review W7.6).
+      const name = cleanReportedText(this.entry || 'The start page', 120);
+      this.report('page-empty', 'error', `${name} is empty. Ask your AI assistant for the presentation again.`, this.entry || undefined);
       return undefined;
     }
     const elements = elementsOf(this.document);
@@ -1835,7 +1906,7 @@ class DeckLinker {
       if (name === 'style') {
         const css = textOf(element);
         // A single-file presentation carries Reveal.js's rules inline.
-        if (!this.revealStylesheet && /\.reveal[\s>]+\.slides\b/.test(css)) this.revealStylesheet = true;
+        if (!this.revealStylesheet && hasRevealLayoutRule(css)) this.revealStylesheet = true;
         const rewritten = await this.rewriteCss(css, { kind: 'deck', dir: this.baseDir });
         if (rewritten !== css) setText(element, element.namespaceURI === NS.HTML ? escapeStyleText(rewritten) : rewritten);
       }
@@ -1873,6 +1944,15 @@ class DeckLinker {
     this.linkNote();
     this.runtimeFilesNote();
     this.storageNote();
+    this.navigationNote();
+  }
+
+  /** Scripts that went to a website by changing the page address now open it as a link (review W1.1). */
+  private navigationNote(): void {
+    if (!this.navigationRewritten) return;
+    const host = this.navigationHost ? ` (${this.navigationHost})` : '';
+    this.report('scripted-navigation', 'info',
+      `A button in the presentation goes to a website${host} by changing the page address. The player offers the address as a link instead.`, this.navigationHost);
   }
 
   /**
@@ -1881,8 +1961,9 @@ class DeckLinker {
    */
   private storageNote(): void {
     if (this.detection.engine === 'slidev') return;
-    const writes = /\b(?:local|session)Storage\s*\.\s*setItem\s*\(|\b(?:local|session)Storage\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,200}\])\s*=(?!=)|\bindexedDB\s*\.\s*open\s*\(|\bcookie\s*=(?!=)/;
-    if (![...this.classicTexts, ...this.moduleTexts].some((code) => !this.libraryTexts.has(code) && writes.test(code))) return;
+    // Writes only: an assignment to document.cookie, not a read, and nothing in a comment (review W3.4).
+    const writes = /\b(?:local|session)Storage\s*\.\s*setItem\s*\(|\b(?:local|session)Storage\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,200}\])\s*=(?!=)|\bindexedDB\s*\.\s*open\s*\(|\bdocument\s*\.\s*cookie\s*=(?!=)/;
+    if (![...this.classicTexts, ...this.moduleTexts].some((code) => !this.libraryTexts.has(code) && writes.test(withoutComments(code)))) return;
     this.report('browser-storage', 'info',
       'The presentation saves data in the browser, for example progress or scores. In the player this lasts only until the presentation is stopped.');
   }
@@ -2280,6 +2361,42 @@ const MARKDOWN_TOO_LARGE = '## Slides too large\n\nThese slides are too large to
  * tags cannot have one either, so the search for it stops. Returns undefined
  * when the result would grow beyond maxLength.
  */
+/**
+ * Whether a stylesheet lays out Reveal.js slides (review W3.3): a rule whose
+ * selector puts `section` inside `.reveal .slides` (any combinator) and whose
+ * body sets `position: absolute`, as reveal.css does. A cosmetic rule alone
+ * does not count. One pass: comments are cut with indexOf, and each rule's
+ * selector and body are disjoint pieces of the text.
+ */
+export function hasRevealLayoutRule(css: string): boolean {
+  if (!css.includes('.slides')) return false;
+  const parts: string[] = [];
+  for (let at = 0; at < css.length;) {
+    const open = css.indexOf('/*', at);
+    if (open < 0) { parts.push(css.slice(at)); break; }
+    parts.push(css.slice(at, open), ' ');
+    const close = css.indexOf('*/', open + 2);
+    at = close < 0 ? css.length : close + 2;
+  }
+  const text = parts.join('');
+  const selector = /\.reveal\s*>?\s*\.slides\s*>?\s*section(?![\w-])/i;
+  const absolute = /(?:^|[\s;])position\s*:\s*absolute(?![\w-])/i;
+  let last = -1;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '}') { last = index; continue; }
+    if (char !== '{') continue;
+    // The body of a rule runs to the next brace; a "{" there means a block such as @media.
+    let end = index + 1;
+    while (end < text.length && text[end] !== '{' && text[end] !== '}') end += 1;
+    if (end < text.length && text[end] === '}' && selector.test(text.slice(last + 1, index)) && absolute.test(text.slice(index + 1, end))) return true;
+    last = index;
+    if (text[end] === '}') { last = end; index = end; }
+    else index = end - 1;
+  }
+  return false;
+}
+
 export function replaceIframes(text: string, replace: (tag: string) => string, maxLength: number): string | undefined {
   const opening = /<iframe\b/gi;
   const closing = /<\/iframe>/gi;
@@ -2483,9 +2600,10 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
     const head = `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.`;
     const named = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${cleanReportedText(path, 60)} (${formatBytes(bytes)})`);
     // As many of the largest files as fit, so that the next step is never cut off.
-    let message = `${head} ${SMALLER_FILES}`;
+    const advice = smallerFiles(stats.largestAssets[0]?.path);
+    let message = `${head} ${advice}`;
     for (let count = named.length; count > 0; count -= 1) {
-      const candidate = `${head} The largest file${count > 1 ? 's are' : ' is'} ${named.slice(0, count).join(', ')}. ${SMALLER_FILES}`;
+      const candidate = `${head} The largest file${count > 1 ? 's are' : ' is'} ${named.slice(0, count).join(', ')}. ${advice}`;
       if (candidate.length <= MAX_NOTE_LENGTH) { message = candidate; break; }
     }
     linker.report('deck-too-large', 'error', message);

@@ -1,9 +1,9 @@
 import { zipSync, type Zippable } from 'fflate';
 import {
   inspectDirectory, isIgnoredPath, isTextPath, readEntry, safePresentationPath,
-  PRESENTATION_LIMITS, PresentationPackageError, type ArchiveEntry,
+  EMPTY_FILE_MESSAGE, PRESENTATION_LIMITS, PresentationPackageError, type ArchiveEntry,
 } from './presentation-package';
-import { cleanReportedText } from './presentation-messages';
+import { cleanReportedText, visiblePath } from './presentation-messages';
 import type { DeckFiles, DeckIssue } from './deck-types';
 
 export { isTextPath };
@@ -122,6 +122,13 @@ const CODE_PAGES: readonly CodePage[] = [
   browserCodePage('Windows-1250 (Central Europe)', 'windows-1250'),
 ];
 
+/**
+ * Names read as UTF-8, scored before every code page: names without the
+ * UTF-8 flag that are valid UTF-8 are read again only when another code page
+ * matches strictly more of them.
+ */
+const UTF8_PAGE: CodePage = browserCodePage('UTF-8', 'utf-8');
+
 /** At most this many legacy names are scored against the slides' text. */
 const LEGACY_SCORED_NAMES = 2000;
 /** At most this much of the slides' own text is read to score them. */
@@ -135,26 +142,101 @@ const REFERENCING_FILE = /\.(?:html?|css|[cm]?js|md|markdown|json)$/i;
  */
 const NAME_BREAK = /[\s"'`()<>[\]{}=,;:|*?!&#+/\\]+/;
 const NON_ASCII = /[^\u0000-\u007f]/;
+/** A numeric character reference, as HTML writes a letter it cannot type: &#x5149; or &#20809;. */
+const CHARACTER_REFERENCE = /&#(?:[xX]([0-9a-fA-F]{1,6})|([0-9]{1,7}));/g;
 
 /** The pieces of a name or text that hold a non-ASCII letter: the only part that tells code pages apart. */
 function telltalePieces(text: string): string[] {
   return text.normalize('NFC').split(NAME_BREAK).filter((piece) => NON_ASCII.test(piece));
 }
 
-/** Every telltale piece of the slides' text, as written and percent-decoded. One pass over the text. */
+/** Numeric character references replaced by their characters; others stay as written. */
+function withCharacterReferences(text: string): string {
+  return text.replace(CHARACTER_REFERENCE, (reference, hex: string | undefined, decimal: string | undefined) => {
+    const code = hex ? parseInt(hex, 16) : Number(decimal);
+    return code > 0x7f && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff) ? String.fromCodePoint(code) : reference;
+  });
+}
+
+/**
+ * Every telltale piece of the slides' text, as written, percent-decoded and
+ * with numeric character references read. One pass over the text (two when it
+ * has character references).
+ */
 function textPieces(texts: readonly string[]): Set<string> {
   const pieces = new Set<string>();
-  for (const text of texts) {
-    for (const token of text.normalize('NFC').split(NAME_BREAK)) {
-      if (NON_ASCII.test(token)) pieces.add(token);
-      else if (token.includes('%')) {
-        let decoded: string | undefined;
-        try { decoded = decodeURIComponent(token); } catch { decoded = undefined; }
-        if (decoded) for (const piece of telltalePieces(decoded)) pieces.add(piece);
+  for (const written of texts) {
+    for (const text of written.includes('&#') ? [written, withCharacterReferences(written)] : [written]) {
+      for (const token of text.normalize('NFC').split(NAME_BREAK)) {
+        if (NON_ASCII.test(token)) pieces.add(token);
+        else if (token.includes('%')) {
+          let decoded: string | undefined;
+          try { decoded = decodeURIComponent(token); } catch { decoded = undefined; }
+          if (decoded) for (const piece of telltalePieces(decoded)) pieces.add(piece);
+        }
       }
     }
   }
   return pieces;
+}
+
+/** The order in which files are read as evidence: HTML pages (the shallowest first), then CSS, then the rest. */
+function evidenceRank(entry: ArchiveEntry): number {
+  const name = entry.name.replace(/\\/g, '/');
+  const depth = Math.min(name.split('/').length, 1000);
+  if (/\.html?$/i.test(name)) return depth;
+  return /\.css$/i.test(name) ? 2000 : 3000;
+}
+
+/** The last place at or before `at` where UTF-8 text can be cut without splitting a character. */
+function utf8Boundary(data: Uint8Array, at: number): number {
+  let cut = at;
+  while (cut > 0 && cut > at - 4 && (data[cut] & 0xc0) === 0x80) cut -= 1;
+  return cut;
+}
+
+/** A path as the deck path rule writes it, for comparing names: slashes, no empty or "." segments, NFC, any case. */
+function collisionKey(name: string): string {
+  return name.replace(/\\/g, '/').split('/').filter((part) => part !== '' && part !== '.').join('/').normalize('NFC').toLowerCase();
+}
+
+/** Whether every telltale piece of a name is in the slides' text (and there is one). */
+function named(name: string, pieces: Set<string>): boolean {
+  const telltale = telltalePieces(name);
+  return telltale.length > 0 && telltale.every((piece) => pieces.has(piece));
+}
+
+/**
+ * Whether the slides' text names this file when its name is read in this
+ * code page: the whole path, or the path below its top-level folder, which is
+ * usually the folder that was zipped and that the slides never name.
+ */
+function matches(page: CodePage, entry: ArchiveEntry, pieces: Set<string>): boolean {
+  const name = page.decode(entry.rawName!);
+  if (name === undefined) return false;
+  if (named(name, pieces)) return true;
+  const slash = name.search(/[\\/]/);
+  return slash >= 0 && named(name.slice(slash + 1), pieces);
+}
+
+/** The code page that the most names match, when it matches at least one; the earlier one wins a tie. */
+function bestCodePage(pages: readonly CodePage[], scored: readonly ArchiveEntry[], pieces: Set<string>): CodePage | undefined {
+  let best: CodePage | undefined;
+  let bestHits = 0;
+  for (const page of pages) {
+    let hits = 0;
+    for (const entry of scored) if (matches(page, entry, pieces)) hits += 1;
+    if (hits > bestHits) { best = page; bestHits = hits; }
+  }
+  return best;
+}
+
+/** The note about names that no code page could read, with one example; deck-project makes it a warning when a file is missing. */
+export function legacyNamesNote(example: string, missing: boolean): string {
+  const shown = cleanReportedText(example, 120);
+  return missing
+    ? `Some file names in this ZIP (for example ${shown}) are stored in an old spelling that this site could not read, so the slides cannot find those files. Ask your AI assistant to give the files plain names (letters, digits and dashes) and to make the ZIP again.`
+    : `Some file names in this ZIP (for example ${shown}) are stored in an old spelling that this site could not read. If nothing is missing in the slides, you can ignore this.`;
 }
 
 interface LegacyNames {
@@ -164,54 +246,60 @@ interface LegacyNames {
 
 /**
  * ZIP tools on Windows that do not set the UTF-8 flag write names in the
- * system's code page. When some names are neither UTF-8 nor flagged, read
- * them in each likely code page, count how many of the decoded file names the
- * slides' own text mentions, and use the code page with the most matches. The
- * evidence is the archive's text, read once; names are looked up in a set of
- * its pieces, never built into a pattern. Without any match the names stay as
- * they are, with a note that says how to fix them.
+ * system's code page. When some names are not flagged and not plain ASCII,
+ * read them in each likely code page, count how many of the decoded file
+ * names the slides' own text mentions, and use the code page with the most
+ * matches. Reading them as UTF-8 is scored first, because tools on Linux and
+ * macOS write UTF-8 without the flag: another code page must match strictly
+ * more names. When UTF-8 wins, the names that are not valid UTF-8 are scored
+ * again on their own. The evidence is the archive's text (HTML first), read
+ * once; names are looked up in a set of its pieces, never built into a
+ * pattern. Without any match the names stay as they are, with a note.
  */
 function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Map<ArchiveEntry, Uint8Array>): LegacyNames {
   const legacy = directory.filter((entry) => entry.rawName);
   if (!legacy.length) return { entries: directory };
   const texts: string[] = [];
   let budget = LEGACY_TEXT_BYTES;
-  for (const entry of directory) {
-    if (entry.rawName || entry.directory || entry.size > budget || isIgnoredPath(entry.name) || !REFERENCING_FILE.test(entry.name)) continue;
+  // The extension test needs only ASCII bytes, so files with legacy names are read too.
+  const readable = directory.filter((entry) => !entry.directory && !isIgnoredPath(entry.name) && REFERENCING_FILE.test(entry.name));
+  const ranked = readable.map((entry, index) => ({ entry, index, rank: evidenceRank(entry) }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index);
+  for (const { entry } of ranked) {
+    if (budget <= 0) break;
     const data = readEntry(bytes, entry, true)!;
     cache.set(entry, data);
-    texts.push(decodeText(data, entry.name));
+    texts.push(decodeText(entry.size > budget ? data.subarray(0, utf8Boundary(data, budget)) : data, entry.name));
     budget -= entry.size;
   }
   const pieces = textPieces(texts);
   const scored = legacy.filter((entry) => !entry.directory).slice(0, LEGACY_SCORED_NAMES);
-  let best: CodePage | undefined;
-  let bestHits = 0;
-  for (const page of CODE_PAGES) {
-    let hits = 0;
-    for (const entry of scored) {
-      const name = page.decode(entry.rawName!);
-      const telltale = name === undefined ? [] : telltalePieces(name);
-      if (telltale.length && telltale.every((piece) => pieces.has(piece))) hits += 1;
-    }
-    if (hits > bestHits) { best = page; bestHits = hits; }
+  let best = bestCodePage([UTF8_PAGE, ...CODE_PAGES], scored, pieces);
+  // UTF-8 won, or nothing did: the names that cannot be UTF-8 still need a code page of their own.
+  let reread = legacy;
+  if (!best || best === UTF8_PAGE) {
+    const notUtf8 = (entry: ArchiveEntry) => UTF8_PAGE.decode(entry.rawName!) === undefined;
+    reread = legacy.filter(notUtf8);
+    if (!reread.length) return { entries: directory };
+    best = bestCodePage(CODE_PAGES, scored.filter(notUtf8), pieces);
   }
   if (!best) {
+    // Bytes that are control characters when read one per byte show as U+FFFD.
+    const example = cleanReportedText(visiblePath((reread.find((entry) => !entry.directory) ?? reread[0]).name), 120);
     return {
       entries: directory,
-      issue: {
-        code: 'zip-names-not-utf8', severity: 'info',
-        message: 'Some file names in this ZIP are not stored as UTF-8, so names with accents or non-Latin letters cannot be matched. Rename those files using plain letters, digits and dashes, change the slides to the new names, and make the ZIP again; or make the ZIP with a tool that stores UTF-8 names.',
-      },
+      issue: { code: 'zip-names-not-utf8', severity: 'info', where: example, message: legacyNamesNote(example, false) },
     };
   }
-  const key = (name: string) => name.replace(/\\/g, '/').normalize('NFC').toLowerCase();
-  const taken = new Set(directory.map((entry) => key(entry.name)));
+  const page = best;
+  // A name that the slides use as UTF-8 is never read again.
+  const rereadSet = new Set(reread.filter((entry) => !matches(UTF8_PAGE, entry, pieces)));
+  const taken = new Set(directory.map((entry) => collisionKey(entry.name)));
   const entries = directory.map((entry) => {
-    if (!entry.rawName) return entry;
-    const name = best.decode(entry.rawName);
-    if (name === undefined || name === entry.name || taken.has(key(name))) return entry;
-    taken.add(key(name));
+    if (!rereadSet.has(entry)) return entry;
+    const name = page.decode(entry.rawName!);
+    if (name === undefined || name === entry.name || taken.has(collisionKey(name))) return entry;
+    taken.add(collisionKey(name));
     return { ...entry, name };
   });
   for (const [index, entry] of entries.entries()) if (cache.has(directory[index])) cache.set(entry, cache.get(directory[index])!);
@@ -219,7 +307,7 @@ function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Ma
     entries,
     issue: {
       code: 'zip-names-code-page', severity: 'info',
-      message: `The file names in this ZIP are not stored as UTF-8. They were read as ${best.words}, which matches the names the slides use.`,
+      message: `The file names in this ZIP are stored in an old spelling. They were read as ${page.words}, which matches the names the slides use.`,
     },
   };
 }
@@ -238,7 +326,8 @@ function earlierPath(name: string): string | undefined {
  * top-level folder is removed.
  */
 export async function readDeckArchive(file: File): Promise<DeckArchive> {
-  if (!file.size || file.size > PRESENTATION_LIMITS.archiveBytes) {
+  if (!file.size) throw new PresentationPackageError(EMPTY_FILE_MESSAGE);
+  if (file.size > PRESENTATION_LIMITS.archiveBytes) {
     throw new PresentationPackageError('Choose a presentation ZIP smaller than 60 MB.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -336,7 +425,7 @@ export async function readDeckArchive(file: File): Promise<DeckArchive> {
  * twice gives the same bytes and the same content hash.
  */
 export async function deckFromHtmlFile(file: File): Promise<DeckArchive> {
-  if (!file.size) throw new PresentationPackageError('This HTML file is empty. Export the presentation again.');
+  if (!file.size) throw new PresentationPackageError('This HTML file is empty, perhaps because the download did not finish. Download it again or ask your AI assistant for the presentation again, then open the new file.');
   if (file.size > PRESENTATION_LIMITS.htmlBytes) {
     throw new PresentationPackageError('Choose an HTML file smaller than 24 MB.');
   }
