@@ -355,10 +355,11 @@ const STATEMENT_ENDS = new Set([';', '}', ')', ',']);
  * A script that sends the page to a website by changing its address
  * (review W1.1): `location.href = "https://…"`, `location = "…"`,
  * `location.assign("…")` and `location.replace("…")`, with an optional
- * window., self., top., parent. or document. before location and a complete
+ * window., self., top., parent. or document. (or window.top., window.parent.,
+ * window.self.) before location and a complete
  * string literal (quotes, or a template without substitutions) that starts
- * with http://, https:// or //. Each becomes `window.open(LITERAL, "_blank")`,
- * which the player offers as a link. Anything else is left alone; undefined
+ * with http://, https:// or //. Each becomes `window.open(LITERAL, "_blank")`
+ * (`"https:" + LITERAL` for //), which the player offers as a link. Anything else is left alone; undefined
  * when nothing changes.
  */
 export function rewriteScriptedNavigation(code: string): NavigationRewrite | undefined {
@@ -382,9 +383,12 @@ export function rewriteScriptedNavigation(code: string): NavigationRewrite | und
     if (dot && (dot.value === '.' || dot.value === '?.')) {
       const owner = tokens[index - 2];
       if (dot.value !== '.' || owner?.type !== 'name' || !LOCATION_OWNERS.has(owner.value)) continue;
-      const before = tokens[index - 3];
-      if (before && (before.value === '.' || before.value === '?.')) continue;
       first = index - 2;
+      // One window. before top, parent or self (review X3.7).
+      if (['top', 'parent', 'self'].includes(owner.value) && tokens[index - 3]?.value === '.'
+        && tokens[index - 4]?.type === 'name' && tokens[index - 4].value === 'window') first = index - 4;
+      const before = tokens[first - 1];
+      if (before && (before.value === '.' || before.value === '?.')) continue;
     }
     const at = (offset: number) => tokens[index + offset];
     let literal: Token | undefined;
@@ -417,7 +421,9 @@ export function rewriteScriptedNavigation(code: string): NavigationRewrite | und
   const parts: string[] = [];
   let position = 0;
   for (const { start, end, literal } of edits) {
-    parts.push(code.slice(position, start), `window.open(${code.slice(literal.start, literal.end)}, "_blank")`);
+    // The player opens only http and https; //host is an https address, as for links (review X3.1).
+    const scheme = code.slice(literal.start + 1, literal.start + 3) === '//' ? '"https:" + ' : '';
+    parts.push(code.slice(position, start), `window.open(${scheme}${code.slice(literal.start, literal.end)}, "_blank")`);
     position = end;
   }
   parts.push(code.slice(position));
