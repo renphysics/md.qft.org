@@ -109,13 +109,49 @@ describe('onload of a replaced script', () => {
     assert.match(list[0].code, /new Event\("load"\)/);
   });
 
-  it('runs other onload code of a stylesheet once its style is in place', async () => {
-    const result = await link(page('<link rel="stylesheet" href="a.css" onload="document.documentElement.className = \'ready\'">'), { 'a.css': 'p{color:red}' });
+  it('runs other onload code of a stylesheet after the page has been parsed (review X3.5)', async () => {
+    const result = await link(page('<link rel="stylesheet" href="a.css" onload="document.documentElement.className = \'ready\'">', '<h3>x</h3><script>window.after = 1</script>'),
+      { 'a.css': 'p{color:red}' });
     const list = items(result.html);
     const style = list.findIndex((item) => item.tag === 'style' && item.from === 'a.css');
     assert.ok(style >= 0);
-    assert.equal(list[style + 1].marker, 'script-event');
-    assert.match(list[style + 1].code, /className = 'ready'/);
+    assert.equal(list.at(-2)?.code, 'window.after = 1');
+    assert.equal(list.at(-1)?.marker, 'script-event');
+    assert.match(list.at(-1)?.code ?? '', /className = 'ready'/);
+    assert.match(list.at(-1)?.code ?? '', new RegExp(`data-qft-on=\\\\"${list[style].on}\\\\"`));
+  });
+
+  it('runs the code beside the rel or media switch of a stylesheet loaded without blocking, and nothing else (review X3.5)', async () => {
+    const files = { 'a.css': 'p{color:red}', 'b.css': 'p{color:blue}' };
+    const result = await link(page('<link rel="preload" as="style" href="a.css" onload="this.onload=null;this.rel=\'stylesheet\';L(\'pre-load\')">'
+      + '<link rel="stylesheet" media="print" href="b.css" onload="this.media=\'all\'; L(\'swap\')">'), files);
+    const list = events(items(result.html));
+    assert.deepEqual(list.map((item) => item.code.includes("L('pre-load')") || item.code.includes("L('swap')")), [true, true]);
+    for (const item of list) assert.doesNotMatch(item.code, /\.rel\s*=|\.media\s*=|onload\s*=/);
+    const plain = await link(page('<link rel="preload" as="style" href="a.css" onload="this.onload=null;this.rel=\'stylesheet\'">'
+      + '<link rel="stylesheet" media="print" href="b.css" onload="this.media=\'all\'">'), files);
+    assert.equal(events(items(plain.html)).length, 0);
+    assert.equal(items(plain.html).filter((item) => item.tag === 'style').length, 2);
+  });
+
+  it('runs onload of an async script after the page has been parsed, with the script in its place (review X3.2)', async () => {
+    const result = await link(page('<script async src="app.js" onload="startMath()"></script>', '<p>x</p><script>function startMath() {}</script>'), { 'app.js': 'window.app = 1' });
+    const order = items(result.html).filter((item) => item.tag === 'script').map((item) => item.from ?? item.marker ?? item.code);
+    assert.deepEqual(order, ['app.js', 'function startMath() {}', 'script-event']);
+  });
+
+  it('runs onload of a module script that becomes a bundled library, and onerror of one that is left out (review X5.4)', async () => {
+    const bundled = await link(page('', '<div class="reveal"><div class="slides"><section>A</section></div></div>'
+      + '<script type="module" src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.esm.js" onload="Reveal.initialize()" onerror="window.failed = 1"></script>'), {}, 'reveal');
+    const loaded = events(items(bundled.html));
+    assert.equal(loaded.length, 1);
+    assert.match(loaded[0].code, /Reveal\.initialize\(\)/);
+    assert.match(loaded[0].code, /new Event\("load"\)/);
+    const left = await link(page('', '<script type="module" src="https://unknown.example/widget.js" onload="window.loaded = 1" onerror="window.failed = 1"></script>'));
+    const failed = events(items(left.html));
+    assert.equal(failed.length, 1);
+    assert.match(failed[0].code, /window\.failed = 1/);
+    assert.match(failed[0].code, /new Event\("error"\)/);
   });
 
   it('leaves inline scripts and scripts without the attributes alone, and links a linked deck to the same page', async () => {

@@ -1124,11 +1124,17 @@ class DeckLinker {
       return;
     }
     const replacement = await this.classicScript(src, element);
-    const elements = [...replacement, ...this.scriptEvent(element, replacement, this.scriptLeftOut)];
+    const event = this.scriptEvent(element, replacement, this.scriptLeftOut);
+    const elements = [...replacement, ...event];
     const deferred = hasAttribute(element, 'defer') && !hasAttribute(element, 'async');
     if (deferred && elements.length) {
       this.edits.remove(element);
       this.deferred.push(...elements);
+    } else if (hasAttribute(element, 'async')) {
+      // An async script loads after the page has been parsed: its onload code
+      // runs then, the script stays in its place (review X3.2).
+      this.edits.replace(element, replacement);
+      this.deferred.push(...event);
     } else this.edits.replace(element, elements);
   }
 
@@ -1451,11 +1457,16 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    // Other onload code runs once the style is in place (review W3.1); the
-    // two forms above are already applied to the style element.
+    // Other onload code runs once the page has been parsed, as the load event
+    // does (review X3.5); the two forms above are already applied to the style
+    // element, so only the code beside them is left to run.
     const style = css ? [styleElement(css, attributes)] : [];
-    const handled = /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload) || media !== undefined;
-    this.edits.replace(element, style.length && !handled ? [...style, ...this.scriptEvent(element, style, false)] : style);
+    if (/\brel\s*=\s*["']\s*stylesheet\b/i.test(onload) || media !== undefined) {
+      const rest = onload.replace(/(?:\bthis\s*\.\s*)?\b(?:rel\s*=\s*(["'])\s*stylesheet\s*\1|media\s*=\s*(["'])[^"'\n]{0,200}\2|onload\s*=\s*null)/gi, '');
+      setAttribute(element, 'onload', /^[\s;]*$/.test(rest) ? '' : rest);
+    }
+    this.edits.replace(element, style);
+    if (style.length) this.deferred.push(...this.scriptEvent(element, style, false));
   }
 
   /* --------------------------------------------------------- Markdown */
