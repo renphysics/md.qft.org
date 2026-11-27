@@ -356,11 +356,11 @@ const STATEMENT_ENDS = new Set([';', '}', ')', ',']);
  * (review W1.1): `location.href = "https://…"`, `location = "…"`,
  * `location.assign("…")` and `location.replace("…")`, with an optional
  * window., self., top., parent. or document. (or window.top., window.parent.,
- * window.self.) before location and a complete
- * string literal (quotes, or a template without substitutions) that starts
- * with http://, https:// or //. Each becomes `window.open(LITERAL, "_blank")`
- * (`"https:" + LITERAL` for //), which the player offers as a link. Anything else is left alone; undefined
- * when nothing changes.
+ * window.self.) before location and a complete string literal (quotes, or a
+ * template without substitutions) that starts with http://, https:// or //.
+ * Each becomes `window.open(LITERAL, "_blank")` (`"https:" + LITERAL` for
+ * //), which the player offers as a link. Anything else is left alone;
+ * undefined when nothing changes.
  */
 export function rewriteScriptedNavigation(code: string): NavigationRewrite | undefined {
   if (!code.includes('location')) return undefined;

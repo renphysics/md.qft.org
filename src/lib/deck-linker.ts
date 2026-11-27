@@ -2376,8 +2376,7 @@ const MARKDOWN_TOO_LARGE = '## Slides too large\n\nThese slides are too large to
  * Whether a stylesheet lays out Reveal.js slides (review W3.3): a rule whose
  * selector puts `section` inside `.reveal .slides` (any combinator), with the
  * section as its subject, and whose body sets `position: absolute`, as
- * reveal.css does. A cosmetic rule alone
- * does not count. One pass: comments are cut with indexOf, and each rule's
+ * reveal.css does. A cosmetic rule alone does not count. One pass: comments are cut with indexOf, and each rule's
  * selector and body are disjoint pieces of the text.
  */
 export function hasRevealLayoutRule(css: string): boolean {

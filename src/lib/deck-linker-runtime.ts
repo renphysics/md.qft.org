@@ -49,7 +49,8 @@ export function stripSourceMapComment(code: string): string {
  * Helpers that both math stand-ins share, as script source: the delimiter
  * pairs of a configuration, the macros for MathJax-only commands, the
  * eqnarray, multline and flalign rewrite, and the placeholder for references
- * written in ordinary text. They are written into each stand-in's own function scope.
+ * written in ordinary text. They are written into each stand-in's own
+ * function scope.
  */
 function mathHelpersSource(): string {
   return `  var ignored = ['script', 'noscript', 'style', 'textarea', 'pre', 'code'];
