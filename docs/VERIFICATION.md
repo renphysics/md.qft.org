@@ -53,6 +53,19 @@ The tree after the third round of fixes (the findings of the verification of the
 
 The new browser suite is `player-actions` (a quiz form that answers on a click and on Enter, a required empty field, `requestSubmit()` and implicit submission, a form that no handler stops; `window.open` of a website after a click and links the presentation cancels; an error thrown with an empty value; a button that sends the presentation to a website). New unit test files cover the `onload` and `onerror` code of replaced scripts (`deck-linker-events`), the rewrite of literal page-address changes (`deck-linker-navigation`) and the report lines for the linker's and the player's new notes (`deck-report-merge`); `interactive-exports` now checks that the exports declare `no-referrer` exactly once in their own head, before any embedded runtime.
 
+### Automated checks after the last fix round
+
+The tree after the fourth and last round of fixes (the findings of the verification of the third round; see ARCHITECTURE.md and the README for the behaviour) gave, run on 2026-11-27 in full Chromium against this tree's own build:
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 152 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 810 tests in 95 suites; 808 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 12 of 12 suites, 138 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
+
+New browser steps cover a presentation file dropped on the open dialog with unapplied typing and Escape without a close event (`deck-editing`), a Print button's sentence over the slides, also in Present (`deck-notices`), a presentation that leaves by itself being stopped at once with the notes closed and Start presentation in view (`deck-problems`), a cancelled submit click, `form.submit()` from a timer, Enter in a form with two fields and `top.location.href` after a click (`player-actions`), and the Reload button on the stage (`library-phone`); new unit tests cover the runner's own activation in its `left` message, the names of a single HTML file in the notes and the report, the ZIP's own name and names valid as UTF-8 (`deck-zip-code-pages`), the `async` and stylesheet `onload` code, `multline` and `flalign`, `//host` and `window.top` rewrites, and the documentation's quotations of the form, print, rules and reply sentences (`docs-quotes`).
+
 ### Not verified in this round
 
 - **The review's own tools on the fixed tree.** The fixes rest on the regression tests above, each of which reproduced its finding first. The reviewers' scripts and the seven AI-made presentations were not run again for this record.

@@ -136,11 +136,17 @@ read as GBK (Chinese), which matches the names the slides use."). This also
 works when the zipped folder itself, or the start page, has such a name
 (`课件/`, `Übung/`, `量子力学.html`), when old-style names happen to be valid
 UTF-8 by accident (GBK `图片1.png`), and when the slides write the names as
-character references (`&#x5149;`). UTF-8 is tried first and wins a tie, so ZIPs
-made on macOS or Linux keep their names. The edited ZIP stores the fixed names
+character references (`&#x5149;`). The ZIP's own file name counts as well,
+because Windows names the ZIP of a folder after the folder: a ZIP of the folder
+`课件` chosen as `课件.zip` or `课件 (1).zip` gets its folder read as GBK. UTF-8
+is tried first and wins a tie, so ZIPs made on macOS or Linux keep their
+names, and a name that is valid UTF-8 is read in the old code page only when
+the slides use it in that spelling (or it lies in the same such folder), so
+one misleading word in the slides does not rename a correct ZIP. The edited ZIP stores the fixed names
 as UTF-8; **Original** returns the file as uploaded. When no code page
 matches, a note names one example and says that you can ignore it if nothing
-is missing in the slides; when a file the slides use is then missing, it asks
+is missing in the slides; when a file the slides use is then missing and its
+name has a character outside ASCII, it asks
 your AI assistant to give the files plain names (letters, digits and dashes)
 and to make the ZIP again. Lesson ZIPs keep their earlier rules for file
 names.
@@ -164,7 +170,8 @@ files, so a crafted file cannot freeze the page.
   A Reveal.js presentation without reveal.css gets a warning, because its
   slides would be laid out wrongly; a stylesheet of its own, under any name,
   counts when it lays out the slides as reveal.css does (a rule that places
-  `section` inside `.reveal .slides` with `position: absolute`).
+  `section` itself inside `.reveal .slides` with `position: absolute`; a rule
+  that positions something inside a slide does not count).
 - Formulas typeset with MathJax are typeset with KaTeX instead, using the
   presentation's delimiters and macros. This covers Reveal.js's math plugin
   and MathJax loaded on its own (MathJax 2, 3 or 4 from jsDelivr, unpkg,
@@ -175,8 +182,9 @@ files, so a crafted file cannot freeze the page.
   them). As in MathJax, the LaTeX environments `equation`, `align`,
   `alignat`, `gather` and `eqnarray` (each also with `*`) and `CD` written
   directly in the text are typeset too, unless the configuration sets
-  `processEnvironments: false`; `multline` and `flalign` stay as they are
-  written, because KaTeX does not know them. Calls a presentation makes after changing a slide, such as
+  `processEnvironments: false`. `multline` and `flalign` (each also with `*`)
+  are typeset too, laid out like `gather` (each line centred, unlike MathJax)
+  and like `align` (not stretched to the full width). Calls a presentation makes after changing a slide, such as
   `MathJax.typesetPromise()` or `MathJax.Hub.Queue(…)`, typeset again.
   `\label{…}` and `\require{…}` show nothing, `\eqref{…}` shows "(?)" and
   `\ref{…}` "?" (also in ordinary text when the presentation uses MathJax),
@@ -195,15 +203,18 @@ files, so a crafted file cannot freeze the page.
   `<template>` elements, which the notes report. `<noscript>` content is
   removed, because scripts always run in the player. The `onload` code of a
   script that is embedded or replaced by the site's copy runs once, right
-  after it, so KaTeX's documented
+  after it (for an `async` script, after the page has been read, so it can
+  call functions defined later in the page), so KaTeX's documented
   `<script defer src="…/auto-render.min.js" onload="renderMathInElement(document.body)">`
   typesets and `<script src="…/reveal.js" onload="Reveal.initialize()">`
   starts the slides; a script that is left out runs its `onerror` code
-  instead. Other `onload` code of a stylesheet link runs once the style is in
-  place.
+  instead. The `onload` code of a stylesheet link runs once after the page
+  has been read; in the `preload` and `media="print"` forms, code beside the
+  switch still runs once.
 - A button whose script goes to a website with the address written out
-  (`location.href = "https://…"`, `location.assign("https://…")` and the like)
-  is changed so that the player offers that address as a link instead (see
+  (`location.href = "https://…"`, `location.assign("https://…")`,
+  `window.top.location.href = "https://…"`, an address that starts with `//`,
+  and the like) is changed so that the player offers that address as a link instead (see
   *While it plays*); a note says so. Only the presentation's own scripts are
   changed, and only these literal forms.
 - Google Fonts and other web fonts are left out; the slides use fonts
@@ -317,30 +328,39 @@ slides. Portable packages still stop at their first error.
   answers no and `prompt()` answers nothing, and the notes say once that the
   presentation asked a question the player cannot show. Opening a new window
   (other than a website right after your click, above) does nothing and gives
-  one note. Printing (`window.print()`) does nothing; the note says to open
-  the presentation's own file in your web browser and print from there. The
-  print note and the Reveal.js speaker view (**S**), which is not available
-  either, are listed but not counted as problems and are not in the report
-  for AI.
+  one note. Printing (`window.print()`) does nothing; the note says "The
+  presentation tried to print, which the player cannot do. To print the
+  slides, open the presentation's HTML file in your web browser (unzip a ZIP
+  first) and print from there." The print note and the Reveal.js speaker view
+  (**S**), which is not available either, also show in a notice over the
+  slides (also in Present) when they are new or right after your action; they
+  are listed but not counted as problems and are not in the report for AI.
 - **A presentation that leaves its slides.** When the presentation's script
   replaces its slides with a page from a website in some other way (for
   example from an address kept in a variable), the player cannot show that
-  page. Right after your own click it starts the presentation again on the
+  page. Right after your own click or key press inside the presentation it starts the presentation again on the
   slide it showed (from the beginning for a presentation that reports no
   slide), at most 3 times per Start or Restart, and the notes say "The
   presentation tried to replace its slides with a page from **host**, which
   the player cannot do. It was started again at the same slide. Ask your AI
   assistant to use an ordinary link for that page." When it leaves by itself,
-  or for the fourth time, the player stops it: a box on the stage says "…so the player
-  stopped it. Choose Start to play it again. …", and the line under it says
-  "Ready to start". The standalone HTML download stops in this case too.
+  even within a few seconds of Start, or for the fourth time, the player stops
+  it: a box on the stage says "The presentation tried to replace its slides
+  with a page from **host**, so the player stopped it. Choose Start
+  presentation to play it again. Ask your AI assistant to use an ordinary link
+  for that page.", and the line under it says "Ready to start"; the notes do
+  not open by themselves, and **Start presentation** is scrolled into view.
+  The standalone HTML download stops in this case too. A script that sets
+  `top.location.href` to a website from a variable is treated like
+  `window.open()` of that address.
 - **Quiz forms.** A form whose submit handler checks the answers with a
   script works: the handler runs on a click on its submit button, on Enter in
   a field, and on `requestSubmit()`, after the browser's own check of
   required fields. Nothing is ever sent. A form that no script stops (and
   `form.submit()`) gives one note: "The presentation tried to send a form,
-  which the player cannot do because it works offline. Ask your AI assistant
-  to check the answers with a script on the slide instead."
+  and the player sends nothing anywhere. If the quiz still shows its result,
+  nothing is lost. Ask your AI assistant to give the button type="button", or
+  to cancel the form's submission in its script."
 - **Saved data, cookies and IDs.** Data that the presentation saves with
   `localStorage` or `sessionStorage`, and cookies, work, but only in memory
   for the current playback: Stop, Restart, and Apply start without them.
@@ -378,8 +398,11 @@ player supplies (Reveal.js 6.0.2 with reveal.css, the themes and its plugins,
 and KaTeX 0.19.1 with its parts and fonts) and to keep the links to those
 files exactly as they are (their onload code still runs); that a MathJax
 script from a CDN is replaced by KaTeX, which typesets MathJax's delimiters
-and LaTeX environments such as align written in the text; and that everything
-else must be in the ZIP. For a plain web page they name no Reveal.js plugins:
+and LaTeX environments such as align written in the text; and "Every other
+script, stylesheet, font and picture must be inside the presentation (inline
+in a single HTML file, pictures as data: URIs or inline SVG, or files in the
+ZIP beside it); nothing else may load from the internet while the
+presentation plays." For a plain web page they name no Reveal.js plugins:
 nothing may load from the internet, so every script, stylesheet, font and
 picture must be inside the presentation (inline in a single HTML file, as
 data: URIs or inline SVG, or files in the ZIP), links to Reveal.js and KaTeX
@@ -392,9 +415,12 @@ which the player offers in a new tab (as it does for `window.open()` or
 handler); and that a quiz form works when its submit handler checks the
 answers with a script and cancels the submission. For Slidev they are the
 rules of the Slidev prompt. For a single HTML file the report names the file
-(`entry: NAME.html (a single HTML file)`) and asks for the complete corrected
-file under the same name; for a ZIP it asks for a ZIP with `index.html` at the
-top.
+(`entry: NAME.html (a single HTML file)`), uses that name in the notes where
+the site would write `index.html` (in the library too), and asks for the
+complete corrected file under the same name; for a ZIP it ends "Reply: send
+back the complete corrected presentation as a ZIP with the same file names
+(the entry above at the top), fixing the notes above and changing nothing
+else."
 
 ### Edit the source and replay
 
@@ -411,7 +437,9 @@ only close the editor's suggestions); Escape again closes the dialog. While
 typing is not applied, or edits could not be saved, Escape always asks
 "Leave without your changes?" first, also after **Keep editing** and right
 after an undo; if the dialog closes in any other way while changes are
-pending, it opens again as it was, still playing, and asks. **Discard changes to this file** removes
+pending, it opens again as it was, still playing, and asks. A presentation
+file dropped on the dialog then asks the same question: **Keep editing** keeps
+everything, **Discard changes** opens the dropped file. **Discard changes to this file** removes
 typing that is not applied yet and keeps what is saved (Undo in the editor
 brings the typing back); on a file with only applied changes it asks first,
 then returns that file to its imported text. **Restore original** returns the
@@ -466,7 +494,10 @@ browser.
 
 Presentations are saved in a separate IndexedDB database for this site and
 path, with their original files, and a presentation already in the library is
-not added twice. Library rows with the same title show the file name. Opening
+not added twice. Library rows with the same title show the file name, and
+rows with the same title and file name also the time of import (for example
+"k2.zip · HTML · 6 KB · Imported Nov 27, 2:05 PM", in your browser's date
+format). Opening
 a saved Slidev build converts it again, which takes a few seconds. If a
 presentation cannot be saved, it stays in the library until you leave the page
 (at most five, 120 MB together); keep your original file. After the site is
@@ -476,8 +507,8 @@ part of the site cannot be loaded, every message says so: "A part of this
 site could not be loaded: … Reload the page to continue. Your saved
 presentations and documents are kept." The library then shows that sentence
 with a **Reload the page** button in place of the list, and the same sentence
-and button appear in **Source files**, in the library's notices and in the
-workspace's slide preview. Nothing reloads by
+and button appear in **Source files**, in the library's notices, in the box
+on the stage and in the workspace's slide preview. Nothing reloads by
 itself. Reopening the
 website itself offline is a separate feature; use the standalone HTML download
 in a classroom without internet.
