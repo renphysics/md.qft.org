@@ -99,6 +99,12 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     const result = await link(deck({ 'index.html': page(`<script>${'/* localStorage.setItem( */ var c = document.cookie; // x = 1\n'.repeat(50_000)}</script>`) }));
     assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
   } },
+  // W1.1 (linker side): literal changes of the page address become window.open, at most 200 per script.
+  { name: 'a script with 30,000 "location.href = \'https://…\'" and 30,000 look-alikes', run: async () => {
+    const code = 'location.href = "https://a.example/";'.repeat(30_000) + 'window.location . href == "//x" ; location = '.repeat(30_000);
+    const result = await link(deck({ 'index.html': page(`<script>${code}</script><button onclick='${'top.location.assign("https://b.example/");'.repeat(10_000)}'>x</button>`) }));
+    assert.equal(result.html.split('window.open(').length - 1, 400);
+  } },
   { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F2b.3, F5.2 and F5.3: plugin lists, class names and a "<" inside formulas.
   { name: 'a page with 100,000 formulas holding "<x" and one closing delimiter', run: () => link(deck({ 'index.html': page(`<p>${'\\(a<x '.repeat(100_000)}\\)</p>`) })) },

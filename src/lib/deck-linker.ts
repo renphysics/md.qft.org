@@ -8,7 +8,7 @@ import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
   mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, scriptEventSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
-import { defaultImportBindings, scanModuleImports, scanStringLiterals, withoutComments } from './deck-linker-modules';
+import { defaultImportBindings, rewriteScriptedNavigation, scanModuleImports, scanStringLiterals, withoutComments } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
 import { PRESENTATION_LIMITS } from './presentation-package';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
@@ -585,6 +585,9 @@ class DeckLinker {
   private readonly bundled: string[] = [];
   private readonly versionNotes = new Set<string>();
   private readonly deferred: ChildNode[] = [];
+  /** The first website that the presentation's own scripts go to by changing the page address. */
+  private navigationHost: string | undefined;
+  private navigationRewritten = false;
   /** The last classic script with a src could not be supplied (its onerror applies). */
   private scriptLeftOut = false;
   private readonly handlerScripts: Element[] = [];
@@ -1140,6 +1143,7 @@ class DeckLinker {
     const code = getAttribute(element, `on${type}`);
     if (code === undefined || !code.trim()) return [];
     this.classicTexts.push(code);
+    const own = this.ownScript(code);
     const last = replacement.at(-1);
     let target: string | undefined;
     if (last) {
@@ -1147,7 +1151,7 @@ class DeckLinker {
       setAttribute(last, 'data-qft-on', id);
       target = `[data-qft-on="${id}"]`;
     }
-    return [scriptElement(scriptEventSource(type, code, target), { [LINKER_MARKER]: 'script-event' satisfies LinkerScript })];
+    return [scriptElement(scriptEventSource(type, own, target), { [LINKER_MARKER]: 'script-event' satisfies LinkerScript })];
   }
 
   /** The inline elements that replace a classic script with a src; sets scriptLeftOut. */
@@ -1168,7 +1172,7 @@ class DeckLinker {
         this.inlinedFiles += 1;
         this.classicTexts.push(code);
         if (library) this.libraryTexts.add(code);
-        return [scriptElement(code, { ...attributes, 'data-qft-from': target.path }, namespace)];
+        return [scriptElement(library ? code : this.ownScript(code), { ...attributes, 'data-qft-from': target.path }, namespace)];
       }
       case 'missing': {
         const mathJax = mathJaxPathVersion(target.path);
@@ -1222,9 +1226,30 @@ class DeckLinker {
     this.classicTexts.push(code);
     // A library that an earlier link inlined says where it came from.
     const from = getAttribute(element, 'data-qft-from');
-    if (from !== undefined && this.libraryOf(from)) this.libraryTexts.add(code);
-    const rewritten = this.rewriteConfigFiles(code);
+    const library = from !== undefined && !!this.libraryOf(from);
+    if (library) this.libraryTexts.add(code);
+    const rewritten = this.rewriteConfigFiles(library ? code : this.ownScript(code));
     if (rewritten !== code) { code = rewritten; setText(element, code); }
+  }
+
+  /**
+   * The presentation's own script code with `location.href = "https://…"` and
+   * its literal kin turned into window.open, which the player offers as a link
+   * (review W1.1). Library files are not passed here.
+   */
+  private ownScript(code: string): string {
+    const result = rewriteScriptedNavigation(code);
+    if (!result) return code;
+    this.navigationRewritten = true;
+    if (this.navigationHost === undefined) {
+      for (const address of result.addresses) {
+        try {
+          const host = new URL(address.startsWith('//') ? `https:${address}` : address).host;
+          if (/^[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(host)) { this.navigationHost = host; break; }
+        } catch { /* An address that does not parse names no host. */ }
+      }
+    }
+    return result.code;
   }
 
   /** parallaxBackgroundImage in a Reveal configuration names a file; embed it. */
@@ -1333,7 +1358,7 @@ class DeckLinker {
 
     const { imports, complete } = scanModuleImports(code);
     if (!imports.length && complete) {
-      const rewritten = this.rewriteConfigFiles(code);
+      const rewritten = this.rewriteConfigFiles(this.ownScript(code));
       if (src !== undefined || rewritten !== code) {
         this.edits.replace(element, [scriptElement(rewritten, { type: 'module', ...(src ? { 'data-qft-from': where } : {}) })]);
       }
@@ -1382,7 +1407,7 @@ class DeckLinker {
     for (const { start, end, text } of replacements.sort((a, b) => b.start - a.start)) {
       rewritten = rewritten.slice(0, start) + text + rewritten.slice(end);
     }
-    rewritten = this.rewriteConfigFiles(`${bindings.join('\n')}${bindings.length ? '\n' : ''}${rewritten}`);
+    rewritten = this.rewriteConfigFiles(`${bindings.join('\n')}${bindings.length ? '\n' : ''}${this.ownScript(rewritten)}`);
     nodes.push(scriptElement(rewritten, { type: 'module', 'data-qft-from': where }));
     this.edits.replace(element, nodes);
   }
@@ -1746,12 +1771,12 @@ class DeckLinker {
     const handlers: HandlerSource[] = [];
     for (const attribute of attributes) {
       const event = attribute.name.slice(2).toLowerCase();
-      const handler = { event, code: attribute.value };
+      const handler = { event, code: this.ownScript(attribute.value) };
       if ((tag === 'body' || tag === 'frameset') && WINDOW_EVENTS.has(event)) windowHandlers.push(handler);
       else handlers.push(handler);
     }
     if (script !== undefined && !/^(?:void\s*(?:\(\s*0\s*\)|0)\s*;?|;)?$/.test(script.trim())) {
-      handlers.push({ event: 'click', code: script, prevent: true });
+      handlers.push({ event: 'click', code: this.ownScript(script), prevent: true });
       handlers.push({ event: 'keydown', code: "if (event.key === 'Enter') this.click();" });
       if (!hasAttribute(element, 'tabindex')) setAttribute(element, 'tabindex', '0');
       if (!hasAttribute(element, 'role')) setAttribute(element, 'role', 'button');
@@ -1917,6 +1942,15 @@ class DeckLinker {
     this.linkNote();
     this.runtimeFilesNote();
     this.storageNote();
+    this.navigationNote();
+  }
+
+  /** Scripts that went to a website by changing the page address now open it as a link (review W1.1). */
+  private navigationNote(): void {
+    if (!this.navigationRewritten) return;
+    const host = this.navigationHost ? ` (${this.navigationHost})` : '';
+    this.report('scripted-navigation', 'info',
+      `A button in the presentation goes to a website${host} by changing the page address. The player offers the address as a link instead.`, this.navigationHost);
   }
 
   /**
