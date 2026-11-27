@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { zipSync } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkResult } from '../src/lib/deck-linker.ts';
+import { buildPlayable, isPlayable, openDeck } from '../src/lib/deck-project.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
 
@@ -25,6 +27,11 @@ function deck(files: Record<string, string | Uint8Array>): DeckFiles {
 async function link(files: Record<string, string | Uint8Array>): Promise<LinkResult> {
   const map = deck(files);
   return linkDeck(map, detectDeck(map), nodeVendorProvider());
+}
+
+function zipFile(files: Record<string, string | Uint8Array>, name = 'deck.zip'): File {
+  const entries = Object.fromEntries(Object.entries(files).map(([path, data]) => [path, typeof data === 'string' ? encoder.encode(data) : data]));
+  return new File([new Uint8Array(zipSync(entries)).buffer], name, { type: 'application/zip' });
 }
 
 const codes = (result: { issues: { code: string }[] }) => result.issues.map((item) => item.code);
@@ -135,5 +142,17 @@ describe('links that are not web pages (VF2a.3, VF2b.4)', () => {
     const note = issue(result, 'contact-links');
     assert.equal(note?.message, 'E-mail and phone links do not open in the player: mailto:teacher@example.com, tel:+41 44 123. Show the address as text on the slide.');
     assert.equal(note?.severity, 'warning');
+  });
+});
+
+describe('an empty start page (VF2a.5)', () => {
+  it('gives only its error, not also the note that it plays as an ordinary page', async () => {
+    for (const text of ['<!doctype html><html><head><title>Only a title</title></head><body></body></html>', '<!-- only a comment -->', '&nbsp;']) {
+      const project = await openDeck(zipFile({ 'index.html': text }));
+      assert.ok(project);
+      const playable = await buildPlayable(project, { vendor: () => nodeVendorProvider() });
+      assert.equal(isPlayable(playable), false);
+      assert.deepEqual(playable.issues.map((item) => item.code), ['page-empty'], text);
+    }
   });
 });

@@ -613,7 +613,9 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
         ...(project.entry ? { entry: project.entry } : {}),
         ...(project.skipped ? { skippedFiles: project.skipped } : {}),
       });
-      const kept = project.issues.filter((issue) => !SUPERSEDED_BY_LINKER.has(issue.code));
+      // An empty start page plays nothing, so "plays as one ordinary page" would contradict its error.
+      const empty = linked.issues.some((issue) => issue.code === 'page-empty');
+      const kept = project.issues.filter((issue) => !SUPERSEDED_BY_LINKER.has(issue.code) && !(empty && issue.code === 'no-slides-found'));
       const issues = mergeIssues(kept, linked.issues);
       const result: PlayableDeck = { html: issues.some((issue) => issue.severity === 'error') ? '' : linked.html, issues, profile: 'tolerant' };
       deps.onProgress?.('Checking the presentation…');
