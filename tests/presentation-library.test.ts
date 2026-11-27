@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath } from '../src/lib/presentation-messages';
 import { EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError } from '../src/lib/presentation-store';
-import { formatDeckReport } from '../src/lib/deck-report';
+import { formatDeckReport, isSiteSideCode } from '../src/lib/deck-report';
 import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../src/lib/load-failure';
 
 function deferred<T>() {
@@ -64,7 +64,7 @@ function library(dependencies: Dependencies = {}) {
   const sandbox: Record<string, any> = {
     // The host realm's Error, so errors from the real store module are recognised.
     exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
-    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure,
+    STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, isSiteSideCode,
     formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
     Date: class extends Date { static now() { return clock.now; } },
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },

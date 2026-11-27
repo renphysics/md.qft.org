@@ -2,7 +2,7 @@ import type { BuildDeps, DeckProject, PlayableDeck, StoredDeckSource } from '../
 import type { StoredPresentation, StoredPresentationInfo } from '../lib/presentation-store';
 import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
-import { formatDeckReport, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
+import { formatDeckReport, isSiteSideCode, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
 import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../lib/load-failure';
 import {
   PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath,
@@ -49,9 +49,10 @@ function randomHex(bytes: number): string {
 /**
  * An issue code for a problem on this site's side, not in the presentation:
  * the converter could not be loaded. Opening the file again later may work.
+ * The report (deck-report.ts) owns the list.
  */
 function siteSideCode(code: string): boolean {
-  return code === 'slidev-converter-unavailable';
+  return isSiteSideCode(code);
 }
 
 function severityLabel(issue: DeckIssue): string {

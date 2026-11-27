@@ -63,7 +63,7 @@ const PLUGIN_LIST = (() => {
  * presentation. It names reveal.css and the themes on purpose: "supplies only
  * Reveal.js" made an assistant replace reveal.css with a hand-written file.
  */
-const PLAYER_RULES = `Rules for this player: it supplies Reveal.js ${BUNDLED_VERSIONS['reveal.js']} (reveal.js, reveal.css, the themes, and the ${PLUGIN_LIST} plugins) and KaTeX ${BUNDLED_VERSIONS.katex}: keep the links to those files exactly as they are; for formulas use the math plugin (RevealMath.KaTeX). Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas; nothing else may load from the internet while the presentation plays. confirm(), prompt(), printing, new windows and data saved in the browser do not work in the player.`;
+const PLAYER_RULES = `Rules for this player: it supplies Reveal.js ${BUNDLED_VERSIONS['reveal.js']} (reveal.js, reveal.css, the themes, and the ${PLUGIN_LIST} plugins) and KaTeX ${BUNDLED_VERSIONS.katex} (katex.js, katex.css with its fonts, auto-render, mhchem and copy-tex): keep the links to those files exactly as they are; for formulas use the math plugin (RevealMath.KaTeX) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, so MathJax-only commands may show as errors. Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas; nothing else may load from the internet while the presentation plays. confirm(), prompt(), printing, new windows, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops.`;
 
 /** What a Slidev project needs to play here; the same rules as the Slidev prompt (slidev-prompt.ts). */
 const SLIDEV_RULES = 'Rules for this player: no {monaco} code blocks and no Web Workers; pictures and media in public/ or imported in the project; nothing may load from the internet while the presentation plays (no CDN files, web fonts or remote APIs; set fonts: { provider: \'none\' }).';
@@ -75,7 +75,12 @@ const SLIDEV_ZIP = 'one ZIP of the project folder with the built dist/ folder in
  * Issue codes for a problem on this site's side: the presentation may be
  * fine, so the report asks for no changes and prints no rules line.
  */
-const SITE_SIDE_CODES = new Set(['slidev-converter-unavailable']);
+const SITE_SIDE_CODES: ReadonlySet<string> = new Set(['slidev-converter-unavailable', 'slidev-convert-unavailable']);
+
+/** True for an issue code of a problem on this site's side (the library labels it "Try again"). */
+export function isSiteSideCode(code: string): boolean {
+  return SITE_SIDE_CODES.has(code);
+}
 
 /** The reply when only the site's side failed. */
 const SITE_SIDE_REPLY = 'Reply: nothing to change in the presentation; the site could not load its converter. Open the ZIP again later.';
@@ -135,7 +140,7 @@ export function formatDeckReport(input: DeckReportInput): string {
   const errorIssues = input.issues.filter((issue) => issue.severity === 'error');
   const errors = errorIssues.length;
   // Only the site failed (its converter did not load): no fault of the presentation.
-  const siteSide = errors > 0 && errorIssues.every((issue) => SITE_SIDE_CODES.has(issue.code));
+  const siteSide = errors > 0 && errorIssues.every((issue) => isSiteSideCode(issue.code));
   const warnings = input.issues.filter((issue) => issue.severity === 'warning').length;
   // The player's information (counted: false) is no problem: it is left out.
   const runtime = (input.runtime ?? []).filter((item) => item.counted !== false).slice(0, MAX_RUNTIME);

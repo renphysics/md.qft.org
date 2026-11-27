@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { DECK_REPORT_FORMAT, formatDeckReport } from '../src/lib/deck-report.ts';
+import { DECK_REPORT_FORMAT, formatDeckReport, isSiteSideCode } from '../src/lib/deck-report.ts';
+import { BUNDLED_TEXT_FILES } from '../src/lib/deck-vendor.ts';
 
 describe('deck check report', () => {
   it('starts with the format line and lists kind, engine, version, issues and the reply', () => {
@@ -111,6 +112,11 @@ describe('deck check report', () => {
     });
     assert.match(both, /result: cannot play here/);
     assert.match(both, /^Rules for this player/m);
+    // A site that offers no converter at all is the site's side too.
+    const none = formatDeckReport({ kind: 'slidev-build', engine: 'slidev', issues: [{ code: 'slidev-convert-unavailable', severity: 'error', message: 'Slidev builds cannot be converted here, so this one cannot play.' }] });
+    assert.match(none, /Reply: nothing to change in the presentation/);
+    assert.ok(isSiteSideCode('slidev-converter-unavailable') && isSiteSideCode('slidev-convert-unavailable'));
+    assert.ok(!isSiteSideCode('slidev-convert-failed') && !isSiteSideCode('slidev-bundle-failed'));
   });
 
   it('keeps every text taken from the presentation inside a fenced block labelled as data', () => {
@@ -154,10 +160,15 @@ describe('deck check report', () => {
       assert.doesNotMatch(rules, /supplies only/);
       assert.match(rules, /supplies Reveal\.js 6\.0\.2 \(reveal\.js, reveal\.css, the themes, and the notes, math, highlight, markdown, search and zoom plugins\) and KaTeX 0\.19\.1/);
       assert.match(rules, /keep the links to those files exactly as they are/);
-      assert.match(rules, /for formulas use the math plugin \(RevealMath\.KaTeX\)/);
+      assert.match(rules, /and KaTeX 0\.19\.1 \(katex\.js, katex\.css with its fonts, auto-render, mhchem and copy-tex\)/);
+      for (const file of ['dist/katex.min.js', 'dist/katex.min.css', 'dist/contrib/auto-render.min.js', 'dist/contrib/mhchem.min.js', 'dist/contrib/copy-tex.min.js']) {
+        assert.ok(BUNDLED_TEXT_FILES.katex.includes(file), `the rules name only bundled files: ${file}`);
+      }
+      assert.match(rules, /for formulas use the math plugin \(RevealMath\.KaTeX\) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, so MathJax-only commands may show as errors\./);
       assert.match(rules, /Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
       assert.match(rules, /nothing else may load from the internet while the presentation plays/);
-      assert.match(rules, /confirm\(\), prompt\(\), printing, new windows and data saved in the browser do not work in the player\./);
+      // The linker's notes: e-mail links do not open (contact-links); saved data lasts one playback (browser-storage).
+      assert.match(rules, /confirm\(\), prompt\(\), printing, new windows, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops\.$/);
       assert.doesNotMatch(rules, /\n/, 'one line');
       assert.ok(lines.indexOf(rules) < lines.length - 1, 'the reply stays last');
       assert.match(lines.at(-1)!, /^Reply: send back the complete corrected presentation/);

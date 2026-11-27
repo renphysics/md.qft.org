@@ -57,15 +57,9 @@ function sizeLabel(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/**
- * The read-only note for a Slidev build, in the Slidev prompt's words (a
- * project ZIP with dist/ inside). deck-project's own note still says "a ZIP
- * of the new dist folder"; the other kinds keep deck-project's note.
- */
-const SLIDEV_BUILD_NOTE = 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).';
-
+/** The read-only or editing note of Source files; deck-project owns the wording for every kind. */
 export function sourceNote(project: DeckProject): string {
-  return project.kind === 'slidev-build' ? SLIDEV_BUILD_NOTE : deckSourceNote(project);
+  return deckSourceNote(project);
 }
 
 /** A caught error as one line for the problem area; a part of the site that could not load gets the fixed sentence. */
