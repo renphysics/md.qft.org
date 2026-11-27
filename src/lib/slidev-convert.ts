@@ -321,7 +321,7 @@ function readLink(conversion: Conversion, link: Element, folder: string, parts: 
   if (isRemote(href)) {
     const host = hostOf(href) || 'another site';
     if (rel.includes('stylesheet') && FONT_HOSTS.test(host)) {
-      conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, href);
+      conversion.report('external-font', 'info', `Web fonts from ${host} need the internet, so they are left out; the slides use fonts installed on this device instead.`, href);
     } else if (rel.includes('stylesheet')) {
       conversion.report('external-stylesheet', 'warning', `A stylesheet from ${host} was left out, because the player works without the internet. The slides may look different.`, href);
     } else if (rel.includes('icon') || rel.includes('apple-touch-icon')) {
@@ -356,7 +356,7 @@ function readScript(conversion: Conversion, script: Element, folder: string, par
   if (src) {
     const path = conversion.locate(src, folder);
     if (module && !parts.entryModule && path !== undefined && conversion.bytes(path)) { parts.entryModule = path; return; }
-    conversion.report('script-left-out', 'warning', `The script ${shown(src)} was left out: a Slidev build starts from one module script, and this one is extra or missing.`, src);
+    conversion.report('script-left-out', 'warning', `The script ${shown(src)} is not part of the Slidev build, so it was left out. If something is missing in the slides, open a ZIP of the whole dist folder, or build again with “npx slidev build”.`, src);
     return;
   }
   const code = textOf(script);
@@ -426,7 +426,7 @@ class StyleSheets {
     text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;@]*);/gi, (_rule, _quote: string, url: string) => {
       if (isRemote(url)) {
         const host = hostOf(url) || 'another site';
-        if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, url);
+        if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} need the internet, so they are left out; the slides use fonts installed on this device instead.`, url);
         else this.conversion.report('external-stylesheet', 'warning', `A stylesheet from ${host} was left out, because the player works without the internet. The slides may look different.`, url);
         return '';
       }

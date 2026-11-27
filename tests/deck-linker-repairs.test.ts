@@ -5,6 +5,7 @@ import { zipSync } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
 import { buildPlayable, isPlayable, openDeck } from '../src/lib/deck-project.ts';
+import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
 
@@ -252,3 +253,50 @@ describe('data saved in the browser (VF5.3)', () => {
     assert.ok(!codes(local).includes('browser-storage'), JSON.stringify(local.issues));
   });
 });
+
+describe('wording (VF6.5, VF6.8)', () => {
+  const fontNote = 'Web fonts from fonts.googleapis.com need the internet, so they are left out; the slides use fonts installed on this device instead.';
+  const fontLink = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">';
+
+  it('uses one sentence for web fonts in the check, the linker and the Slidev conversion', async () => {
+    const files = deck({ 'index.html': reveal('<section>A</section>', { head: `${REVEAL_STYLE}${fontLink}` }) });
+    assert.deepEqual(detectDeck(files).issues.filter((item) => item.code === 'external-font').map((item) => item.message), [fontNote]);
+    assert.equal(issue(await link({ 'index.html': reveal('<section>A</section>', { head: `${REVEAL_STYLE}${fontLink}` }) }), 'external-font')?.message, fontNote);
+    const converted = await convert(slidevBuild({ head: fontLink }));
+    assert.equal(converted.issues.find((item) => item.code === 'external-font')?.message, fontNote);
+  });
+
+  it('says what to do about a script that is not part of a Slidev build', async () => {
+    const converted = await convert(slidevBuild({ head: '<script src="/extra.js"></script>' }));
+    assert.equal(converted.issues.find((item) => item.code === 'script-left-out')?.message,
+      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, open a ZIP of the whole dist folder, or build again with “npx slidev build”.');
+  });
+
+  it('ends the inline-script notes with a next step, and says "AI assistant"', async () => {
+    const next = 'Ask your AI assistant to attach the action in a script with addEventListener instead.';
+    const markdown = await link({ 'index.html': reveal('<section data-markdown><textarea data-template><button onclick="go()">Go</button></textarea></section>') });
+    assert.ok(issue(markdown, 'inline-script-unsupported')?.message.endsWith(next));
+    const template = await link({ 'index.html': page('<template><button onclick="go()">Go</button></template><p>x</p>') });
+    assert.ok(issue(template, 'inline-script-unsupported')?.message.endsWith(next));
+    const source = detectDeck(deck({ 'slides.md': '---\ntheme: default\n---\n# Hi\n', 'package.json': '{"dependencies":{"@slidev/cli":"52.0.0"}}' }));
+    assert.match(source.issues.find((item) => item.code === 'slidev-source')?.message ?? '', /ask your AI assistant for the built presentation/);
+  });
+});
+
+/** A small Slidev build, as in tests/slidev-convert.test.ts. */
+function slidevBuild({ head = '' } = {}): DeckFiles {
+  return deck({
+    'index.html': '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Waves - Slidev</title>'
+      + `<meta property="slidev:version" content="53.1.0"><script type="module" crossorigin src="/assets/index-abc.js"></script>${head}`
+      + '<link rel="stylesheet" crossorigin href="/assets/index-abc.css"></head><body><div id="app"></div></body></html>',
+    'assets/index-abc.js': 'import{c as createRouter,ue}from"./vue-abc.js";export const router=createRouter({history:ue(`/`),routes:[]});',
+    'assets/vue-abc.js': 'export function c(options){return options}export function ue(base){return base}',
+    'assets/index-abc.css': 'body{margin:0}',
+  });
+}
+
+async function convert(files: DeckFiles) {
+  const detection = detectDeck(files);
+  assert.equal(detection.kind, 'slidev-build');
+  return convertSlidevFiles(files, detection, async () => 'window.bundled=1');
+}

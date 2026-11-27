@@ -1398,7 +1398,7 @@ class DeckLinker {
         return `${match[1]}${match[2]}${match[3]}${match[4]}${replacement}${match[4]}`;
       });
     if (/<[a-z][^<>]*\son[a-z]+\s*=/i.test(output)) {
-      this.report('inline-script-unsupported', 'warning', 'A button or link inside Markdown slides uses an inline script (such as onclick), which does not run here.');
+      this.report('inline-script-unsupported', 'warning', 'A button or link inside Markdown slides uses an inline script (such as onclick), which does not run here. Ask your AI assistant to attach the action in a script with addEventListener instead.');
     }
     return output;
   }
@@ -1634,7 +1634,7 @@ class DeckLinker {
     for (const attribute of attributes) removeAttribute(element, attribute.name);
     if (script !== undefined) removeAttribute(element, 'href');
     if (insideTemplate(element)) {
-      this.report('inline-script-unsupported', 'warning', 'Some elements inside templates use inline scripts (such as onclick), which do not run here.');
+      this.report('inline-script-unsupported', 'warning', 'Some elements inside templates use inline scripts (such as onclick), which do not run here. Ask your AI assistant to attach the action in a script with addEventListener instead.');
       return;
     }
     const tag = localName(element);
