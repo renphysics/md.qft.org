@@ -1189,7 +1189,11 @@ test('a <noscript> fallback is removed before the checks, in both profiles, sinc
 
 test('the sandbox, permissions and Content Security Policies keep their exact values', () => {
   // Changing any of these is a decision about the security model: update
-  // docs/ARCHITECTURE.md with it, then this test.
+  // docs/ARCHITECTURE.md with it, then this test. This pin covers the
+  // presentation player; the interactive demo frame, public/demo-sandbox.html
+  // and the slide and document exports are pinned the same way in
+  // tests/interactive-demos.test.ts, tests/demo-sandbox.test.ts and
+  // tests/interactive-exports.test.ts.
   const sandbox = 'allow-scripts';
   const allow = "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; serial 'none'; fullscreen 'none'";
   const runnerPolicy = (script: string) => `default-src 'none'; script-src ${script}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;

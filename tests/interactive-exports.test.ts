@@ -105,6 +105,22 @@ describe('portable interactive HTML exports', () => {
     });
   }
 
+  it('keeps the exact Content Security Policy of slide and document exports, with and without demos', async () => {
+    // Changing any of these is a decision about the security model: update
+    // docs/ARCHITECTURE.md with it, then this test.
+    const policies = (html: string) => [...html.matchAll(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g)].map((match) => match[1]);
+    const documentPolicy = (script: string) => `default-src 'none'; script-src ${script}; script-src-attr 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; frame-src 'self' blob:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'`;
+    const slidePolicy = "default-src 'none'; script-src 'nonce-test-export-nonce'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-src 'self' blob:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'";
+    const demo = interactiveFence({ preset: 'wave-packet' });
+    assert.deepEqual(policies(await exported('document', '# Plain')), [documentPolicy("'none'")]);
+    // With demos the export also carries the demo runtime's source, whose frame policies are pinned in interactive-demos.test.ts.
+    assert.deepEqual(policies(await exported('document', demo))[0], documentPolicy("'nonce-test-export-nonce'"));
+    // A slide export always carries the demo runtime's source after its own policy.
+    assert.deepEqual(policies(await exported('slides', '# Plain'))[0], slidePolicy);
+    assert.deepEqual(policies(await exported('slides', demo))[0], slidePolicy);
+    for (const html of [await exported('document', '# Plain'), await exported('slides', '# Plain')]) assert.match(html, /<meta name="referrer" content="no-referrer">/);
+  });
+
   it('keeps ordinary document exports script-free and ordinary JavaScript fences literal', async () => {
     const html = await exported('document', '# Code\n\n```javascript\nparent.__bad = true;\n```');
     assert.doesNotMatch(html, /<script\b/);

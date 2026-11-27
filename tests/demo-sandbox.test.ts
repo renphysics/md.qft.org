@@ -40,3 +40,11 @@ test('the sandbox accepts a bounded initialization once and only from its parent
   frame.send(frame.parent, { ...message, html: '<p>Unexpected replacement</p>' });
   assert.deepEqual(frame.writes, [message.html]);
 });
+
+test('the demo runner keeps its exact Content Security Policy and referrer policy', () => {
+  // Changing either is a decision about the security model: update
+  // docs/ARCHITECTURE.md with it, then this test.
+  const policies = [...html.matchAll(/http-equiv="Content-Security-Policy" content="([^"]*)"/g)].map((match) => match[1]);
+  assert.deepEqual(policies, ["default-src 'none'; script-src 'unsafe-inline'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"]);
+  assert.match(html, /<meta name="referrer" content="no-referrer">/);
+});
