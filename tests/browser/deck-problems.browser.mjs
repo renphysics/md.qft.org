@@ -64,6 +64,9 @@ async function exported(t, context, page, name) {
 
 export default async function run(t) {
   t.allowPageError(/missingHelper is not defined|undefinedSetting is not defined|gtag is not defined/);
+  // What Chromium says about the quiz form and the page change it refuses in the sandbox.
+  t.allowConsoleError(/Blocked form submission to '[^']*' because the form's frame is sandboxed/);
+  t.allowConsoleError(/Framing 'https:\/\/phet\.colorado\.edu\/' violates the following Content Security Policy directive/);
   const { context, page } = await t.newPage({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
   await t.openWorkspace(page);
   await page.locator('[data-open-presentations]').click();
@@ -286,6 +289,34 @@ gtag('config', 'G-1');</script></body></html>`);
     const text = await page.locator('[data-pres-edit-status]').textContent();
     assert.match(text, /Choose Presentation to see them\. The presentation starts again from the beginning\./);
     assert.doesNotMatch(text, /same slide/);
+  });
+
+  await t.step('A quiz form answers in the library; a button that sends the page to a website stops it with the player\'s own sentence', async () => {
+    await back(page);
+    const lesson = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Quiz lesson</title></head><body>
+<form id="quiz" onsubmit="return check()"><label>2 + 2 = <input id="answer"></label> <button id="check-answer">Check</button></form><p id="feedback">-</p>
+<button id="go" type="button" onclick="window.location.href = 'https://phet.colorado.edu/sims/html/forces-and-motion-basics/latest/forces-and-motion-basics_en.html'">Open the simulation</button>
+<script>function check() { document.getElementById('feedback').textContent = document.getElementById('answer').value === '4' ? 'Correct!' : 'Try again'; return false; }</script>
+</body></html>`);
+    await page.locator('[data-pres-input]').setInputFiles({ name: 'quiz.html', mimeType: 'text/html', buffer: lesson });
+    await until(async () => /Saved in this browser/.test(await page.locator('[data-pres-storage]').textContent()), 'the lesson to be saved');
+    await page.locator('[data-pres-start-button]').click();
+    await until(async () => (await status(page)) === 'Playing locally', 'the lesson to play');
+    const frame = await deckFrame(page, '#quiz');
+    await frame.locator('#answer').fill('4');
+    await frame.locator('#check-answer').click();
+    await until(async () => (await frame.locator('#feedback').textContent()) === 'Correct!', 'the inline onsubmit handler to answer');
+    await frame.locator('#answer').fill('5');
+    await frame.locator('#answer').press('Enter');
+    await until(async () => (await frame.locator('#feedback').textContent()) === 'Try again', 'Enter to check the answer');
+    assert.equal(await status(page), 'Playing locally', 'the form was handled by the presentation: no problem');
+    await frame.locator('#go').click();
+    await until(async () => (await status(page)) === 'Playback needs attention', 'the playback to stop');
+    const problem = page.locator('[data-pres-problem]');
+    assert.equal(await problem.textContent(), 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.');
+    assert.equal(await problem.locator('strong').count(), 0, 'the player\'s own words, without the presentation\'s label');
+    assert.equal(await page.locator('[data-pres-start-button]').isVisible(), true);
+    await page.screenshot({ path: resolve(t.artifacts, 'deck-problems-left.png') });
   });
 
   await t.step('Nothing else left the page', async () => {

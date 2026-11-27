@@ -248,7 +248,7 @@ export default async function run(t) {
     }, 'each problem of the deck to arrive as a warning, and the blocked picture as a limit');
     const reported = await events(page);
     assert.equal(reported.limits.find((limit) => limit.code === 'blocked-picture').text,
-      'A picture from images.example.invalid needs the internet, so it is not shown. Put the file in the ZIP.');
+      'A picture from images.example.invalid needs the internet, so it is not shown. Ask your AI assistant to put the picture inside the presentation.');
     assert.ok(!reported.warnings.some((text) => /blocked|picture/i.test(text)), 'the player\'s own sentences are no warnings');
     assert.deepEqual(reported.errors, []);
     assert.equal(reported.states.at(-1), 'ready');

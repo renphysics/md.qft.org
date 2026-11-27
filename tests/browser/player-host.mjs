@@ -19,7 +19,8 @@ export async function runtimeBundle() {
 
 /**
  * play(html, profile, start, extra) passes `extra` on as further player
- * options (for example { startCheck: 'reveal' }); limits arrive in
+ * options (for example { startCheck: 'reveal' }; { recordLeft: true } adds
+ * an onLeft that records into events.lefts); limits arrive in
  * events.limits as the player gives them ({ code, host, text, counted }).
  * Each of play(), update() and begin() resolves with 'ready', or with
  * "<origin>: <message>" when the player reports an error. A fullscreen request
@@ -31,7 +32,7 @@ export function hostPage(runtime) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Player test host</title>
 <style>html,body{margin:0}#present{position:fixed;right:4px;bottom:4px}#stage{width:1280px;height:720px;background:#fff}#stage:fullscreen{width:100vw;height:100vh}#host{width:100%;height:100%}</style></head>
 <body><button id="present" type="button">Present</button><main id="stage"><div id="host"></div></main><script>${runtime.replace(/<\/script/gi, '<\\/script')}</script><script>
-const fresh = () => ({ states: [], errors: [], warnings: [], limits: [], positions: [], slides: [], fullscreen: [], escapes: 0, stalls: [], links: [] });
+const fresh = () => ({ states: [], errors: [], warnings: [], limits: [], positions: [], slides: [], fullscreen: [], escapes: 0, stalls: [], links: [], lefts: [] });
 window.events = fresh();
 let settle;
 const pending = () => new Promise((resolve) => { settle = resolve; });
@@ -52,6 +53,8 @@ window.play = (html, profile = 'strict', start = {}, extra = {}) => {
     onSlides(count) { events.slides.push(count); },
     onStalled(detail, firstError) { events.stalls.push([detail, firstError]); },
     onLink(url) { events.links.push(url.href); },
+    // extra.recordLeft: pass onLeft, which records what it gets; without it the player stops by itself.
+    ...(extra.recordLeft ? { onLeft(left) { events.lefts.push(left); settle?.('left'); } } : {}),
     async onFullscreenRequest(request) {
       const entry = { request, active: navigator.userActivation.isActive, result: 'pending' };
       events.fullscreen.push(entry);
