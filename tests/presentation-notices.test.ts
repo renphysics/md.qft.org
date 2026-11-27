@@ -86,6 +86,8 @@ test('the mhchem notice carries the whole Apache License 2.0, the same text as T
   assert.match(mhchem.text, /Martin Hensel/);
   assert.match(mhchem.text, /Apache License\n\nVersion 2\.0, January 2004/);
   assert.match(mhchem.text, /TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION[\s\S]*END OF TERMS AND CONDITIONS/);
+  // Section 4 lists its four conditions as (a) to (d), as in the canonical text.
+  assert.match(mhchem.text, /\n\(a\) You must give any other recipients[\s\S]*\n\(b\) You must cause any modified files[\s\S]*\n\(c\) You must retain, in the Source form[\s\S]*\n\(d\) If the Work includes a "NOTICE" text file/);
   assert.ok(mhchem.text.length < 64_000, 'within the bound the export puts on one notice');
   const notices3rd = file('THIRD_PARTY_NOTICES.md').split('\n');
   const start = notices3rd.indexOf('The Apache License 2.0:') + 3;
