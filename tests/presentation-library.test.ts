@@ -45,6 +45,8 @@ function library(dependencies: Dependencies = {}) {
     open: 0, build: 0, save: 0, started: 0, focus: 0, fullscreen: 0, closed: 0, destroyed: 0, prepared: 0,
     players: [] as any[], shown: [] as any[], notices: [] as unknown[], exports: [] as any[], copied: [] as string[], downloads: [] as any[],
     updates: [] as any[], savedEdits: [] as any[], noticeInputs: [] as any[], names: [] as string[], opened: [] as unknown[][], reports: [] as any[], timers: [] as (() => void)[],
+    /** The delay of each timer, in the order of `timers`, and the timers cleared. */
+    delays: [] as number[], cleared: new Set<number>(), stopped: 0,
   };
   const clock = { now: 1_000_000 };
   const controls = new Map<string, any>();
@@ -56,6 +58,7 @@ function library(dependencies: Dependencies = {}) {
       addEventListener(name: string, listener: (event?: unknown) => void) { this.listeners.set(name, listener); },
       children: [] as any[], replaceChildren(...children: any[]) { this.children = children; }, close() { calls.closed++; },
       focus() {}, select() {}, setAttribute() {}, removeAttribute() {},
+      contains(node: unknown) { return node === this || (node instanceof FakeElement && node.within === this); },
       requestFullscreen() { calls.fullscreen++; return Promise.resolve(); },
     });
     return controls.get(selector);
@@ -68,7 +71,7 @@ function library(dependencies: Dependencies = {}) {
     formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
     Date: class extends Date { static now() { return clock.now; } },
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },
-    Element: FakeElement,
+    Element: FakeElement, Node: FakeElement,
     document: {
       activeElement: null as unknown,
       focusTargets: new Map<string, any>(),
@@ -79,7 +82,8 @@ function library(dependencies: Dependencies = {}) {
     },
     navigator: { clipboard: { writeText: (text: string) => { calls.copied.push(text); return dependencies.clipboard?.(text) ?? Promise.resolve(); } } },
     window: {
-      setTimeout(callback: () => void) { calls.timers.push(callback); return calls.timers.length; }, clearTimeout() {}, addEventListener() {},
+      setTimeout(callback: () => void, delay = 0) { calls.timers.push(callback); calls.delays.push(delay); return calls.timers.length; },
+      clearTimeout(id?: number) { if (id !== undefined) calls.cleared.add(id); }, addEventListener() {},
       open(...args: unknown[]) { calls.opened.push(args); return null; },
     },
     location: { href: 'https://md.qft.org/' },
@@ -91,7 +95,7 @@ function library(dependencies: Dependencies = {}) {
     createPresentationPlayer(_host: unknown, html: string, options: unknown) {
       calls.players.push({ html, options });
       return {
-        destroy() { calls.destroyed++; }, isRunning: () => true, start() { calls.started++; }, focus() { calls.focus++; },
+        destroy() { calls.destroyed++; }, isRunning: () => true, start() { calls.started++; }, focus() { calls.focus++; }, stop() { calls.stopped++; },
         update(next: string, updateOptions: unknown) { calls.updates.push({ html: next, options: updateOptions }); },
         currentPosition: () => '2/0',
       };
@@ -152,9 +156,11 @@ function library(dependencies: Dependencies = {}) {
 /** An element for focus checks: inside the code editor or not, shown or hidden. */
 class FakeElement {
   focused = 0;
-  constructor(public name: string, private options: { inCode?: boolean; shown?: boolean } = {}) {}
+  /** The control this element lies in, for contains(). */
+  within?: unknown;
+  constructor(public name: string, private options: { inCode?: boolean; shown?: boolean; button?: boolean } = {}) {}
   get isConnected() { return true; }
-  closest(selector: string) { return selector === '[data-pres-code]' && this.options.inCode ? {} : null; }
+  closest(selector: string) { return (selector === '[data-pres-code]' && this.options.inCode) || (selector === 'button' && this.options.button) ? {} : null; }
   checkVisibility() { return this.options.shown !== false; }
   focus() { this.focused++; }
 }
@@ -1091,4 +1097,154 @@ test('while another file opens, the dialog shows that file and its progress, nev
   assert.equal(f.control('[data-pres-start-button]').hidden, true);
   assert.equal(f.control('[data-pres-player-status]').textContent, 'Could not be opened');
   assert.equal(f.instance.active, undefined);
+});
+
+/** The timers still due: set and not cleared, with their delays. */
+const dueTimers = (f: ReturnType<typeof library>) => f.calls.delays.map((delay, index) => ({ id: index + 1, delay })).filter(({ id }) => !f.calls.cleared.has(id));
+
+test('the notices close after 12 and 20 seconds, wait while the pointer or the keyboard is in them, and give the keyboard back', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  f.instance.connectedCallback();
+  options.onState('loading');
+  options.onState('ready');
+  options.onStalled('rescued', undefined);
+  const rescued = f.control('[data-pres-rescued]');
+  assert.deepEqual(dueTimers(f).map(({ delay }) => delay), [12_000], 'the basic-settings notice closes after 12 seconds');
+  // The pointer over the notice: its timer waits, and starts again when the pointer leaves.
+  rescued.listeners.get('pointerenter')();
+  assert.deepEqual(dueTimers(f), [], 'paused while the pointer is over it');
+  rescued.listeners.get('pointerleave')();
+  assert.deepEqual(dueTimers(f).map(({ delay }) => delay), [12_000], 'started again');
+  // The keyboard in the notice: the same.
+  const dismiss = new FakeElement('Dismiss', { button: true });
+  dismiss.within = rescued;
+  f.doc.activeElement = dismiss;
+  rescued.listeners.get('focusin')();
+  assert.deepEqual(dueTimers(f), [], 'paused while the keyboard is in it');
+  rescued.listeners.get('pointerenter')();
+  rescued.listeners.get('pointerleave')();
+  assert.deepEqual(dueTimers(f), [], 'still paused: the keyboard is still in it');
+  // During focusout the browser already reports the page body as focused.
+  f.doc.activeElement = null;
+  rescued.listeners.get('focusout')({ relatedTarget: null });
+  assert.deepEqual(dueTimers(f).map(({ delay }) => delay), [12_000]);
+  // It closes while the keyboard is in it (focus came back): the keyboard goes to the slides.
+  f.doc.activeElement = dismiss;
+  const focus = f.calls.focus;
+  f.calls.timers[dueTimers(f)[0]!.id - 1]!();
+  assert.equal(rescued.hidden, true);
+  assert.equal(f.calls.focus, focus + 1, 'the keyboard goes back to the slides');
+  f.doc.activeElement = null;
+
+  options.onLink(new URL('https://en.wikipedia.org/wiki/Wave'));
+  const link = f.control('[data-pres-link]');
+  assert.deepEqual(dueTimers(f).map(({ delay }) => delay), [20_000], 'the link notice closes after 20 seconds');
+  link.listeners.get('pointerenter')();
+  assert.deepEqual(dueTimers(f), []);
+  link.listeners.get('pointerleave')();
+  assert.deepEqual(dueTimers(f).map(({ delay }) => delay), [20_000]);
+  // Closing while the keyboard is elsewhere leaves it there.
+  f.calls.timers[dueTimers(f)[0]!.id - 1]!();
+  assert.equal(link.hidden, true);
+  assert.equal(f.calls.focus, focus + 1);
+});
+
+test('a click on a notice\'s text, outside its buttons, leaves the keyboard with the slides', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  f.instance.connectedCallback();
+  options.onState('ready');
+  options.onLink(new URL('https://en.wikipedia.org/wiki/Wave'));
+  const link = f.control('[data-pres-link]');
+  const focus = f.calls.focus;
+  link.listeners.get('click')({ target: new FakeElement('text') });
+  assert.equal(f.calls.focus, focus + 1, 'the keyboard goes back to the slides');
+  link.listeners.get('click')({ target: new FakeElement('Dismiss', { button: true }) });
+  assert.equal(f.calls.focus, focus + 1, 'a button does its own work');
+  assert.equal(link.hidden, false, 'the notice stays');
+});
+
+const LEFT_RESTARTED = 'The presentation tried to replace its slides with a page from phet.colorado.edu, which the player cannot do. It was started again at the same slide. Ask your AI assistant to use an ordinary link for that page.';
+const LEFT_STOPPED = 'The presentation tried to replace its slides with a page from phet.colorado.edu, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.';
+
+test('a presentation that replaces itself with a page after a click plays again on the same slide, at most three times', async () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  f.clock.now += 1000;
+  options.onWarning('Uncaught Error: before the click');
+  options.onLeft({ host: 'phet.colorado.edu', active: true });
+  assert.equal(JSON.stringify(f.calls.updates.at(-1)), JSON.stringify({ html: revealPlayable().html, options: { position: '2/0' } }), 'started again on the slide it showed');
+  assert.equal(f.calls.stopped, 0);
+  options.onState('loading');
+  options.onState('ready');
+  assert.deepEqual([...f.instance.runtime].map((entry: any) => entry.text), ['Uncaught Error: before the click', LEFT_RESTARTED], 'the run-time list is kept');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 2 problems reported');
+  assert.equal(f.control('[data-pres-problem]').hidden, true, 'nothing in the problem box');
+  await f.instance.copyReport();
+  assert.match(f.calls.copied.at(-1)!, /^result: plays, with notes$/m);
+  assert.ok(f.calls.copied.at(-1)!.split('\n').includes(`- player: ${LEFT_RESTARTED}`));
+  options.onLeft({ host: 'phet.colorado.edu', active: true });
+  options.onLeft({ host: 'phet.colorado.edu', active: true });
+  assert.equal(f.calls.updates.length, 3);
+  assert.equal(f.instance.runtime.filter((entry: any) => entry.text === LEFT_RESTARTED).length, 1, 'listed once');
+  // The fourth time it stops, with the app's own sentence and no "reported" label.
+  options.onLeft({ host: 'phet.colorado.edu', active: true });
+  assert.equal(f.calls.updates.length, 3);
+  assert.equal(f.calls.stopped, 1);
+  const problem = f.control('[data-pres-problem]');
+  assert.equal(problem.hidden, false);
+  assert.deepEqual(problem.children.map((line: any) => [line.textContent, line.children.length]), [[LEFT_STOPPED, 0]]);
+  assert.equal(f.instance.runtime.at(-1).text, LEFT_STOPPED);
+
+  // Start counts again from zero.
+  f.instance.start();
+  options.onLeft({ active: true });
+  assert.equal(f.calls.updates.length, 4);
+  assert.equal(f.instance.runtime.at(-1).text, 'The presentation tried to replace its slides with a page, which the player cannot do. It was started again at the same slide. Ask your AI assistant to use an ordinary link for that page.');
+  // Without a slide position it starts from the beginning.
+  f.instance.player.currentPosition = () => undefined;
+  f.instance.start();
+  options.onLeft({ host: 'phet.colorado.edu', active: true });
+  assert.equal(JSON.stringify(f.calls.updates.at(-1).options), '{}');
+  assert.equal(f.instance.runtime.at(-1).text, 'The presentation tried to replace its slides with a page from phet.colorado.edu, which the player cannot do. It was started again from the beginning. Ask your AI assistant to use an ordinary link for that page.');
+});
+
+test('a presentation that replaces itself with a page by itself is stopped with the app\'s own sentence', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  options.onLeft({ host: 'phet.colorado.edu', active: false });
+  assert.equal(f.calls.updates.length, 0);
+  assert.equal(f.calls.stopped, 1);
+  const problem = f.control('[data-pres-problem]');
+  assert.equal(problem.hidden, false);
+  assert.deepEqual(problem.children.map((line: any) => line.textContent), [LEFT_STOPPED]);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.instance.runtime)), [{ origin: 'player', text: LEFT_STOPPED }]);
+  options.onLeft({ active: false });
+  assert.equal(problem.children.at(-1).textContent, 'The presentation tried to replace its slides with a page, so the player stopped it. Choose Start to play it again. Ask your AI assistant to use an ordinary link for that page.');
+});
+
+test('the presentation\'s own texts and the player\'s sentences each have room for 20', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  options.onState('loading');
+  options.onState('ready');
+  for (let index = 1; index <= 22; index++) options.onWarning(`Uncaught Error: Problem number ${index}`);
+  options.onLimit({ code: 'question', text: 'The presentation asked a question in a pop-up window.', counted: true });
+  const runtime = f.instance.runtime as { origin: string; text: string }[];
+  assert.equal(runtime.filter((entry) => entry.origin === 'presentation').length, 20);
+  assert.equal(runtime.at(-1)!.text, 'The presentation asked a question in a pop-up window.', 'the player\'s sentence is not crowded out');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally · 21 problems reported');
+  for (let index = 1; index <= 22; index++) options.onLimit({ code: 'question', text: `Player sentence ${index}.`, counted: true });
+  assert.equal(runtime.filter((entry) => entry.origin === 'player').length, 20);
+  assert.equal(runtime.length, 40);
 });

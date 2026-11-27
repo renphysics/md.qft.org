@@ -201,6 +201,9 @@ html[data-theme='dark'] .presentation-dialog .presentation-edit-problem { backgr
   .presentation-dialog .presentation-stage { flex: 0 0 auto; min-height: 0; aspect-ratio: var(--presentation-aspect, 16 / 9); }
   .presentation-dialog .presentation-stage:has([data-pres-start]:not([hidden])) { min-height: 300px; }
   .presentation-dialog .presentation-keyboard-hint { display: none; }
+  /* On a phone the status wraps, so the problem count stays readable. */
+  .presentation-dialog .presentation-player-status { min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+  .presentation-dialog .presentation-player-bar > div { flex: none; white-space: nowrap; }
   .presentation-dialog .presentation-notes { max-height: 40%; margin-bottom: 8px; }
   .presentation-dialog .presentation-dialog-footer { padding: 9px 12px; font-size: 9px; }
   .presentation-dialog .presentation-dialog-footer a { white-space: nowrap; }

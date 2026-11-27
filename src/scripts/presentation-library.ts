@@ -9,7 +9,7 @@ import {
 } from '../lib/presentation-messages';
 import {
   createPresentationPlayer, exportPresentationHtml, preparePresentationDocument,
-  type PresentationMessageOrigin, type PresentationPlayer, type PresentationPlayerState, type PresentationStall,
+  type PresentationLeft, type PresentationMessageOrigin, type PresentationPlayer, type PresentationPlayerState, type PresentationStall,
 } from '../lib/presentation-runtime';
 
 function bytesLabel(bytes: number): string {
@@ -103,16 +103,35 @@ interface EditStorage {
   problem?: string;
 }
 
+/** The two notices over the slides. */
+type StageNotice = 'rescued' | 'link';
+
+/**
+ * The player's sentence when the presentation replaced its slides with a page
+ * at another address: `what` says what the player did about it.
+ */
+function leftText(host: string | undefined, what: string): string {
+  return `The presentation tried to replace its slides with a page${host ? ` from ${host}` : ''}, ${what} Ask your AI assistant to use an ordinary link for that page.`;
+}
+
 /** Every saved record and kept-in-memory deck opens through openStoredDeck. */
 type LibraryRecord = StoredDeckSource & { editsUnreadable?: boolean; updatedAt?: number };
 
 export class PresentationLibrary extends HTMLElement {
   /** What the library can truthfully promise about local playback. */
   static readonly privacyNote = 'Not uploaded. Presentations cannot read your documents, and ordinary network requests are blocked.';
-  /** Run-time messages kept for one playback, as the player sends at most 20 warnings. */
+  /**
+   * Run-time messages kept for one playback, of each origin: 20 texts from the
+   * presentation (the player sends at most 20 warnings) and, in their own room,
+   * 20 of the player's sentences, which say what to do next.
+   */
   static readonly runtimeLimit = 20;
-  /** How long the basic-settings notice stays over the slides. */
+  /** How long the basic-settings notice stays over the slides, while neither the pointer nor the keyboard is in it. */
   static readonly rescuedNoticeMs = 12_000;
+  /** How long the link notice stays, likewise. */
+  static readonly linkNoticeMs = 20_000;
+  /** How often one playback is started again after the presentation replaced itself with a page. */
+  static readonly leftRestartLimit = 3;
   private abort = new AbortController();
   private initialized = false;
   private player?: PresentationPlayer;
@@ -147,14 +166,18 @@ export class PresentationLibrary extends HTMLElement {
   private playbackStarted = 0;
   /** The website the deck's last link points to, while its notice shows. */
   private linkUrl?: URL;
-  private linkTimer?: number;
   /**
    * The basic-settings notice is due: shown unless the link notice takes its
-   * place. It closes itself after RESCUED_NOTICE_MS, on Dismiss and at the
+   * place. It closes itself after rescuedNoticeMs, on Dismiss and at the
    * next start; the status line keeps saying it for the whole playback.
    */
   private rescuedNotice = false;
-  private rescuedTimer?: number;
+  /** The timers that close the notices; one waits while the pointer or the keyboard is in its notice. */
+  private noticeTimers: Partial<Record<StageNotice, number>> = {};
+  /** The notices the pointer is over. */
+  private noticePointer = new Set<StageNotice>();
+  /** Restarts after the presentation replaced itself with a page, since Start. */
+  private leftRestarts = 0;
 
   /** Start a new operation: earlier ones see a changed number and their slow work is cancelled. */
   private nextOperation(): number {
@@ -184,23 +207,40 @@ export class PresentationLibrary extends HTMLElement {
     // Fullscreen requests must remain directly inside the user gesture.
     this.q('[data-pres-present]').addEventListener('click', () => this.present(), { signal });
     click('[data-pres-stop]', () => this.player?.stop());
-    click('[data-pres-restart]', () => { this.clearProblems(); this.clearRuntime(); this.player?.restart(); });
+    click('[data-pres-restart]', () => { this.clearProblems(); this.clearRuntime(); this.leftRestarts = 0; this.player?.restart(); });
     click('[data-pres-zip]', () => this.downloadArchive());
     click('[data-pres-zip-original]', () => this.downloadOriginal());
     click('[data-pres-html]', () => this.downloadHtml());
     click('[data-pres-report]', () => this.copyReport());
     click('[data-pres-exit-fullscreen]', () => this.exitFullscreen());
-    click('[data-pres-rescued-dismiss]', () => { this.hideRescued(); this.player?.focus(); });
-    click('[data-pres-link-dismiss]', () => { this.hideLink(); this.player?.focus(); });
+    // After Dismiss the arrow keys move the slides again.
+    click('[data-pres-rescued-dismiss]', () => { if (!this.hideRescued()) this.player?.focus(); });
+    click('[data-pres-link-dismiss]', () => { if (!this.hideLink()) this.player?.focus(); });
     // Opening the address needs this click on the page itself: the deck can
     // only ask, and the new tab gets neither an opener nor a referrer.
     this.q('[data-pres-link-open]').addEventListener('click', () => {
       const url = this.linkUrl;
-      this.hideLink();
+      const moved = this.hideLink();
       if (url) window.open(url.href, '_blank', 'noopener,noreferrer');
-      // As after Dismiss: the arrow keys move the slides again.
-      this.player?.focus();
+      // As after Dismiss.
+      if (!moved) this.player?.focus();
     }, { signal });
+    for (const which of ['rescued', 'link'] as const) {
+      const strip = this.q(`[data-pres-${which}]`);
+      // A notice does not close while the pointer or the keyboard is in it,
+      // so a teacher can read it; its time starts again once both have left.
+      strip.addEventListener('pointerenter', () => { this.noticePointer.add(which); this.holdNotice(which); }, { signal });
+      strip.addEventListener('pointerleave', () => { this.noticePointer.delete(which); this.releaseNotice(which); }, { signal });
+      strip.addEventListener('focusin', () => this.holdNotice(which), { signal });
+      strip.addEventListener('focusout', (event) => {
+        const next = (event as FocusEvent).relatedTarget;
+        if (!(next instanceof Node && strip.contains(next))) this.releaseNotice(which);
+      }, { signal });
+      // A click on its text, outside the buttons, leaves the keyboard with the slides.
+      strip.addEventListener('click', (event) => {
+        if (!(event.target instanceof Element && event.target.closest('button'))) this.player?.focus();
+      }, { signal });
+    }
     for (const button of this.querySelectorAll<HTMLButtonElement>('[data-pres-view]')) {
       button.addEventListener('click', () => this.setView(button.dataset.presView === 'source' ? 'source' : 'preview'), { signal });
     }
@@ -374,7 +414,7 @@ export class PresentationLibrary extends HTMLElement {
    */
   private addRuntime(origin: PresentationMessageOrigin, message: string, counted = true): void {
     const text = cleanReportedText(message);
-    if (!text || this.runtime.length >= PresentationLibrary.runtimeLimit
+    if (!text || this.runtime.filter((item) => item.origin === origin).length >= PresentationLibrary.runtimeLimit
       || this.runtime.some((item) => item.origin === origin && item.text === text)) return;
     this.runtime.push(counted ? { origin, text } : { origin, text, counted: false });
     this.renderNotes();
@@ -915,6 +955,7 @@ export class PresentationLibrary extends HTMLElement {
         this.runtimeAdded(before);
       },
       onStalled: (detail, firstError) => this.showStall(detail, firstError),
+      onLeft: (left) => this.presentationLeft(left),
       onLink: (url) => this.showLink(url),
       onPosition: () => { this.hideLink(); this.startedLate(); },
       onSlides: (slides) => { this.slides = slides; this.renderSlides(); this.startedLate(); },
@@ -963,8 +1004,7 @@ export class PresentationLibrary extends HTMLElement {
     if (detail === 'rescued') {
       this.q('[data-pres-rescued-text]').textContent = STALL_RESCUED_TEXT;
       this.rescuedNotice = true;
-      if (this.rescuedTimer !== undefined) window.clearTimeout(this.rescuedTimer);
-      this.rescuedTimer = window.setTimeout(() => this.hideRescued(), PresentationLibrary.rescuedNoticeMs);
+      this.armNotice('rescued');
       this.renderNoticeArea();
     } else {
       const lines: HTMLElement[] = [];
@@ -1016,30 +1056,70 @@ export class PresentationLibrary extends HTMLElement {
     // A shortened address ends in "…": no full stop after it.
     text.replaceChildren('The presentation links to ', strong, ...(rest ? [rest] : []), ...(shortened ? [] : ['.']));
     this.linkUrl = url;
-    if (this.linkTimer !== undefined) window.clearTimeout(this.linkTimer);
-    this.linkTimer = window.setTimeout(() => this.hideLink(), 20_000);
+    this.armNotice('link');
     this.renderNoticeArea();
   }
 
-  private hideLink(): void {
-    if (this.linkTimer !== undefined) window.clearTimeout(this.linkTimer);
-    this.linkTimer = undefined;
+  /** Returns true when the keyboard was in the notice and went back to the slides. */
+  private hideLink(): boolean {
+    this.holdNotice('link');
     this.linkUrl = undefined;
-    this.renderNoticeArea();
+    return this.renderNoticeArea();
   }
 
-  private hideRescued(): void {
-    if (this.rescuedTimer !== undefined) window.clearTimeout(this.rescuedTimer);
-    this.rescuedTimer = undefined;
+  /** Returns true when the keyboard was in the notice and went back to the slides. */
+  private hideRescued(): boolean {
+    this.holdNotice('rescued');
     this.rescuedNotice = false;
-    this.renderNoticeArea();
+    return this.renderNoticeArea();
   }
 
-  /** The notice area over the top of the slides shows one notice: the link's, else the basic-settings one. */
-  private renderNoticeArea(): void {
-    const link = this.linkUrl !== undefined;
-    this.q('[data-pres-link]').hidden = !link;
-    this.q('[data-pres-rescued]').hidden = link || !this.rescuedNotice;
+  /** True while the notice is due to show. */
+  private noticeDue(which: StageNotice): boolean {
+    return which === 'link' ? this.linkUrl !== undefined : this.rescuedNotice;
+  }
+
+  /** True while the pointer or the keyboard is in the notice. */
+  private noticeHeld(which: StageNotice): boolean {
+    return this.noticePointer.has(which) || this.q(`[data-pres-${which}]`).contains(document.activeElement);
+  }
+
+  /** Start the notice's time again from the beginning, unless the pointer or the keyboard is in it. */
+  private armNotice(which: StageNotice): void {
+    this.holdNotice(which);
+    if (this.noticeHeld(which)) return;
+    this.noticeTimers[which] = window.setTimeout(() => { if (which === 'link') this.hideLink(); else this.hideRescued(); },
+      which === 'link' ? PresentationLibrary.linkNoticeMs : PresentationLibrary.rescuedNoticeMs);
+  }
+
+  /** Stop the notice's timer. */
+  private holdNotice(which: StageNotice): void {
+    const timer = this.noticeTimers[which];
+    if (timer !== undefined) window.clearTimeout(timer);
+    delete this.noticeTimers[which];
+  }
+
+  /** The pointer or the keyboard left the notice: its time starts again once both have left. */
+  private releaseNotice(which: StageNotice): void {
+    if (this.noticeDue(which) && this.noticeTimers[which] === undefined) this.armNotice(which);
+  }
+
+  /**
+   * The notice area over the top of the slides shows one notice: the link's,
+   * else the basic-settings one. When a notice that holds the keyboard goes,
+   * the keyboard goes back to the slides, as after Dismiss; returns true then.
+   */
+  private renderNoticeArea(): boolean {
+    const strips = { link: this.q('[data-pres-link]'), rescued: this.q('[data-pres-rescued]') };
+    const focused = () => Object.values(strips).some((strip) => !strip.hidden && strip.contains(document.activeElement));
+    const hadFocus = focused();
+    strips.link.hidden = this.linkUrl === undefined;
+    strips.rescued.hidden = this.linkUrl !== undefined || !this.rescuedNotice;
+    // A hidden notice is not under the pointer; one that is still due gets its time again.
+    for (const which of ['link', 'rescued'] as const) if (strips[which].hidden && this.noticePointer.delete(which)) this.releaseNotice(which);
+    if (!hadFocus || focused()) return false;
+    this.player?.focus();
+    return true;
   }
 
   /** What belongs to one playback on the stage: the start-up problem and the notices over the slides. */
@@ -1251,7 +1331,34 @@ export class PresentationLibrary extends HTMLElement {
     this.notice();
     this.clearProblems();
     this.clearRuntime();
+    this.leftRestarts = 0;
     this.player?.start();
+  }
+
+  /**
+   * The presentation replaced its slides with a page at another address, and
+   * the player blocked that page. Right after the person's own action (a
+   * button that goes to a website) it plays again on the same slide, a few
+   * times per Start; otherwise it stops. Either way the player says so in its
+   * own words, which count as a problem for the report.
+   */
+  private presentationLeft(left: PresentationLeft): void {
+    const player = this.player;
+    const active = this.active;
+    if (!player || !active) return;
+    const before = this.runtimeProblems();
+    if (left.active && this.leftRestarts < PresentationLibrary.leftRestartLimit) {
+      this.leftRestarts += 1;
+      const position = player.currentPosition();
+      player.update(active.playable.html, position ? { position } : {});
+      this.addRuntime('player', leftText(left.host, `which the player cannot do. ${position ? 'It was started again at the same slide.' : 'It was started again from the beginning.'}`));
+    } else {
+      player.stop();
+      const text = leftText(left.host, 'so the player stopped it. Choose Start to play it again.');
+      this.reportProblem('player', text);
+      this.addRuntime('player', text);
+    }
+    this.runtimeAdded(before);
   }
 
   private isFullscreen(): boolean {

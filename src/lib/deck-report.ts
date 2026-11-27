@@ -11,7 +11,10 @@ export const DECK_REPORT_FORMAT = 'qft-deck-check/1';
 
 /** Issues listed one per line; the rest are counted. */
 const MAX_ISSUES = 40;
-/** Run-time messages listed; the player keeps at most 20 per playback. */
+/**
+ * Run-time messages listed, of each origin: the library keeps at most 20 texts
+ * from the presentation and, beside them, 20 sentences of the player per playback.
+ */
 const MAX_RUNTIME = 20;
 
 export interface DeckReportRuntimeMessage {
@@ -143,7 +146,11 @@ export function formatDeckReport(input: DeckReportInput): string {
   const siteSide = errors > 0 && errorIssues.every((issue) => isSiteSideCode(issue.code));
   const warnings = input.issues.filter((issue) => issue.severity === 'warning').length;
   // The player's information (counted: false) is no problem: it is left out.
-  const runtime = (input.runtime ?? []).filter((item) => item.counted !== false).slice(0, MAX_RUNTIME);
+  const counted = (input.runtime ?? []).filter((item) => item.counted !== false);
+  const runtime = [
+    ...counted.filter((item) => item.origin === 'player').slice(0, MAX_RUNTIME),
+    ...counted.filter((item) => item.origin !== 'player').slice(0, MAX_RUNTIME),
+  ];
   const result = siteSide ? 'not opened this time (the site could not load its converter; the presentation may be fine)'
     : errors ? 'cannot play here'
     : input.stalled === 'blank' ? 'does not start (the presentation\'s own start-up script stopped with an error)'

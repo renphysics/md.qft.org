@@ -49,6 +49,15 @@ describe('deck check report', () => {
     assert.match(report, /result: plays, with notes/);
   });
 
+  it('lists up to 20 texts from the presentation and, beside them, up to 20 sentences of the player', () => {
+    const deck = Array.from({ length: 25 }, (_, index) => ({ origin: 'presentation' as const, text: `Uncaught Error: Problem number ${index + 1}` }));
+    const player = Array.from({ length: 25 }, (_, index) => ({ origin: 'player' as const, text: `Player sentence ${index + 1}.` }));
+    const lines = formatDeckReport({ kind: 'html', engine: 'html', issues: [], runtime: [...deck, ...player] }).split('\n');
+    assert.equal(lines.filter((line) => line.startsWith('Uncaught Error: Problem number')).length, 20);
+    assert.equal(lines.filter((line) => line.startsWith('- player: Player sentence')).length, 20, 'the player\'s sentences are not crowded out');
+    assert.ok(lines.includes('- player: Player sentence 1.'));
+  });
+
   it('lists the player\'s information without counting it as a problem', () => {
     const speaker = { origin: 'player' as const, text: 'The speaker view (S key) is not available in the player.', counted: false };
     const quiet = formatDeckReport({ kind: 'reveal', engine: 'reveal', issues: [], runtime: [speaker] });
