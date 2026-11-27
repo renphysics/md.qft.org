@@ -76,21 +76,26 @@ const PLUGIN_LIST = (() => {
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 })();
 
-/** What does not work in the player, for both kinds of page. */
-const PLAYER_LIMITS = 'confirm(), prompt(), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops.';
+/**
+ * What does not work in the player, for both kinds of page, and the two ways
+ * that do: a website link (the player offers it; the linker turns a written-out
+ * address assigned to location into window.open, which the player offers after
+ * a click), and a quiz form checked by a script (the player fires its submit).
+ */
+const PLAYER_LIMITS = 'confirm(), prompt(), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops. To go to a website use an ordinary link (<a href="https://...">): the player offers it to open in a new tab, as it does for window.open() or location.href = "https://..." with the address written out in a click handler; any other change of the page address interrupts the slides. A quiz form works when its submit handler checks the answers with a script and cancels the submission.';
 
 /**
  * What the player supplies, for an AI that changes a Reveal.js presentation.
  * It names reveal.css and the themes on purpose: "supplies only Reveal.js"
  * made an assistant replace reveal.css with a hand-written file.
  */
-const REVEAL_RULES = `Rules for this player: it supplies Reveal.js ${BUNDLED_VERSIONS['reveal.js']} (reveal.js, reveal.css, the themes, and the ${PLUGIN_LIST} plugins) and KaTeX ${BUNDLED_VERSIONS.katex} (katex.js, katex.css with its fonts, auto-render, mhchem and copy-tex): keep the links to those files exactly as they are; for formulas use the math plugin (RevealMath.KaTeX) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, so MathJax-only commands may show as errors. Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas; nothing else may load from the internet while the presentation plays. ${PLAYER_LIMITS}`;
+const REVEAL_RULES = `Rules for this player: it supplies Reveal.js ${BUNDLED_VERSIONS['reveal.js']} (reveal.js, reveal.css, the themes, and the ${PLUGIN_LIST} plugins) and KaTeX ${BUNDLED_VERSIONS.katex} (katex.js, katex.css with its fonts, auto-render, mhchem and copy-tex): keep the links to those files exactly as they are (their onload code still runs); for formulas use the math plugin (RevealMath.KaTeX) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax's delimiters and LaTeX environments such as align written in the text; MathJax-only commands may show as errors. Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas; nothing else may load from the internet while the presentation plays. ${PLAYER_LIMITS}`;
 
 /**
  * The same for a plain HTML page, which has no Reveal.js plugins to use and
  * may be a single file.
  */
-const HTML_RULES = `Rules for this player: nothing may load from the internet while the presentation plays, so every script, stylesheet, font and picture must be inside the presentation (inline in a single HTML file, pictures as data: URIs or inline SVG, or files in the ZIP beside it); links to Reveal.js ${BUNDLED_VERSIONS['reveal.js']} and KaTeX ${BUNDLED_VERSIONS.katex} from a CDN, if the page has them, stay as they are because the player supplies them, and a MathJax script from a CDN is replaced by this KaTeX. ${PLAYER_LIMITS}`;
+const HTML_RULES = `Rules for this player: nothing may load from the internet while the presentation plays, so every script, stylesheet, font and picture must be inside the presentation (inline in a single HTML file, pictures as data: URIs or inline SVG, or files in the ZIP beside it); links to Reveal.js ${BUNDLED_VERSIONS['reveal.js']} and KaTeX ${BUNDLED_VERSIONS.katex} from a CDN, if the page has them, stay as they are because the player supplies them (their onload code still runs), and a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax's delimiters and LaTeX environments such as align written in the text. ${PLAYER_LIMITS}`;
 
 /** What a Slidev project needs to play here; the same rules as the Slidev prompt (slidev-prompt.ts). */
 const SLIDEV_RULES = 'Rules for this player: no {monaco} code blocks and no Web Workers; pictures and media in public/ or imported in the project; nothing may load from the internet while the presentation plays (no CDN files, web fonts or remote APIs; set fonts: { provider: \'none\' }).';

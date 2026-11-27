@@ -172,11 +172,15 @@ describe('deck check report', () => {
     for (const file of ['dist/katex.min.js', 'dist/katex.min.css', 'dist/contrib/auto-render.min.js', 'dist/contrib/mhchem.min.js', 'dist/contrib/copy-tex.min.js']) {
       assert.ok(BUNDLED_TEXT_FILES.katex.includes(file), `the rules name only bundled files: ${file}`);
     }
-    assert.match(rules, /for formulas use the math plugin \(RevealMath\.KaTeX\) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, so MathJax-only commands may show as errors\./);
+    // The linker runs a replaced script's onload code, and typesets environments outside delimiters.
+    assert.match(rules, /keep the links to those files exactly as they are \(their onload code still runs\);/);
+    assert.match(rules, /for formulas use the math plugin \(RevealMath\.KaTeX\) or KaTeX; a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax's delimiters and LaTeX environments such as align written in the text; MathJax-only commands may show as errors\./);
     assert.match(rules, /Every other script, stylesheet, font and picture must be inside the ZIP or replaced by inline SVG or canvas/);
     assert.match(rules, /nothing else may load from the internet while the presentation plays/);
     // The linker's notes: e-mail links do not open (contact-links); saved data lasts one playback (browser-storage); the player's 'form' limit.
-    assert.match(rules, /confirm\(\), prompt\(\), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops\.$/);
+    assert.match(rules, /confirm\(\), prompt\(\), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops\. /);
+    // The linker's scripted-navigation rewrite and the player's link offer, the 'left' restart, and forms that the player submits.
+    assert.match(rules, / To go to a website use an ordinary link \(<a href="https:\/\/\.\.\.">\): the player offers it to open in a new tab, as it does for window\.open\(\) or location\.href = "https:\/\/\.\.\." with the address written out in a click handler; any other change of the page address interrupts the slides\. A quiz form works when its submit handler checks the answers with a script and cancels the submission\.$/);
     assert.doesNotMatch(rules, /\n/, 'one line');
     assert.ok(lines.indexOf(rules) < lines.length - 1, 'the reply stays last');
     assert.equal(lines.at(-1), 'Reply: send back the complete corrected presentation, as a ZIP with index.html at the top, fixing the notes above and changing nothing else.');
@@ -188,7 +192,7 @@ describe('deck check report', () => {
     const notes = [{ code: 'external-library', severity: 'warning' as const, message: 'The script cdn.example/mermaid.min.js is left out.' }];
     const lines = formatDeckReport({ kind: 'html', engine: 'html', issues: notes }).split('\n');
     const rules = lines.find((line) => line.startsWith('Rules for this player:'));
-    assert.equal(rules, 'Rules for this player: nothing may load from the internet while the presentation plays, so every script, stylesheet, font and picture must be inside the presentation (inline in a single HTML file, pictures as data: URIs or inline SVG, or files in the ZIP beside it); links to Reveal.js 6.0.2 and KaTeX 0.19.1 from a CDN, if the page has them, stay as they are because the player supplies them, and a MathJax script from a CDN is replaced by this KaTeX. confirm(), prompt(), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops.');
+    assert.equal(rules, 'Rules for this player: nothing may load from the internet while the presentation plays, so every script, stylesheet, font and picture must be inside the presentation (inline in a single HTML file, pictures as data: URIs or inline SVG, or files in the ZIP beside it); links to Reveal.js 6.0.2 and KaTeX 0.19.1 from a CDN, if the page has them, stay as they are because the player supplies them (their onload code still runs), and a MathJax script from a CDN is replaced by this KaTeX, which typesets MathJax\'s delimiters and LaTeX environments such as align written in the text. confirm(), prompt(), printing, new windows, forms sent to a server, e-mail and phone links do not work in the player, and data saved in the browser lasts only until the presentation stops. To go to a website use an ordinary link (<a href="https://...">): the player offers it to open in a new tab, as it does for window.open() or location.href = "https://..." with the address written out in a click handler; any other change of the page address interrupts the slides. A quiz form works when its submit handler checks the answers with a script and cancels the submission.');
     assert.doesNotMatch(rules!, /plugin|RevealMath/, 'a plain page has no Reveal.js plugins to use');
     assert.doesNotMatch(lines.join('\n'), /one index\.html/);
   });
