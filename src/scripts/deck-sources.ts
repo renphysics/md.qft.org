@@ -3,6 +3,7 @@ import {
   deckFileList, deckFileText, deckOriginalText, deckSourceNote, isEditableDeck, nextDeckEdits,
   type DeckFileInfo, type DeckProject,
 } from '../lib/deck-project';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../lib/load-failure';
 import { visiblePath } from '../lib/presentation-messages';
 import type { DeckEditor } from './deck-editor';
 
@@ -56,6 +57,20 @@ function sizeLabel(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/**
+ * The read-only note for a Slidev build, in the Slidev prompt's words (a
+ * project ZIP with dist/ inside). deck-project's own note still says "a ZIP
+ * of the new dist folder"; the other kinds keep deck-project's note.
+ */
+const SLIDEV_BUILD_NOTE = 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).';
+
+export function sourceNote(project: DeckProject): string {
+  return project.kind === 'slidev-build' ? SLIDEV_BUILD_NOTE : deckSourceNote(project);
+}
+
+/** A caught error as one line for the problem area; a part of the site that could not load gets the fixed sentence. */
+const problemText = (error: unknown) => errorMessage(error, 'Something went wrong. Download the ZIP to keep your changes, then reload the page.');
+
 const files = (count: number) => `${count} ${count === 1 ? 'file' : 'files'}`;
 const shortcut = () => /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘S' : 'Ctrl+S';
 
@@ -73,7 +88,7 @@ export class DeckSourceView {
 
   constructor(private readonly root: HTMLElement, private readonly host: DeckSourceHost, signal: AbortSignal) {
     const on = (selector: string, action: () => unknown) => {
-      this.q(selector).addEventListener('click', () => { void Promise.resolve().then(action).catch((error) => this.problems([String(error instanceof Error ? error.message : error)])); }, { signal });
+      this.q(selector).addEventListener('click', () => { void Promise.resolve().then(action).catch((error) => this.problems([problemText(error)])); }, { signal });
     };
     on('[data-pres-apply]', () => this.apply());
     on('[data-pres-discard]', () => this.discard());
@@ -138,7 +153,7 @@ export class DeckSourceView {
     this.list = deckFileList(project);
     this.selected = this.list.find((file) => file.text)?.path ?? this.list[0]?.path;
     const editable = isEditableDeck(project);
-    this.q('[data-pres-source-note]').textContent = deckSourceNote(project);
+    this.q('[data-pres-source-note]').textContent = sourceNote(project);
     this.q('[data-pres-apply]').hidden = !editable;
     this.q('[data-pres-discard]').hidden = !editable;
     this.q('[data-pres-restore]').hidden = !editable;
@@ -157,11 +172,11 @@ export class DeckSourceView {
         this.editor = createDeckEditor({
           parent: this.q('[data-pres-code]'),
           onChange: (path) => { this.touched.add(path); this.scheduleRefresh(); },
-          onSave: () => { void this.apply().catch((error) => this.problems([String(error instanceof Error ? error.message : error)])); },
+          onSave: () => { void this.apply().catch((error) => this.problems([problemText(error)])); },
         });
         return this.editor;
       });
-      this.loading.catch(() => { this.loading = undefined; this.message('The editor could not be opened. Reload the page and try again.'); });
+      this.loading.catch((error) => { this.loading = undefined; this.message(isLoadFailure(error) ? LOAD_FAILURE_TEXT : 'The editor could not be opened. Reload the page and try again.'); });
     }
     return this.loading;
   }
@@ -345,7 +360,7 @@ export class DeckSourceView {
    * error changes nothing: the problem is shown, the changes stay in the
    * editor, and the presentation keeps the last version that worked.
    */
-  private async apply(paths = this.pendingPaths(), done = 'Changes applied.'): Promise<boolean> {
+  private async apply(paths = this.pendingPaths(), done = 'Changes applied.', see = 'them'): Promise<boolean> {
     const project = this.project;
     const editor = this.editor;
     if (!project || !editor || this.busy || !isEditableDeck(project)) return false;
@@ -372,9 +387,9 @@ export class DeckSourceView {
       // Only Reveal.js decks report their slide, so only they come back to it;
       // any other page starts again from the beginning.
       const reveal = project.engine === 'reveal';
-      const replay = outcome.replay === 'now' ? (reveal ? 'The presentation shows them on the same slide.' : 'The presentation starts again from the beginning to show them.')
-        : outcome.replay === 'on-return' ? (reveal ? 'Choose Presentation to see them on the same slide.' : 'Choose Presentation to see them. The presentation starts again from the beginning.')
-          : outcome.replay === 'on-start' ? 'Start the presentation to see them.' : '';
+      const replay = outcome.replay === 'now' ? (reveal ? `The presentation shows ${see} on the same slide.` : `The presentation starts again from the beginning to show ${see}.`)
+        : outcome.replay === 'on-return' ? (reveal ? `Choose Presentation to see ${see} on the same slide.` : `Choose Presentation to see ${see}. The presentation starts again from the beginning.`)
+          : outcome.replay === 'on-start' ? `Start the presentation to see ${see}.` : '';
       this.status([done, replay, outcome.storage ?? ''].filter(Boolean).join(' '));
       if (outcome.storageProblem) this.problems([outcome.storageProblem]);
       return true;
@@ -383,25 +398,52 @@ export class DeckSourceView {
     }
   }
 
-  /** The selected file goes back to its imported text; Undo in the editor brings the changes back. */
+  /**
+   * Discard changes to the selected file. Changes not applied yet go back to
+   * the text that plays now; what is applied and saved stays, and Undo in the
+   * editor brings the typing back. A file with no unapplied changes but with
+   * applied edits goes back to its imported text, after confirmation, as
+   * Restore original does for the whole presentation.
+   */
   private async discard(): Promise<void> {
     const project = this.project;
     const editor = this.editor;
     const path = this.selected;
     const file = this.list.find((entry) => entry.path === path);
     if (!project || !editor || !path || !file?.editable || this.busy) return;
+    const name = visiblePath(path);
+    if (this.pendingPaths().includes(path)) {
+      const applied = deckFileText(project, path);
+      if (applied === undefined) return;
+      editor.replace(path, applied);
+      this.touched.delete(path);
+      this.problems([]);
+      this.status(`Unapplied changes to ${name} discarded. Undo (${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z'}) in the editor brings them back.`);
+      this.refreshStates();
+      this.focusWork();
+      return;
+    }
+    if (!project.edits.has(path)) return;
     const original = deckOriginalText(project, path);
     if (original === undefined) return;
-    const applied = project.edits.has(path);
+    const confirmed = await this.host.confirm({
+      title: 'Restore this file as imported?',
+      message: `Your applied changes to ${name} will be removed from this browser, and the file goes back to its imported text. Your other files and your original file are unchanged.`,
+      confirm: 'Restore this file',
+      cancel: 'Keep my changes',
+    });
+    if (!confirmed || project !== this.project || this.selected !== path) { this.focusWork(); return; }
     editor.replace(path, original);
     this.touched.add(path);
-    if (applied) await this.apply([path], `Changes to ${visiblePath(path)} discarded.`);
-    else {
-      this.touched.delete(path);
-      this.status(`Changes to ${visiblePath(path)} discarded.`);
-      this.refreshStates();
-    }
-    editor.focus();
+    await this.apply([path], `${name} is back to its imported text.`, 'the imported text');
+    this.focusWork();
+  }
+
+  /** After Discard or Restore original: the keyboard goes to the editor, or to the selected file when no editor shows. */
+  private focusWork(): void {
+    if (!this.q('[data-pres-code]').hidden && this.editor) { this.editor.focus(); return; }
+    const selected = this.selected ? this.buttons.get(this.selected) : undefined;
+    (selected ?? this.buttons.values().next().value)?.focus();
   }
 
   /** Every file goes back to its imported text, after confirmation; the original upload was never changed. */
@@ -439,6 +481,7 @@ export class DeckSourceView {
     editor.clear();
     if (this.selected) this.open(this.selected, editor);
     this.refreshStates();
+    this.focusWork();
   }
 
   private async copy(): Promise<void> {

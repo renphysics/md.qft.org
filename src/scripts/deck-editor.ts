@@ -1,4 +1,5 @@
 import { basicSetup } from 'codemirror';
+import { isolateHistory } from '@codemirror/commands';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
@@ -150,8 +151,9 @@ export function createDeckEditor(options: DeckEditorOptions): DeckEditor {
           show(target, stateFor({ path: target, text, editable: !view.state.readOnly }));
           options.onChange?.(target);
         } else if (view.state.doc.toString() !== text) {
-          // An ordinary change, so Undo brings the earlier text back.
-          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+          // An ordinary change, so Undo brings the earlier text back: one step
+          // of its own, never joined with typing just before or after it.
+          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, annotations: isolateHistory.of('full') });
         }
         return;
       }

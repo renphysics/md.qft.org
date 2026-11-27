@@ -181,7 +181,7 @@ export default async function run(t) {
     assert.equal(await status(page), 'Playing locally');
     await openSourceFiles(page);
     await page.locator('[data-pres-discard]').click();
-    await until(async () => /^Changes to index\.html discarded\./.test(await editStatus(page)), 'the change to be discarded');
+    await until(async () => /^Unapplied changes to index\.html discarded\. Undo \(Ctrl\+Z\) in the editor brings them back\.$/.test(await editStatus(page)), 'the change to be discarded');
     assert.equal(await badge(page, 'index.html').isVisible(), false);
     await page.locator('[data-pres-copy]').click();
     await until(async () => /^Copied index\.html\./.test(await editStatus(page)), 'the copy feedback');
@@ -231,6 +231,51 @@ export default async function run(t) {
     assert.equal(await badge(page, 'css/custom.css').isVisible(), false, 'changes that were never applied are gone');
   });
 
+  await t.step('Discard with typing not applied keeps the applied, saved edit; then it asks before removing that edit', async () => {
+    await selectFile(page, 'slides.md', EDITED_HEADING);
+    await page.locator('[data-pres-code] .cm-content').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.insertText('\n<!-- not applied -->');
+    await until(async () => (await badge(page, 'slides.md').textContent()) === 'Not applied', 'the unapplied typing');
+    await page.locator('[data-pres-discard]').click();
+    await until(async () => /^Unapplied changes to slides\.md discarded\. Undo/.test(await editStatus(page)), 'the typing to be discarded');
+    const text = await editorText(page);
+    assert.match(text, new RegExp(EDITED_HEADING), 'the applied edit stays');
+    assert.doesNotMatch(text, /not applied -->/);
+    assert.equal(await badge(page, 'slides.md').textContent(), 'Edited');
+    assert.match(await page.locator('[data-pres-storage]').textContent(), /Saved in this browser with your edits/);
+    assert.equal(await page.locator('[data-pres-code] .cm-editor').evaluate((editor) => editor.contains(document.activeElement)), true, 'the keyboard is in the editor');
+    // Undo brings the typing back, as the status says.
+    await page.keyboard.press('Control+z');
+    await until(async () => (await editorText(page)).includes('not applied -->'), 'Undo to bring the typing back');
+    await page.keyboard.press('Control+y');
+    await until(async () => !(await editorText(page)).includes('not applied -->'), 'Redo to discard it again');
+    // Now the file has no unapplied changes, only the saved edit: Discard asks first.
+    await until(async () => (await badge(page, 'slides.md').textContent()) === 'Edited', 'no unapplied changes');
+    await page.locator('[data-pres-discard]').click();
+    const confirm = page.locator('[data-pres-confirm]');
+    await confirm.waitFor({ state: 'visible' });
+    assert.equal(await page.locator('[data-pres-confirm-title]').textContent(), 'Restore this file as imported?');
+    assert.match(await page.locator('[data-pres-confirm-message]').textContent(), /applied changes to slides\.md will be removed/);
+    await page.locator('[data-pres-confirm-cancel]').click();
+    await confirm.waitFor({ state: 'hidden' });
+    assert.equal(await badge(page, 'slides.md').textContent(), 'Edited', 'Keep my changes keeps the edit');
+    assert.match(await editorText(page), new RegExp(EDITED_HEADING));
+    // Confirmed, the file goes back to its imported text, and is saved so.
+    await page.locator('[data-pres-discard]').click();
+    await confirm.waitFor({ state: 'visible' });
+    await page.locator('[data-pres-confirm-accept]').click();
+    await until(async () => /^slides\.md is back to its imported text\. Choose Presentation to see the imported text on the same slide\. The copy saved in this browser is the original again\.$/.test(await editStatus(page)), 'the file to be restored');
+    assert.equal(await badge(page, 'slides.md').isVisible(), false);
+    assert.match(await editorText(page), new RegExp(ORIGINAL_HEADING));
+    assert.equal(await page.locator('[data-pres-code] .cm-editor').evaluate((editor) => editor.contains(document.activeElement)), true, 'the keyboard is back in the editor');
+    // Apply the edit again for the next step.
+    await retypeLine(page, ORIGINAL_HEADING, `## ${EDITED_HEADING}`);
+    await until(async () => (await badge(page, 'slides.md').textContent()) === 'Not applied', 'the retyped edit');
+    await page.keyboard.press('Control+s');
+    await until(async () => (await badge(page, 'slides.md').textContent()) === 'Edited', 'the edit to be applied again');
+  });
+
   await t.step('Restore original, after confirmation, brings the first text back on the same slide', async () => {
     await page.locator('[data-pres-restore]').click();
     const confirm = page.locator('[data-pres-confirm]');
@@ -238,6 +283,7 @@ export default async function run(t) {
     assert.equal(await page.locator('[data-pres-confirm-title]').textContent(), 'Restore the original presentation?');
     await page.locator('[data-pres-confirm-accept]').click();
     await until(async () => /^The original presentation is restored\./.test(await editStatus(page)), 'the original to be restored');
+    assert.equal(await page.locator('[data-pres-code] .cm-editor').evaluate((editor) => editor.contains(document.activeElement)), true, 'the keyboard goes to the editor, not to the page');
     assert.equal(await badge(page, 'slides.md').isVisible(), false);
     assert.equal(await page.locator('[data-pres-zip-original]').isVisible(), false);
     assert.doesNotMatch(await page.locator('[data-pres-subtitle]').textContent(), /Edited/);
