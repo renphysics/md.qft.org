@@ -1,12 +1,12 @@
 import { defaultTreeAdapter, html as parse5Html, parse, serialize, type DefaultTreeAdapterTypes } from 'parse5';
 import { decodeText, mimeFromPath } from './deck-archive';
 import {
-  BUNDLED_VERSIONS, mapLibraryPath, mapLibraryUrl, mapModuleSpecifier, vendorFileKey,
+  BUNDLED_VERSIONS, mapLibraryPath, mapLibraryUrl, mapModuleSpecifier, mathJaxPathVersion, mathJaxScriptVersion, vendorFileKey,
   type LibraryReference, type VendorFile, type VendorLibrary, type VendorProvider,
 } from './deck-vendor';
 import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
-  mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
+  mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
 import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
@@ -152,9 +152,59 @@ function textOf(element: Element): string {
   return parent.childNodes.map((node) => (node.nodeName === '#text' ? (node as DefaultTreeAdapterTypes.TextNode).value : '')).join('');
 }
 
+/** Removes every child at once (parse5's detachNode searches the siblings for each one). */
+function clearChildren(parent: ParentNode): void {
+  for (const child of parent.childNodes) child.parentNode = null;
+  parent.childNodes = [];
+}
+
 function setText(element: Element, value: string): void {
-  for (const child of [...element.childNodes]) defaultTreeAdapter.detachNode(child);
+  clearChildren(element);
   if (value) defaultTreeAdapter.insertText(element, value);
+}
+
+/**
+ * Removals and replacements of many elements (review VF1.1). parse5's
+ * detachNode and insertBefore look the node up among its siblings, so one call
+ * per element took quadratic time on a page of 100,000 siblings. A node given
+ * here is cut off from its parent at once (isAttached then says so, for it and
+ * everything inside it); the parent's child list is rebuilt once, in apply().
+ * Nodes put in its place count as children of that parent straight away, and
+ * may themselves be replaced before apply().
+ */
+class TreeEdits {
+  private readonly parents = new Set<ParentNode>();
+  private readonly replacements = new Map<ChildNode, ChildNode[]>();
+
+  remove(node: ChildNode): void {
+    this.replace(node, []);
+  }
+
+  replace(node: ChildNode, nodes: ChildNode[]): void {
+    const parent = node.parentNode;
+    if (!parent) return;
+    this.parents.add(parent);
+    this.replacements.set(node, nodes);
+    node.parentNode = null;
+    for (const replacement of nodes) replacement.parentNode = parent;
+  }
+
+  apply(): void {
+    for (const parent of this.parents) {
+      const kept: ChildNode[] = [];
+      const stack = [...parent.childNodes].reverse();
+      while (stack.length) {
+        const child = stack.pop()!;
+        const replaced = this.replacements.get(child);
+        if (replaced) {
+          for (let index = replaced.length - 1; index >= 0; index -= 1) stack.push(replaced[index]);
+        } else if (child.parentNode === parent) kept.push(child);
+      }
+      parent.childNodes = kept;
+    }
+    this.parents.clear();
+    this.replacements.clear();
+  }
 }
 
 function createElement(tagName: string, attributes: Record<string, string> = {}, namespace: string = NS.HTML): Element {
@@ -178,11 +228,6 @@ function prepend(parent: Element, node: ChildNode): void {
   const first = parent.childNodes[0];
   if (first) defaultTreeAdapter.insertBefore(parent, node, first);
   else defaultTreeAdapter.appendChild(parent, node);
-}
-
-function replaceNode(reference: ChildNode, nodes: ChildNode[]): void {
-  insertBefore(reference, nodes);
-  defaultTreeAdapter.detachNode(reference);
 }
 
 function children(parent: ParentNode): ChildNode[] {
@@ -448,6 +493,12 @@ const CSS_SCAN = String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:[^"\\\n]|\\[\s\S])*["\n]?
 
 type CssOrigin = { kind: 'deck'; dir: string } | { kind: 'vendor'; library: VendorLibrary; dir: string };
 
+/** The longest note the linker writes; longer ones are cut. */
+const MAX_NOTE_LENGTH = 350;
+
+/** The last sentence of a note about files too large to include (review VUX.6). */
+const SMALLER_FILES = 'Make the largest pictures smaller, for example under 500 KB each, or ask your AI assistant to compress them; then open the new ZIP.';
+
 /** The last sentence of a note about something left out that the AI can fix. */
 const NEXT_STEP = 'Copy the report for your AI assistant to get a version that works here.';
 
@@ -477,6 +528,20 @@ const KNOWN_LIBRARIES: readonly { name: string; pattern: RegExp; effect: string;
   { name: 'Leaflet', pattern: /leaflet/, effect: 'maps drawn with it will be missing' },
   { name: 'highlight.js', pattern: /highlight\.js|highlightjs|highlight(?:\.min)?\.js/, effect: 'code will not be coloured by it' },
 ];
+
+/**
+ * polyfill.io and its copies, which old MathJax snippets load beside it: the
+ * features it adds are in every browser the player runs in.
+ */
+function isPolyfillScript(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const polyfillHost = /^(?:cdn\.)?polyfill(?:-fastly)?\.(?:io|net)$/.test(host);
+    const cdnjs = host === 'cdnjs.cloudflare.com' && /^\/polyfill\//i.test(parsed.pathname);
+    return (polyfillHost || cdnjs) && /\/polyfill(?:\.min)?\.js$/i.test(parsed.pathname);
+  } catch { return false; }
+}
 
 function knownLibrary(url: string): { name: string; effect: string; plugin?: true } | undefined {
   let text: string;
@@ -516,6 +581,8 @@ class DeckLinker {
   private readonly classicTexts: string[] = [];
   private readonly moduleTexts: string[] = [];
   private readonly failedModuleTexts: string[] = [];
+  /** Texts of the deck's own copies of Reveal.js and its plugins, which are not the presentation's code. */
+  private readonly libraryTexts = new Set<string>();
   private document!: Document;
   private baseDir: string;
   private embeddedChars = 0;
@@ -524,17 +591,29 @@ class DeckLinker {
   private convertedHandlers = 0;
   private nextHandlerId = 1;
   private mathInserted = false;
+  private katexInserted = false;
+  /** The page loads MathJax on its own (review VF5.2); its stand-in is in the document. */
+  private mathJaxPlanned = false;
+  private mathJaxInserted = false;
   private katexInDeck = { script: false, autoRender: false, style: false };
   private mhchem = false;
+  /** Reveal.js's own stylesheet is in the finished document (review VF5.1). */
+  private revealStylesheet = false;
+  /** Reveal.js itself is in the finished document, bundled or the deck's own reveal.js. */
+  private revealScript = false;
   private embeddedVideo = false;
   private unsupportedModules: string[] = [];
   /** Deck files the finished document already contains, inlined or embedded. */
   private readonly usedFiles = new Set<string>();
   /** Files of the deck that links (a and area elements) point to. */
   private readonly fileLinks = new Set<string>();
+  /** mailto: and tel: addresses that links point to. */
+  private readonly contactLinks = new Set<string>();
   private readonly skippedLower = new Map<string, string>();
   /** Script elements that hold a bundled library, not the deck's own code. */
   private readonly vendorElements = new WeakSet<Element>();
+  /** Removals and replacements in the page, applied once per pass. */
+  private readonly edits = new TreeEdits();
 
   constructor(
     private readonly files: DeckFiles,
@@ -558,7 +637,7 @@ class DeckLinker {
     const key = `${code}\u0000${where ?? message}`;
     if (this.issueKeys.has(key)) return;
     this.issueKeys.add(key);
-    this.issues.push({ code, severity, message: cleanReportedText(message, 350), ...(where ? { where: cleanReportedText(where, 200) } : {}) });
+    this.issues.push({ code, severity, message: cleanReportedText(message, MAX_NOTE_LENGTH), ...(where ? { where: cleanReportedText(where, 200) } : {}) });
   }
 
   private reportRemote(target: Extract<Target, { kind: 'remote' }>, kind: 'image' | 'media' | 'script' | 'style' | 'font' | 'page' | 'markdown'): void {
@@ -699,7 +778,7 @@ class DeckLinker {
     if (length > this.maxLength || this.embeddedChars + length > this.maxLength * 2) {
       this.dataUris.set(key, null);
       this.removedReferences += 1;
-      this.report('asset-too-large', 'warning', `${key} (${formatBytes(bytes.length)}) is too large to include, so it is left out.`, key);
+      this.report('asset-too-large', 'warning', `${cleanReportedText(key, 120)} (${formatBytes(bytes.length)}) is too large to include, so it is left out. ${SMALLER_FILES}`, key);
       return undefined;
     }
     const uri = `data:${type};base64,${base64(bytes)}`;
@@ -892,6 +971,7 @@ class DeckLinker {
       if (chain.includes(key) || chain.length >= MAX_IMPORT_DEPTH) return '';
       this.inlinedFiles += 1;
       this.usedFiles.add(target.path);
+      if (/(?:^|\/)reveal(?:\.min)?\.css$/i.test(target.path)) this.revealStylesheet = true;
       return this.rewriteCss(decodeText(this.files.get(target.path)!, target.path), { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
     }
     if (target.kind === 'missing') {
@@ -918,6 +998,7 @@ class DeckLinker {
     if (chain.includes(key) || this.includedVendor.has(key)) return '';
     const css = await this.vendor.text(file);
     if (css === undefined) { this.reportMissing(file.path); return ''; }
+    if (file.library === 'reveal.js' && file.path === 'dist/reveal.css') this.revealStylesheet = true;
     this.includedVendor.add(key);
     if (!this.bundled.includes(key)) this.bundled.push(key);
     return this.rewriteCss(stripSourceMapComment(css), { kind: 'vendor', library: file.library, dir: dirname(file.path) }, [...chain, key]);
@@ -928,6 +1009,7 @@ class DeckLinker {
   private async vendorScripts(reference: LibraryReference, from: string, attributes: Record<string, string> = {}, note = true): Promise<Element[]> {
     if (note) this.noteBundled(reference, from);
     if (reference.role === 'reveal-math') return this.mathElements();
+    if (reference.role === 'reveal-core') this.revealScript = true;
     const elements: Element[] = [];
     for (const path of reference.files) {
       const file = { library: reference.library, path };
@@ -953,6 +1035,31 @@ class DeckLinker {
   private async mathElements(): Promise<Element[]> {
     if (this.mathInserted) return [];
     this.mathInserted = true;
+    const elements = await this.katexElements();
+    elements.push(scriptElement(mathStandInSource(), { [LINKER_MARKER]: 'math' satisfies LinkerScript }));
+    return elements;
+  }
+
+  /**
+   * KaTeX, then the stand-in for MathJax loaded on its own, once; `inline` is
+   * the code a version 2 MathJax.js script element holds as its configuration.
+   */
+  private async mathJaxElements(version: 2 | 3 | 4, attributes: Record<string, string>, inline: string): Promise<Element[]> {
+    if (this.mathJaxInserted) return [];
+    this.mathJaxInserted = true;
+    const elements = await this.katexElements();
+    elements.push(scriptElement(mathJaxStandInSource(version), { ...attributes, [LINKER_MARKER]: 'mathjax' satisfies LinkerScript }));
+    if (inline.trim()) {
+      this.classicTexts.push(inline);
+      elements.push(scriptElement(mathJaxConfigSource(inline), { [LINKER_MARKER]: 'mathjax-config' satisfies LinkerScript }));
+    }
+    return elements;
+  }
+
+  /** The bundled KaTeX, its auto-render and stylesheet, unless the deck brings its own; once. */
+  private async katexElements(): Promise<Element[]> {
+    if (this.katexInserted) return [];
+    this.katexInserted = true;
     const elements: Element[] = [];
     const library = 'katex';
     const add = async (role: LibraryReference['role'], path: string) => {
@@ -962,7 +1069,6 @@ class DeckLinker {
     if (!this.katexInDeck.script) await add('katex', 'dist/katex.min.js');
     if (!this.katexInDeck.autoRender) await add('katex-extension', 'dist/contrib/auto-render.min.js');
     if (this.mhchem) await add('katex-extension', 'dist/contrib/mhchem.min.js');
-    elements.push(scriptElement(mathStandInSource(), { [LINKER_MARKER]: 'math' satisfies LinkerScript }));
     return elements;
   }
 
@@ -980,13 +1086,22 @@ class DeckLinker {
     const typeValue = (getAttribute(element, 'type') ?? '').trim().toLowerCase().replace(/;[\s\S]*$/, '');
     const isModule = typeValue === 'module';
     const src = getAttribute(element, 'src') ?? getAttribute(element, 'href') ?? getAttribute(element, 'xlink:href');
-    if (typeValue === 'importmap' || typeValue === 'speculationrules') { defaultTreeAdapter.detachNode(element); return; }
+    if (typeValue === 'importmap' || typeValue === 'speculationrules') { this.edits.remove(element); return; }
+    if (typeValue === 'text/x-mathjax-config' && this.mathJaxPlanned) {
+      // MathJax 2 runs these when it starts; the stand-in runs them the same way.
+      const code = textOf(element);
+      this.classicTexts.push(code);
+      for (const name of ['type', 'src', 'href', 'xlink:href']) removeAttribute(element, name);
+      setText(element, escapeScriptText(mathJaxConfigSource(code)));
+      setAttribute(element, LINKER_MARKER, 'mathjax-config' satisfies LinkerScript);
+      return;
+    }
     if (!isModule && !JAVASCRIPT_TYPES.test(typeValue)) {
       // A data block (templates, JSON): the browser never loads its src.
       for (const name of ['src', 'href', 'xlink:href']) removeAttribute(element, name);
       return;
     }
-    if (hasAttribute(element, 'nomodule')) { defaultTreeAdapter.detachNode(element); return; }
+    if (hasAttribute(element, 'nomodule')) { this.edits.remove(element); return; }
     if (isModule) { await this.processModule(element, src); return; }
     if (src === undefined) {
       this.processInlineScript(element);
@@ -995,9 +1110,9 @@ class DeckLinker {
     const replacement = await this.classicScript(src, element);
     const deferred = hasAttribute(element, 'defer') && !hasAttribute(element, 'async');
     if (deferred && replacement.length) {
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       this.deferred.push(...replacement);
-    } else replaceNode(element, replacement);
+    } else this.edits.replace(element, replacement);
   }
 
   /** The inline elements that replace a classic script with a src. */
@@ -1011,18 +1126,30 @@ class DeckLinker {
       case 'local': {
         this.usedFiles.add(target.path);
         if (this.isMathPlugin(target.path)) return this.mathElements();
+        const library = mapLibraryPath(target.path);
+        if (library?.role === 'reveal-core') this.revealScript = true;
         const code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
         this.inlinedFiles += 1;
         this.classicTexts.push(code);
+        if (library) this.libraryTexts.add(code);
         return [scriptElement(code, { ...attributes, 'data-qft-from': target.path }, namespace)];
       }
       case 'missing': {
+        const mathJax = mathJaxPathVersion(target.path);
+        if (mathJax) return this.mathJaxElements(mathJax, attributes, textOf(element));
         const reference = mapLibraryPath(target.path);
         if (reference) return this.vendorScripts(reference, target.path, attributes);
         this.reportMissing(target.path);
         return [];
       }
       case 'remote': {
+        const mathJax = mathJaxScriptVersion(target.url);
+        if (mathJax) return this.mathJaxElements(mathJax, attributes, textOf(element));
+        if (isPolyfillScript(target.url)) {
+          this.report('polyfill-not-needed', 'info',
+            `The script ${target.where} only adds features that old browsers lack. This browser has them, so it is left out.`, cleanReportedText(target.url, 200));
+          return [];
+        }
         const reference = mapLibraryUrl(target.url);
         if (reference && !['reveal-style', 'reveal-theme', 'highlight-theme', 'katex-style', 'katex-font'].includes(reference.role)) {
           return this.vendorScripts(reference, target.url, attributes);
@@ -1049,10 +1176,13 @@ class DeckLinker {
     let code = textOf(element);
     // The 3.x template loads a print stylesheet by script; 6.x builds it in.
     if (/css\/print\/pdf\.css/.test(code) && /css\/print\/paper\.css/.test(code) && /createElement\(\s*['"]link['"]\s*\)/.test(code) && code.length < 2000) {
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       return;
     }
     this.classicTexts.push(code);
+    // A library that an earlier link inlined says where it came from.
+    const from = getAttribute(element, 'data-qft-from');
+    if (from !== undefined && this.libraryOf(from)) this.libraryTexts.add(code);
     const rewritten = this.rewriteConfigFiles(code);
     if (rewritten !== code) { code = rewritten; setText(element, code); }
   }
@@ -1101,6 +1231,7 @@ class DeckLinker {
         const source = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
         this.inlinedFiles += 1;
         this.classicTexts.push(source);
+        if (mapLibraryPath(target.path)) this.libraryTexts.add(source);
         elements.push(scriptElement(source, { 'data-qft-from': target.path }));
         actions[src] = { inlined: true };
         continue;
@@ -1141,14 +1272,14 @@ class DeckLinker {
       else if (target.kind === 'remote') reference = mapLibraryUrl(target.url);
       else if (target.kind === 'local') reference = mapLibraryPath(target.path);
       if (reference && reference.role !== 'not-needed') {
-        replaceNode(element, await this.vendorScripts(reference, src));
+        this.edits.replace(element, await this.vendorScripts(reference, src));
         return;
       }
       if (target.kind !== 'local') {
         if (target.kind === 'missing') this.reportMissing(target.path);
         else if (target.kind === 'remote') this.reportRemote(target, 'script');
         else if (target.kind === 'other') this.reportOther(target.value);
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         return;
       }
       code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
@@ -1163,7 +1294,7 @@ class DeckLinker {
     if (!imports.length && complete) {
       const rewritten = this.rewriteConfigFiles(code);
       if (src !== undefined || rewritten !== code) {
-        replaceNode(element, [scriptElement(rewritten, { type: 'module', ...(src ? { 'data-qft-from': where } : {}) })]);
+        this.edits.replace(element, [scriptElement(rewritten, { type: 'module', ...(src ? { 'data-qft-from': where } : {}) })]);
       }
       return;
     }
@@ -1196,7 +1327,7 @@ class DeckLinker {
       const shown = unsupported.slice(0, 3).join(', ');
       this.failedModuleTexts.push(code);
       this.report('es-modules-unsupported', 'warning', `Part of the presentation's code (it imports ${shown}) cannot run here, so it is left out. Ask your AI assistant to put that code directly in index.html.`, shown);
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       return;
     }
     const nodes: ChildNode[] = [];
@@ -1212,7 +1343,7 @@ class DeckLinker {
     }
     rewritten = this.rewriteConfigFiles(`${bindings.join('\n')}${bindings.length ? '\n' : ''}${rewritten}`);
     nodes.push(scriptElement(rewritten, { type: 'module', 'data-qft-from': where }));
-    replaceNode(element, nodes);
+    this.edits.replace(element, nodes);
   }
 
   private moduleLibrary(specifier: string, dir: string): LibraryReference | undefined {
@@ -1239,7 +1370,7 @@ class DeckLinker {
     const preloaded = rel.includes('preload') && (getAttribute(element, 'as') ?? '').trim().toLowerCase() === 'style'
       && /\brel\s*=\s*["']\s*stylesheet\b/i.test(onload);
     if ((!rel.includes('stylesheet') && !preloaded) || rel.includes('alternate') || hasAttribute(element, 'disabled')) {
-      defaultTreeAdapter.detachNode(element);
+      this.edits.remove(element);
       return;
     }
     const href = getAttribute(element, 'href') ?? '';
@@ -1254,7 +1385,7 @@ class DeckLinker {
       if (media.trim() && media.trim().toLowerCase() !== 'all') attributes.media = media.trim();
       else delete attributes.media;
     }
-    replaceNode(element, css ? [styleElement(css, attributes)] : []);
+    this.edits.replace(element, css ? [styleElement(css, attributes)] : []);
   }
 
   /* --------------------------------------------------------- Markdown */
@@ -1327,7 +1458,7 @@ class DeckLinker {
         return `${match[1]}${match[2]}${match[3]}${match[4]}${replacement}${match[4]}`;
       });
     if (/<[a-z][^<>]*\son[a-z]+\s*=/i.test(output)) {
-      this.report('inline-script-unsupported', 'warning', 'A button or link inside Markdown slides uses an inline script (such as onclick), which does not run here.');
+      this.report('inline-script-unsupported', 'warning', 'A button or link inside Markdown slides uses an inline script (such as onclick), which does not run here. Ask your AI assistant to attach the action in a script with addEventListener instead.');
     }
     return output;
   }
@@ -1358,7 +1489,7 @@ class DeckLinker {
       if (/^[ \t]/.test(text)) text = `<!-- -->\n${text}`;
       const template = createElement('textarea', { 'data-template': '' });
       setText(template, await this.rewriteMarkdown(text));
-      for (const child of [...section.childNodes]) defaultTreeAdapter.detachNode(child);
+      clearChildren(section);
       defaultTreeAdapter.appendChild(section, template);
       setAttribute(section, 'data-markdown', '');
       removeAttribute(section, 'data-charset');
@@ -1401,13 +1532,13 @@ class DeckLinker {
             const kept = getAttribute(element, attribute);
             if (kept) attributes[attribute] = kept;
           }
-          replaceNode(element, [createElement('img', attributes)]);
+          this.edits.replace(element, [createElement('img', attributes)]);
           return;
         }
       }
     }
     this.embeddedPage(target, value);
-    replaceNode(element, [placeholderElement(element, target)]);
+    this.edits.replace(element, [placeholderElement(element, target)]);
   }
 
   private async processAssets(element: Element): Promise<void> {
@@ -1442,7 +1573,7 @@ class DeckLinker {
       if (name === 'source' && getAttribute(element, 'srcset') !== undefined && element.parentNode && isElement(element.parentNode as Node)
         && localName(element.parentNode as Element) === 'picture') {
         // The <img> inside <picture> is what plays here.
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         return;
       }
       if (name === 'track') {
@@ -1450,7 +1581,7 @@ class DeckLinker {
           this.report('captions-left-out', 'info', 'Caption tracks cannot be included, so videos play without captions.');
         }
         // A <track> without its file reports a loading error while the video plays.
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         return;
       } else {
         await image('src', name === 'source' ? sourcePurpose(element) : mediaPurpose);
@@ -1563,7 +1694,7 @@ class DeckLinker {
     for (const attribute of attributes) removeAttribute(element, attribute.name);
     if (script !== undefined) removeAttribute(element, 'href');
     if (insideTemplate(element)) {
-      this.report('inline-script-unsupported', 'warning', 'Some elements inside templates use inline scripts (such as onclick), which do not run here.');
+      this.report('inline-script-unsupported', 'warning', 'Some elements inside templates use inline scripts (such as onclick), which do not run here. Ask your AI assistant to attach the action in a script with addEventListener instead.');
       return;
     }
     const tag = localName(element);
@@ -1599,13 +1730,16 @@ class DeckLinker {
 
   /** Facts about the deck that change how earlier elements are treated. */
   private survey(elements: Element[]): void {
+    let baseSeen = false;
     for (const element of elements) {
       const name = localName(element);
       const handlerId = Number(getAttribute(element, 'data-qft-on'));
       if (Number.isSafeInteger(handlerId) && handlerId >= this.nextHandlerId) this.nextHandlerId = handlerId + 1;
-      if (name === 'base' && !insideTemplate(element)) {
+      if (name === 'base' && !baseSeen && !insideTemplate(element)) {
         const href = getAttribute(element, 'href');
+        // As in HTML, only the first <base> with an href counts (review VF1.3).
         if (href !== undefined) {
+          baseSeen = true;
           const target = this.resolve(href.endsWith('/') ? `${href}x` : href, this.baseDir);
           if (target.kind === 'local' || target.kind === 'missing') this.baseDir = dirname(target.path);
           else this.report('document-base', 'info', 'The page points to a web address for its files; the files in your ZIP are used instead.');
@@ -1622,6 +1756,7 @@ class DeckLinker {
           } catch { /* An unreadable import map maps nothing. */ }
         }
         const src = getAttribute(element, 'src');
+        if (src !== undefined && this.mathJaxOf(src)) this.mathJaxPlanned = true;
         const reference = src === undefined ? undefined : this.libraryOf(src);
         if (reference?.role === 'katex') this.katexInDeck.script = true;
         if (reference?.global === 'renderMathInElement') this.katexInDeck.autoRender = true;
@@ -1632,6 +1767,14 @@ class DeckLinker {
         if (href !== undefined && this.libraryOf(href)?.role === 'katex-style') this.katexInDeck.style = true;
       }
     }
+  }
+
+  /** The MathJax version a script reference loads on its own, from a CDN or a deck path that is missing. */
+  private mathJaxOf(value: string): 2 | 3 | 4 | undefined {
+    const target = this.resolve(value, this.baseDir);
+    if (target.kind === 'remote') return mathJaxScriptVersion(target.url);
+    if (target.kind === 'missing') return mathJaxPathVersion(target.path);
+    return undefined;
   }
 
   /** The library a script or stylesheet reference names, whether the deck has the file or not. */
@@ -1649,7 +1792,7 @@ class DeckLinker {
 
   async link(source: string): Promise<string | undefined> {
     let text = source;
-    const formulas = repairFormulaTags(text);
+    const formulas = repairFormulaTags(text, { singleDollar: typesetsSingleDollars(text, this.detection) });
     if (formulas.repaired) {
       text = formulas.html;
       this.report('formula-less-than', 'info',
@@ -1664,8 +1807,9 @@ class DeckLinker {
     // Scripts always run in the player, so <noscript> content never applies. The
     // linker reads it as text and the player as markup; drop it before either.
     for (const element of elementsOf(this.document)) {
-      if (localName(element) === 'noscript' && element.namespaceURI === NS.HTML) defaultTreeAdapter.detachNode(element);
+      if (localName(element) === 'noscript' && element.namespaceURI === NS.HTML) this.edits.remove(element);
     }
+    this.edits.apply();
     if (isEmptyPage(this.document)) {
       const name = cleanReportedText(this.entry.split('/').pop() || 'The start page', 120);
       this.report('page-empty', 'error', `${name} is empty. Export the presentation again.`, this.entry || undefined);
@@ -1680,16 +1824,18 @@ class DeckLinker {
       const name = localName(element);
       if (name === 'script') { await this.processScript(element); continue; }
       if (name === 'link') { await this.processLink(element); continue; }
-      if (name === 'base') { defaultTreeAdapter.detachNode(element); continue; }
+      if (name === 'base') { this.edits.remove(element); continue; }
       if (name === 'meta' && hasAttribute(element, 'http-equiv')) {
         if ((getAttribute(element, 'http-equiv') ?? '').trim().toLowerCase() === 'refresh') {
           this.report('page-redirect', 'warning', 'The page asks to open another address, which is not possible here, so that instruction is removed.');
         }
-        defaultTreeAdapter.detachNode(element);
+        this.edits.remove(element);
         continue;
       }
       if (name === 'style') {
         const css = textOf(element);
+        // A single-file presentation carries Reveal.js's rules inline.
+        if (!this.revealStylesheet && /\.reveal[\s>]+\.slides\b/.test(css)) this.revealStylesheet = true;
         const rewritten = await this.rewriteCss(css, { kind: 'deck', dir: this.baseDir });
         if (rewritten !== css) setText(element, element.namespaceURI === NS.HTML ? escapeStyleText(rewritten) : rewritten);
       }
@@ -1700,6 +1846,7 @@ class DeckLinker {
       if ((name === 'a' || name === 'area') && element.namespaceURI === NS.HTML) this.noteLink(element);
       this.collectHandlers(element);
     }
+    this.edits.apply();
     // Inline scripts that call Reveal.initialize with a 3.x dependency list.
     for (const element of elementsOf(this.document)) {
       if (localName(element) === 'script' && !getAttribute(element, 'src') && !getAttribute(element, LINKER_MARKER)
@@ -1720,10 +1867,24 @@ class DeckLinker {
       prepend(body, scriptElement(mediaHelperSource(), { [LINKER_MARKER]: 'media' satisfies LinkerScript }));
     }
     this.sweep();
+    this.revealStyleNote();
     this.mathNote();
     this.moduleNote();
     this.linkNote();
     this.runtimeFilesNote();
+    this.storageNote();
+  }
+
+  /**
+   * The presentation's own scripts save data in the browser (review VF5.3).
+   * The player keeps it in memory, so it is gone when the presentation stops.
+   */
+  private storageNote(): void {
+    if (this.detection.engine === 'slidev') return;
+    const writes = /\b(?:local|session)Storage\s*\.\s*setItem\s*\(|\b(?:local|session)Storage\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,200}\])\s*=(?!=)|\bindexedDB\s*\.\s*open\s*\(|\bcookie\s*=(?!=)/;
+    if (![...this.classicTexts, ...this.moduleTexts].some((code) => !this.libraryTexts.has(code) && writes.test(code))) return;
+    this.report('browser-storage', 'info',
+      'The presentation saves data in the browser, for example progress or scores. In the player this lasts only until the presentation is stopped.');
   }
 
   /**
@@ -1732,8 +1893,8 @@ class DeckLinker {
    */
   private classNameNote(): void {
     const found: string[] = [];
-    for (const element of elementsInsideSections(this.document)) {
-      for (const name of (getAttribute(element, 'class') ?? '').split(/\s+/)) {
+    for (const element of elementsStyledAsReveal(this.document)) {
+      for (const name of classesOf(element)) {
         if (REVEAL_OWN_CLASSES.has(name) && !found.includes(name)) found.push(name);
       }
     }
@@ -1783,21 +1944,43 @@ class DeckLinker {
     }
   }
 
-  /** A link to another file of the deck (a page, a worksheet): it cannot open in the player. */
+  /**
+   * A link to another file of the deck (a page, a worksheet) or to an e-mail
+   * address or phone number: it cannot open in the player. A link to a
+   * website without its scheme (//host/path) is a website link, kept as https.
+   */
   private noteLink(element: Element): void {
     const href = getAttribute(element, 'href');
     if (href === undefined) return;
+    const value = href.replace(/[\t\n\r]/g, '').trim();
+    if (value.startsWith('//')) {
+      const target = remoteTarget(value);
+      if (target.kind === 'remote') setAttribute(element, 'href', target.url);
+      return;
+    }
+    const contact = /^(mailto|tel):([^?#]{0,200})/i.exec(value);
+    if (contact) {
+      if (this.contactLinks.size < 50) this.contactLinks.add(`${contact[1].toLowerCase()}:${safeDecode(contact[2]).trim()}`);
+      return;
+    }
     const target = this.resolve(href, this.baseDir);
     if (target.kind === 'local' || target.kind === 'missing') this.fileLinks.add(target.path);
   }
 
   private linkNote(): void {
-    if (!this.fileLinks.size) return;
-    const links = [...this.fileLinks];
-    const shown = namedList(links);
-    this.report('file-links', 'warning',
-      `Links to other files of the presentation do not open in the player: ${shown}. Put what they show on a slide, or open those files outside the player.`,
-      links.slice(0, 3).join(', '));
+    if (this.fileLinks.size) {
+      const links = [...this.fileLinks];
+      const shown = namedList(links);
+      this.report('file-links', 'warning',
+        `Links to other files of the presentation do not open in the player: ${shown}. Put what they show on a slide, or open those files outside the player.`,
+        links.slice(0, 3).join(', '));
+    }
+    if (this.contactLinks.size) {
+      const links = [...this.contactLinks];
+      this.report('contact-links', 'warning',
+        `E-mail and phone links do not open in the player: ${namedList(links)}. Show the address as text on the slide.`,
+        links.slice(0, 3).join(', '));
+    }
   }
 
   /**
@@ -1859,7 +2042,21 @@ class DeckLinker {
     }
   }
 
+  /**
+   * A Reveal.js presentation without reveal.css shows its slides stacked and
+   * unscaled; an AI assistant once replaced the file by a hand-written one.
+   */
+  private revealStyleNote(): void {
+    if (this.revealStylesheet || !this.revealScript || (this.detection.engine !== 'reveal' && this.detection.kind !== 'reveal')) return;
+    this.report('reveal-style-missing', 'warning',
+      'This Reveal.js presentation has no Reveal.js stylesheet (reveal.css), so the slides will be laid out wrongly. Ask your AI assistant to keep the links to reveal.css and a theme.');
+  }
+
   private mathNote(): void {
+    if (this.mathJaxInserted) {
+      this.report('math-rendered-with-katex', 'info', 'Formulas are typeset with the copy of KaTeX that comes with this site instead of MathJax. A few MathJax-only commands may show as errors.');
+      return;
+    }
     if (!this.mathInserted) return;
     const flavour = this.detection.flags.mathPlugin;
     const code = [...this.classicTexts, ...this.moduleTexts].join('\n');
@@ -1900,22 +2097,51 @@ class DeckLinker {
 
 /* ---------------------------------------------------------------- helpers */
 
-/** Elements that have a <section> among their ancestors, in document order. */
-function elementsInsideSections(root: ParentNode): Element[] {
-  const result: Element[] = [];
-  const stack: [ChildNode, boolean][] = [...children(root)].reverse().map((node) => [node, false]);
+const classesOf = (element: Element) => (getAttribute(element, 'class') ?? '').split(/[\t\n\f\r ]+/).filter(Boolean);
+
+/** Any letter or digit in an element's text, its descendants included. */
+function hasWords(element: Element): boolean {
+  const stack: ChildNode[] = [...children(element)];
   while (stack.length) {
-    const [node, inside] = stack.pop()!;
+    const node = stack.pop()!;
+    if (node.nodeName === '#text' && /[\p{L}\p{N}]/u.test((node as DefaultTreeAdapterTypes.TextNode).value)) return true;
+    if (isElement(node)) stack.push(...children(node));
+  }
+  return false;
+}
+
+/**
+ * Elements whose class names reveal.css can restyle as Reveal.js's own parts
+ * (review F5.3, VF2a.1), in document order: every slide <section>, everything
+ * inside one, and everything under the .reveal element outside the slides,
+ * except the .slides element itself and Reveal.js's own parts written in the
+ * markup, as old templates did (a direct child of .reveal with no words, such
+ * as <div class="progress"><span></span></div>).
+ */
+function elementsStyledAsReveal(root: ParentNode): Element[] {
+  const result: Element[] = [];
+  const stack: [ChildNode, 'outside' | 'reveal' | 'slide', Element | null][] = [...children(root)].reverse().map((node) => [node, 'outside', null]);
+  while (stack.length) {
+    const [node, where, parent] = stack.pop()!;
     if (!isElement(node)) continue;
-    if (inside) result.push(node);
-    const below = inside || (localName(node) === 'section' && node.namespaceURI === NS.HTML);
+    const html = node.namespaceURI === NS.HTML;
+    const classes = classesOf(node);
+    let below = where;
+    if (where === 'slide' || (html && localName(node) === 'section')) {
+      result.push(node);
+      below = 'slide';
+    } else if (where === 'reveal') {
+      const slidesElement = classes.includes('slides');
+      const ownPart = parent !== null && classesOf(parent).includes('reveal') && classes.some((name) => REVEAL_OWN_CLASSES.has(name)) && !hasWords(node);
+      if (!slidesElement && !ownPart) result.push(node);
+    } else if (html && classes.includes('reveal')) below = 'reveal';
     const nested = children(node);
-    for (let index = nested.length - 1; index >= 0; index -= 1) stack.push([nested[index], below]);
+    for (let index = nested.length - 1; index >= 0; index -= 1) stack.push([nested[index], below, node]);
   }
   return result;
 }
 
-/** The first `limit` bare identifiers listed in the `plugins: [ … ]` of a script. */
+/** The first `limit` bare identifiers listed in the `plugins: [ … ]` of a script, also as window.Name. */
 function pluginNames(code: string, limit: number): string[] {
   const names = new Set<string>();
   const pattern = /\bplugins\s*:\s*\[/g;
@@ -1925,12 +2151,28 @@ function pluginNames(code: string, limit: number): string[] {
     const list = code.slice(open + 1, end - 1).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
     for (const item of list.split(',')) {
       if (names.size >= limit) break;
-      const name = item.trim();
+      // window.RevealPointer and globalThis.RevealPointer name the same global (review VF2b.8).
+      const name = item.trim().replace(/^(?:window|globalThis|self)[ \t\r\n]*\.[ \t\r\n]*/, '');
       if (/^[A-Za-z_$][\w$]{0,80}$/.test(name)) names.add(name);
     }
     pattern.lastIndex = Math.max(end, pattern.lastIndex);
   }
   return [...names];
+}
+
+/**
+ * Whether the page typesets $ … $ as a formula: Reveal.js's math plugin does
+ * (KaTeX and MathJax alike), and so does a KaTeX auto-render or MathJax
+ * configuration that lists "$" as a delimiter. Their defaults do not.
+ */
+export function typesetsSingleDollars(text: string, detection: Pick<DeckDetection, 'flags'>): boolean {
+  if (detection.flags.mathPlugin || /\bRevealMath\b/.test(text)) return true;
+  if (/\bleft\s*:\s*(["'])\$\1/.test(text)) return true;
+  const pattern = /\binlineMath\b/g;
+  for (let found = 0, match; found < 20 && (match = pattern.exec(text)); found += 1) {
+    if (/(["'])\$\1/.test(text.slice(match.index, match.index + 300))) return true;
+  }
+  return false;
 }
 
 /** Up to three names, then how many more. */
@@ -2076,6 +2318,25 @@ const INLINE_TAGS = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code
 const FORMULA_REACH = 4000;
 const FORMULA_DELIMITERS: readonly [string, string][] = [['\\(', '\\)'], ['\\[', '\\]'], ['$$', '$$']];
 
+/** How long a $ … $ formula may be; it never spans lines. */
+const SINGLE_DOLLAR_REACH = 300;
+const isSpace = (character: string | undefined) => character === undefined || /\s/.test(character);
+
+/** The closing "$" of a single-dollar formula whose text starts at `start`, or -1. */
+function singleDollarEnd(html: string, start: number): number {
+  if (isSpace(html[start]) || html[start] === '$') return -1;
+  const limit = Math.min(html.length, start + SINGLE_DOLLAR_REACH);
+  for (let index = start; index < limit; index += 1) {
+    const character = html[index];
+    if (character === '\n' || character === '\r') return -1;
+    if (character === '\\') { index += 1; continue; }
+    if (character !== '$') continue;
+    if (index === start || isSpace(html[index - 1]) || html[index + 1] === '$' || /[0-9]/.test(html[index + 1] ?? '')) return -1;
+    return index;
+  }
+  return -1;
+}
+
 const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 
 /**
@@ -2088,8 +2349,14 @@ const isLetter = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && 
  * starts a real inline tag such as <b> or <br>; a span that holds an end tag
  * ("</") is markup, not a formula, and is left alone. One forward pass: every
  * search for a closing delimiter is remembered, so the work stays linear.
+ *
+ * With `singleDollar` (the presentation typesets $ … $, review VF2a.2), a
+ * single-dollar span is a formula too, by the rule Pandoc uses so that prices
+ * stay text: on one line, at most SINGLE_DOLLAR_REACH characters, the opening
+ * "$" followed by a non-space character, the closing "$" preceded by one and
+ * not followed by a digit; "\$" is an escaped dollar sign.
  */
-export function repairFormulaTags(html: string): { html: string; repaired: number } {
+export function repairFormulaTags(html: string, { singleDollar = false }: { singleDollar?: boolean } = {}): { html: string; repaired: number } {
   const parts: string[] = [];
   let last = 0;
   let repaired = 0;
@@ -2146,10 +2413,20 @@ export function repairFormulaTags(html: string): { html: string; repaired: numbe
       continue;
     }
     const which = FORMULA_DELIMITERS.findIndex(([open]) => html.startsWith(open, index));
-    if (which < 0) { index += 1; continue; }
-    const start = index + 2;
-    const close = nextCloser(which, start);
-    if (close < 0 || close - start > FORMULA_REACH) { index = start; continue; }
+    let start: number;
+    let close: number;
+    let after: number;
+    if (which >= 0) {
+      start = index + 2;
+      close = nextCloser(which, start);
+      if (close < 0 || close - start > FORMULA_REACH) { index = start; continue; }
+      after = close + 2;
+    } else if (singleDollar && character === '$' && html[index - 1] !== '\\') {
+      start = index + 1;
+      close = singleDollarEnd(html, start);
+      if (close < 0) { index = start; continue; }
+      after = close + 1;
+    } else { index += 1; continue; }
     const body = html.slice(start, close);
     // An end tag, a comment or a raw-text element in between: markup, not a formula.
     if (/<\/|<!--|<(?:script|style|textarea|title|xmp|iframe|noembed|noframes|noscript|plaintext)[\s/>]/i.test(body)) { index = start; continue; }
@@ -2162,7 +2439,7 @@ export function repairFormulaTags(html: string): { html: string; repaired: numbe
       last = start + at + 1;
       repaired += 1;
     }
-    index = close + 2;
+    index = after;
   }
   if (!repaired) return { html, repaired };
   parts.push(html.slice(last));
@@ -2203,9 +2480,15 @@ export async function linkDeck(files: DeckFiles, detection: DeckDetection, vendo
   const html = await linker.link(decodeText(files.get(entry)!, entry)) ?? '';
   const stats = linker.stats(entry, html.length);
   if (html.length > maxLength) {
-    const largest = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${path} (${formatBytes(bytes)})`).join(', ');
-    linker.report('deck-too-large', 'error',
-      `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.${largest ? ` The largest files are ${largest}.` : ''}`);
+    const head = `The presentation is ${formatBytes(html.length)} once its files are included, more than the ${formatBytes(maxLength)} that can be played here.`;
+    const named = stats.largestAssets.slice(0, 3).map(({ path, bytes }) => `${cleanReportedText(path, 60)} (${formatBytes(bytes)})`);
+    // As many of the largest files as fit, so that the next step is never cut off.
+    let message = `${head} ${SMALLER_FILES}`;
+    for (let count = named.length; count > 0; count -= 1) {
+      const candidate = `${head} The largest file${count > 1 ? 's are' : ' is'} ${named.slice(0, count).join(', ')}. ${SMALLER_FILES}`;
+      if (candidate.length <= MAX_NOTE_LENGTH) { message = candidate; break; }
+    }
+    linker.report('deck-too-large', 'error', message);
   }
   return { html, issues: linker.issues, stats };
 }

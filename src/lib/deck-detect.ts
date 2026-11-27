@@ -393,7 +393,7 @@ function remoteReference(reference: Reference, cdn: CdnReference, issues: IssueL
     case 'font':
       if (/(?:^|\.)fonts\.(?:googleapis|gstatic)\.com$|(?:^|\.)use\.typekit\.net$|(?:^|\.)fonts\.bunny\.net$/.test(cdn.host)) {
         issues.add('external-font', 'info',
-          `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, reference.url);
+          `Web fonts from ${host} need the internet, so they are left out; the slides use fonts installed on this device instead.`, reference.url);
       } else if (reference.kind === 'font') {
         issues.add('external-font', 'info',
           `A font comes from ${host} and is not available while the presentation plays, so a system font is used instead.`, reference.url);
@@ -834,7 +834,7 @@ function detectSlidevSource(files: DeckFiles, paths: string[], issues: IssueList
   if (!manifest && !(best && best.score >= 4)) return undefined;
   const entry = best && best.score > 0 ? best.path : undefined;
   issues.add('slidev-source', 'error',
-    `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project and open a ZIP of the dist folder here, or ask the AI tool for the built presentation.`,
+    `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project and open a ZIP of the dist folder here, or ask your AI assistant for the built presentation.`,
     entry ?? manifest);
   const title = cleanReportedText(best?.title ?? '', 200);
   return {

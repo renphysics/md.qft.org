@@ -170,15 +170,16 @@ function fromPackage(pkg: PresentationPackage, id?: string, title?: string): Dec
  * deck does not have, or for binary files, are not applied: an overlay can
  * change what a deck says, never add files to it.
  */
-function storedEdits(files: DeckFiles, edits: DeckEdits | undefined): Map<string, string> {
-  return new Map(Object.entries(edits ?? {}).map(([path, text]): [string, unknown] => [files.has(path) ? path : earlierSpelling(path, files) ?? path, text])
+function storedEdits(files: DeckFiles, edits: DeckEdits | undefined, renamed?: ReadonlyMap<string, string>): Map<string, string> {
+  return new Map(Object.entries(edits ?? {}).map(([path, text]): [string, unknown] => [files.has(path) ? path : renamed?.get(path) ?? earlierSpelling(path, files) ?? path, text])
     .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && files.has(entry[0]) && isTextPath(entry[0])));
 }
 
 /**
  * Earlier versions read UTF-8 names from ZIPs without the UTF-8 flag one
  * character per byte ("SchrÃ¶dinger.md"), and saved edits under that name.
- * Returns the file such a name stands for now, if the deck has it.
+ * Returns the file such a name stands for now, if the deck has it. Names in
+ * other code pages are mapped by the archive reader (DeckArchive.renamed).
  */
 function earlierSpelling(path: string, files: DeckFiles): string | undefined {
   if (!/[\u0080-\u00ff]/.test(path) || /[^\u0000-\u00ff]/.test(path)) return undefined;
@@ -201,7 +202,7 @@ function fromArchive(deck: DeckArchive, detection: DeckDetection, stored?: Store
     original: deck.archive,
     fileName: stored?.fileName ?? deck.fileName,
     ...(deck.folder ? { folder: deck.folder } : {}),
-    edits: isEditableDeckKind(kind) ? storedEdits(deck.files, stored?.edits) : new Map(),
+    edits: isEditableDeckKind(kind) ? storedEdits(deck.files, stored?.edits, deck.renamed) : new Map(),
     issues: [...deck.issues, ...detection.issues],
     detection: { ...detection, kind, ...(entry ? { entry } : {}) },
     sources: listSources(deck.files),
@@ -480,7 +481,7 @@ export function deckSourceNote(project: DeckProject): string {
         ? 'This package plays its compiled slides, so it is read-only here. To change it, revise the source with your editor or AI assistant, rebuild the package with the QFT Slidev tool, then open the new ZIP.'
         : 'This package holds compiled slides only, so it is read-only here. To change it, rebuild it from its Slidev project, then open the new ZIP.';
     case 'slidev-build':
-      return 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a ZIP of the new dist folder.';
+      return 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).';
     case 'slidev-source':
       return 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, then open a ZIP of the dist folder.';
     default:
@@ -536,6 +537,19 @@ function mergeIssues(before: readonly DeckIssue[], after: readonly DeckIssue[]):
 
 const failed = (issues: DeckIssue[], profile: PresentationProfile): PlayableDeck => ({ html: '', issues, profile });
 
+/** Codes that report a file the slides use as missing from the ZIP. */
+const MISSING_FILE_CODES = new Set(['missing-file', 'missing-local-file', 'skipped-file-reference']);
+
+/**
+ * The note that some names in the ZIP are in an unknown code page is
+ * information, and a warning once a file the slides use is reported missing:
+ * then it is the likely reason.
+ */
+function withNameWarning(kept: readonly DeckIssue[], all: readonly DeckIssue[]): DeckIssue[] {
+  const missing = all.some((issue) => MISSING_FILE_CODES.has(issue.code));
+  return kept.map((issue) => missing && issue.code === 'zip-names-not-utf8' && issue.severity === 'info' ? { ...issue, severity: 'warning' as const } : issue);
+}
+
 /**
  * Detection notes about references that the Slidev conversion examines again
  * and reports itself, and Monaco, which the conversion refuses as an error.
@@ -570,7 +584,7 @@ async function convertSlidevBuildForPlayback(project: DeckProject, deps: BuildDe
     }
     const reason = cleanReportedText(error instanceof Error ? error.message : String(error), 300);
     // Every failure ends with what to do; the converter's own texts mostly say it already.
-    const next = /build again|open the zip again|reload the page/i.test(reason) ? '' : ' Open a ZIP of the whole dist folder, or build again with "npx slidev build".';
+    const next = /build again|open the zip again|reload the page/i.test(reason) ? '' : ' Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).';
     return {
       html: '',
       issues: [{ code: 'slidev-convert-failed', severity: 'error', message: `The Slidev build could not be converted${reason ? `: ${reason}` : '.'}${next}` }],
@@ -613,7 +627,10 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
         ...(project.entry ? { entry: project.entry } : {}),
         ...(project.skipped ? { skippedFiles: project.skipped } : {}),
       });
-      const kept = project.issues.filter((issue) => !SUPERSEDED_BY_LINKER.has(issue.code));
+      // An empty start page plays nothing, so "plays as one ordinary page" would contradict its error.
+      const empty = linked.issues.some((issue) => issue.code === 'page-empty');
+      const kept = withNameWarning(project.issues.filter((issue) => !SUPERSEDED_BY_LINKER.has(issue.code) && !(empty && issue.code === 'no-slides-found')),
+        [...project.issues, ...linked.issues]);
       const issues = mergeIssues(kept, linked.issues);
       const result: PlayableDeck = { html: issues.some((issue) => issue.severity === 'error') ? '' : linked.html, issues, profile: 'tolerant' };
       deps.onProgress?.('Checking the presentation…');
@@ -623,7 +640,7 @@ export async function buildPlayable(project: DeckProject, deps: BuildDeps): Prom
       // A build plays as built: it is converted from its files, never from edits.
       deps.onProgress?.('Preparing the Slidev presentation to play offline…');
       const converted = await convertSlidevBuildForPlayback(project, deps);
-      const kept = project.issues.filter((issue) => !SUPERSEDED_BY_CONVERTER.has(issue.code));
+      const kept = withNameWarning(project.issues.filter((issue) => !SUPERSEDED_BY_CONVERTER.has(issue.code)), [...project.issues, ...converted.issues]);
       const issues = mergeIssues(kept, converted.issues);
       const result: PlayableDeck = { html: issues.some((issue) => issue.severity === 'error') ? '' : converted.html, issues, profile: 'tolerant' };
       if (isPlayable(result)) deps.onProgress?.('Checking the presentation…');

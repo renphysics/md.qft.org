@@ -121,7 +121,21 @@ describe('deck archive reading', () => {
       const local = view.getUint32(central + 42, true);
       bytes[local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true)] ^= 1;
     })), /damaged file/);
-    await assert.rejects(readDeckArchive(new File([strToU8('not a zip at all, sorry')], 'x.zip')), /valid ZIP|directory/);
+    await assert.rejects(readDeckArchive(new File([strToU8('not a zip at all, sorry')], 'x.zip')),
+      /^PresentationPackageError: This ZIP is damaged or incomplete, perhaps because the download did not finish\. Download it again or make the ZIP again, then open the new file\.$/);
+  });
+
+  it('says what to do about a ZIP with too many files, a cut-off download and a broken directory', async () => {
+    const many = (count: number) => zipFile(Object.fromEntries([['index.html', '<p>deck</p>'], ...Array.from({ length: count - 1 }, (_, index) => [`notes/${index}.txt`, 'x'])]));
+    assert.equal((await readDeckArchive(many(1000))).files.size, 1000, 'exactly 1,000 entries are accepted');
+    await assert.rejects(readDeckArchive(many(1001)),
+      /^PresentationPackageError: This ZIP has more than 1,000 files and folders\. Keep at most 1,000 \(leave out files the slides do not use\), then make the ZIP again\.$/);
+    const whole = new Uint8Array(await zipFile({ 'index.html': '<p>deck</p>', 'app.js': 'run()' }).arrayBuffer());
+    await assert.rejects(readDeckArchive(new File([whole.slice(0, Math.floor(whole.length / 2))], 'half.zip')), /damaged or incomplete, perhaps because the download did not finish/);
+    const broken = await mutate(zipFile({ 'index.html': '<p>deck</p>' }), (bytes, view) => {
+      view.setUint32(bytes.length - 22 + 16, view.getUint32(bytes.length - 22 + 16, true) + 1, true);
+    });
+    await assert.rejects(readDeckArchive(broken), /^PresentationPackageError: This ZIP could not be opened: .+\. Download it again or make the ZIP again, then open the new file\.$/);
   });
 
   it('validates the checksums of ignored and skipped files too', async () => {

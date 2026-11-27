@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { strToU8 } from 'fflate';
+import { strToU8, zipSync, type Zippable } from 'fflate';
+import { readDeckArchive } from '../src/lib/deck-archive.ts';
 import { detectDeck } from '../src/lib/deck-detect.ts';
+import vm from 'node:vm';
 import { linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
+import { mathJaxStandInSource } from '../src/lib/deck-linker-runtime.ts';
 import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
 import { nodeVendorProvider } from './helpers/deck-vendor-node.ts';
@@ -44,6 +47,31 @@ const convert = async (files: DeckFiles) => {
   return convertSlidevFiles(files, detection, async () => 'window.bundled=1');
 };
 
+/**
+ * A ZIP whose entries after index.html have legacy (not UTF-8, unflagged)
+ * names: same-length stand-ins, patched in both records.
+ */
+function legacyNamesZip(html: string, names: Uint8Array[]): File {
+  const input: Zippable = { 'index.html': [strToU8(html), { level: 0 }] };
+  names.forEach((raw, index) => { input[`f${index}`.padEnd(raw.length, '_')] = [new Uint8Array([1]), { level: 0 }]; });
+  const bytes = zipSync(input);
+  const view = new DataView(bytes.buffer);
+  let position = view.getUint32(bytes.length - 22 + 16, true);
+  for (let index = 0; index < view.getUint16(bytes.length - 22 + 10, true); index += 1) {
+    const local = view.getUint32(position + 42, true);
+    const size = view.getUint16(position + 28, true);
+    const standIn = /^f(\d+)_*$/.exec(new TextDecoder().decode(bytes.subarray(position + 46, position + 46 + size)));
+    if (standIn) {
+      bytes.set(names[Number(standIn[1])], position + 46);
+      bytes.set(names[Number(standIn[1])], local + 30);
+    }
+    view.setUint16(position + 8, view.getUint16(position + 8, true) & ~0x800, true);
+    view.setUint16(local + 6, view.getUint16(local + 6, true) & ~0x800, true);
+    position += 46 + size + view.getUint16(position + 30, true) + view.getUint16(position + 32, true);
+  }
+  return new File([bytes.buffer as ArrayBuffer], 'names.zip');
+}
+
 const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   // F1.1: a 1.9 KB ZIP froze the page for 37 s.
   { name: 'Markdown slides made of 120,000 unclosed <iframe> tags', run: async () => {
@@ -62,14 +90,52 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   { name: 'CSS with 64,000 nested image-set(', run: () => link(deck({ 'index.html': page('', `<style>a{b:${'image-set('.repeat(64 * KB)}}</style>`) })) },
   { name: 'a script with 100,000 fetch("x/" calls', run: () => link(deck({ 'index.html': page(`<script>${'fetch("x/a.json");'.repeat(100_000)}</script>`) })) },
   { name: 'a page with 50,000 links to different missing files', run: () => link(deck({ 'index.html': page(Array.from({ length: 50_000 }, (_, index) => `<a href="p${index}.html">x</a>`).join('')) })) },
+  { name: 'a script with 100,000 "localStorage[" and "sessionStorage .  x" that never assign', run: async () => {
+    const result = await link(deck({ 'index.html': page(`<script>${'localStorage[1; sessionStorage .   x   ; '.repeat(100_000)}</script>`) }));
+    assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
+  } },
   { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F2b.3, F5.2 and F5.3: plugin lists, class names and a "<" inside formulas.
   { name: 'a page with 100,000 formulas holding "<x" and one closing delimiter', run: () => link(deck({ 'index.html': page(`<p>${'\\(a<x '.repeat(100_000)}\\)</p>`) })) },
+  { name: 'a page with 100,000 single-dollar formulas holding "<x" and no closing dollar', run: () => link(deck({ 'index.html': reveal(`<section><p>${'$a<x '.repeat(100_000)}</p></section><script>Reveal.initialize({ plugins: [RevealMath.KaTeX] });</script>`) })) },
+  { name: 'a page of 400,000 dollar signs with the math plugin', run: () => link(deck({ 'index.html': reveal(`<section><p>${'$a'.repeat(200_000)}</p></section><script>Reveal.initialize({ plugins: [RevealMath.KaTeX] });</script>`) })) },
   { name: 'a page with 40,000 "$$" and tags in between', run: () => link(deck({ 'index.html': page(`<p>${'$$<b>x</b>'.repeat(40_000)}</p>`) })) },
   { name: 'Reveal.initialize with 50,000 unknown plugins and 2,000 scripts', run: () => link(deck({
     'index.html': reveal(`<section>A</section>${'<script>x();</script>'.repeat(2000)}<script>Reveal.initialize({ plugins: [${Array.from({ length: 50_000 }, (_, index) => `P${index}`).join(', ')}] });</script>`),
   })) },
+  { name: 'a stylesheet of 100,000 ".reveal" followed by white space and ">"', run: () => link(deck({ 'index.html': reveal(`<section>A</section><style>${'.reveal >  > '.repeat(100_000)}</style>`) })) },
   { name: '40,000 elements with class names inside one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<div class="a controls b">x</div>'.repeat(40_000)}</section>`) })) },
+  // VF1.1 and VF1.3: one sibling search per removed element (6.5 s in the site), and every <base> resolved against the one before.
+  { name: '150,000 sibling <noscript> elements in one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<noscript>x</noscript>'.repeat(150_000)}</section>`) })) },
+  { name: '60,000 <base href> elements', run: async () => {
+    const result = await link(deck({ 'index.html': page('<base href="x/">'.repeat(60_000)) }));
+    assert.ok(!result.html.includes('<base'), 'the base elements are removed');
+  } },
+  { name: '60,000 sibling elements that the linker removes or replaces', run: () => link(deck({
+    'index.html': reveal(`<section>${'<meta http-equiv="x-ua" content="1"><video><track src="a.vtt"></video><iframe src="https://x.example/"></iframe><script src="m.js"></script><link rel="preload" href="a.css">'.repeat(12_000)}</section>`),
+  })) },
+  { name: 'a script path of 25,000 folders', run: () => link(deck({ 'index.html': page(`<script src="${'a/'.repeat(25_000)}reveal/x.js"></script><link rel="stylesheet" href="${'b/'.repeat(25_000)}theme/x.css">`) })) },
+  // VF5.2 and VF2b.3: MathJax scripts and configuration blocks, and the scan for \\ref{…} in the text when the deck plays.
+  { name: '20,000 MathJax scripts and 20,000 text/x-mathjax-config blocks', run: async () => {
+    const result = await link(deck({ 'index.html': page('<script type="text/x-mathjax-config">MathJax.Hub.Config({});</script><script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'.repeat(20_000)) }));
+    assert.equal(result.html.split('data-qft-linker="mathjax"').length, 2, 'one stand-in');
+  } },
+  { name: 'MathJax script addresses with 200 KB paths', run: () => link(deck({ 'index.html': page(`<script src="https://cdn.jsdelivr.net/npm/mathjax@3/${'es5/'.repeat(50_000)}tex-${'a-'.repeat(50_000)}.js"></script><script src="${'mathjax/'.repeat(25_000)}x.js"></script>`) })) },
+  { name: 'a text of 100,000 "\\ref{" with long arguments and no closing brace, in the MathJax stand-in', run: () => {
+    const node = { nodeType: 3, nodeValue: `\\ref{${'a'.repeat(199)}`.repeat(100_000) + `\\eqref ${' '.repeat(100_000)}` };
+    const body = { nodeType: 1, localName: 'body', classList: { contains: () => false }, lastChild: node };
+    const context: Record<string, unknown> = { setTimeout: () => {}, renderMathInElement: () => {}, document: { readyState: 'complete', body, addEventListener: () => {} } };
+    context.window = context;
+    vm.runInNewContext(`${mathJaxStandInSource()}\nMathJax.typeset();`, context);
+    assert.ok(node.nodeValue.startsWith('\\ref{a'), 'nothing to replace');
+  } },
+  // VF2a.4: legacy names scored against the slides' text in ten code pages: 999 names of 200 bytes, nearly 8 MB of text.
+  { name: '999 legacy ZIP names of 200 bytes and 8 MB of text with non-ASCII and percent pieces', run: async () => {
+    const names = Array.from({ length: 999 }, (_, index) => Uint8Array.from([...strToU8(String(index)), ...new Array(196 - String(index).length).fill(0x94), ...strToU8('.png')]));
+    const text = 'ö%C3%B6 Schr\u00f6dinger.png%'.repeat(Math.floor(7.5 * KB * KB / 32)); // just under the 8 MB read
+    const archive = await readDeckArchive(legacyNamesZip(page(`<p>${text}</p>`), names));
+    assert.ok(archive.issues.some((issue) => issue.code === 'zip-names-not-utf8'), 'no code page matched');
+  } },
   // F1.2: 14 s in the site on a crafted entry chunk.
   { name: 'a Slidev entry chunk with 1.1 million "import{" in a comment', run: () => detectDeck(slidevBuild({ entry: `var q={history:zz(1)};/*${'import{'.repeat(1_100_000)}*/` })) },
   { name: 'a Slidev library chunk with 150,000 "export{"', run: () => detectDeck(slidevBuild({ vue: `/*${'export{'.repeat(150_000)}*/` })) },

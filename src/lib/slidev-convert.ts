@@ -321,7 +321,7 @@ function readLink(conversion: Conversion, link: Element, folder: string, parts: 
   if (isRemote(href)) {
     const host = hostOf(href) || 'another site';
     if (rel.includes('stylesheet') && FONT_HOSTS.test(host)) {
-      conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, href);
+      conversion.report('external-font', 'info', `Web fonts from ${host} need the internet, so they are left out; the slides use fonts installed on this device instead.`, href);
     } else if (rel.includes('stylesheet')) {
       conversion.report('external-stylesheet', 'warning', `A stylesheet from ${host} was left out, because the player works without the internet. The slides may look different.`, href);
     } else if (rel.includes('icon') || rel.includes('apple-touch-icon')) {
@@ -356,7 +356,7 @@ function readScript(conversion: Conversion, script: Element, folder: string, par
   if (src) {
     const path = conversion.locate(src, folder);
     if (module && !parts.entryModule && path !== undefined && conversion.bytes(path)) { parts.entryModule = path; return; }
-    conversion.report('script-left-out', 'warning', `The script ${shown(src)} was left out: a Slidev build starts from one module script, and this one is extra or missing.`, src);
+    conversion.report('script-left-out', 'warning', `The script ${shown(src)} is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with “npx slidev build”, then open a new ZIP of the project (with dist/ inside).`, src);
     return;
   }
   const code = textOf(script);
@@ -426,7 +426,7 @@ class StyleSheets {
     text = text.replace(/@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;@]*);/gi, (_rule, _quote: string, url: string) => {
       if (isRemote(url)) {
         const host = hostOf(url) || 'another site';
-        if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} are not available while the presentation plays, so system fonts are used instead.`, url);
+        if (FONT_HOSTS.test(host)) this.conversion.report('external-font', 'info', `Web fonts from ${host} need the internet, so they are left out; the slides use fonts installed on this device instead.`, url);
         else this.conversion.report('external-stylesheet', 'warning', `A stylesheet from ${host} was left out, because the player works without the internet. The slides may look different.`, url);
         return '';
       }
@@ -591,7 +591,7 @@ function refuse(conversion: Conversion, detection: DeckDetection, modules: reado
   const monaco = detection.flags.slidevHasMonaco || conversion.paths.some((path) => path.slice(conversion.root.length).startsWith('assets/monaco/'));
   if (monaco) {
     conversion.report('slidev-monaco-unsupported', 'error',
-      'This Slidev build includes the Monaco code editor, which cannot run in the player. Remove the {monaco} code blocks (or set "monaco: false" in the first slide\'s settings), run "npx slidev build" again, and open a ZIP of the new dist folder.',
+      'This Slidev build includes the Monaco code editor, which cannot run in the player. Remove the {monaco} code blocks (or set "monaco: false" in the first slide\'s settings), run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).',
       `${conversion.root}assets/monaco/`);
     // Monaco brings its own Web Workers and most of the size: one note names the one cause.
     return true;
@@ -646,7 +646,7 @@ export async function convertSlidevFiles(
   const conversion = new Conversion(files, entry ?? 'index.html');
   const fail = (): SlidevConversion => ({ html: '', issues: conversion.issues, stats: emptyStats(conversion) });
   if (detection.kind !== 'slidev-build' || !entry) {
-    conversion.report('slidev-entry-missing', 'error', 'No Slidev build was found: a build has index.html next to an assets folder. Open a ZIP of the dist folder that "npx slidev build" makes.');
+    conversion.report('slidev-entry-missing', 'error', 'No Slidev build was found: a build has index.html next to an assets folder. Run "npx slidev build" in the project, then open a new ZIP of the project (with dist/ inside).');
     return fail();
   }
   const modules = conversion.paths.filter((path) => MODULE_FILE.test(path));
@@ -657,7 +657,7 @@ export async function convertSlidevFiles(
   const page = readPage(conversion);
   if (!page.entryModule) {
     conversion.report('slidev-entry-missing', 'error',
-      'The build\'s index.html does not start its app from a script in the ZIP. Open a ZIP of the whole dist folder that "npx slidev build" makes, with its assets folder.',
+      'The build\'s index.html does not start its app from a script in the ZIP. Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside), with the whole assets folder.',
       conversion.entry);
     return fail();
   }
@@ -692,7 +692,7 @@ export async function convertSlidevFiles(
   if (patches.missingAssets.size) {
     const missing = [...patches.missingAssets].sort();
     conversion.report('missing-file', 'warning',
-      `Pictures or other files that the slides use are not in the ZIP, so they will not show: ${missing.slice(0, NAMED).map((item) => shown(item, 120)).join(', ')}${missing.length > NAMED ? ` and ${missing.length - NAMED} more` : ''}. Put them in the Slidev project's public folder, run "npx slidev build" again, and open a ZIP of the new dist folder.`,
+      `Pictures or other files that the slides use are not in the ZIP, so they will not show: ${missing.slice(0, NAMED).map((item) => shown(item, 120)).join(', ')}${missing.length > NAMED ? ` and ${missing.length - NAMED} more` : ''}. Put them in the Slidev project's public folder, run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).`,
       missing[0]);
   }
 
@@ -708,7 +708,7 @@ export async function convertSlidevFiles(
   for (const path of cssFiles) {
     if (!included.has(path)) { included.add(path); order.push({ path, css: conversion.text(path) ?? '', from: path }); }
   }
-  if (!order.length) conversion.report('slidev-no-styles', 'warning', 'This build has no stylesheets, so the slides will look unstyled. Open a ZIP of the whole dist folder.');
+  if (!order.length) conversion.report('slidev-no-styles', 'warning', 'This build has no stylesheets, so the slides will look unstyled. Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).');
   const styles = order.map((sheet) => `<style data-qft-from="${escapeAttribute(shown(sheet.from, 200))}">${escapeStyleText(sheets.process(sheet.css, sheet.path ?? conversion.entry))}</style>`);
   sheets.reportProblems();
 
@@ -727,7 +727,7 @@ export async function convertSlidevFiles(
   } catch (error) {
     options.signal?.throwIfAborted();
     conversion.report('slidev-bundle-failed', 'error',
-      `The presentation's scripts could not be combined into one file: ${bundleProblem(error)} Open a ZIP of the complete dist folder that "npx slidev build" makes.`,
+      `The presentation's scripts could not be combined into one file: ${bundleProblem(error)} Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).`,
       page.entryModule);
     return fail();
   }
@@ -777,7 +777,7 @@ export function createEsbuildBundler(esbuild: EsbuildApi): SlidevBundler {
           if (args.kind === 'entry-point') return { path: entry, namespace: NAMESPACE };
           const path = resolve(args.path, args.importer);
           return path === undefined
-            ? { errors: [{ text: `${shown(args.importer, 120)} imports ${shown(args.path, 120)}, which is not in the build. Open a ZIP of the whole dist folder, or build again.` }] }
+            ? { errors: [{ text: `${shown(args.importer, 120)} imports ${shown(args.path, 120)}, which is not in the build.` }] }
             : { path, namespace: NAMESPACE };
         });
         build.onLoad({ filter: /.*/, namespace: NAMESPACE }, (args) => ({ contents: modules.get(args.path) ?? '', loader: 'js' }));
@@ -791,7 +791,7 @@ export function createEsbuildBundler(esbuild: EsbuildApi): SlidevBundler {
       plugins: [files],
     });
     const output = result.outputFiles ?? [];
-    if (output.length !== 1) throw new Error('its scripts could not be combined into one. Open a ZIP of the whole dist folder, or build again with "npx slidev build".');
+    if (output.length !== 1) throw new Error('the bundler did not give exactly one script.');
     return output[0].text;
   };
 }

@@ -115,7 +115,7 @@ describe('portable presentation ZIP import', () => {
     const tooLarge = await mutate(makeZip(), (_bytes, view, central) => {
       view.setUint32(central + 24, PRESENTATION_LIMITS.fileBytes + 1, true);
     });
-    await assert.rejects(inspectPresentationArchive(tooLarge), /expanded file exceeds/);
+    await assert.rejects(inspectPresentationArchive(tooLarge), /larger than 40 MB\. Make that file smaller/);
     // A deflate stream with a plausible small header must not be silently truncated.
     const lied = await mutate(makeZip({}, '', 6), (_bytes, view, central) => {
       const local = view.getUint32(central + 42, true);

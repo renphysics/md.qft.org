@@ -27,6 +27,7 @@ One idea per slide, a worked example, a prediction question before each demo, an
 
 PROJECT
 - Make an ordinary Slidev project: slides.md, Vue components in components/, pictures and media in public/.
+- package.json depends on @slidev/cli and @slidev/theme-default (or the theme slides.md names). Keep Slidev's default base and router settings.
 - In the headmatter of slides.md set fonts: { provider: 'none' }. Use system fonts.
 - Use \`$...$\` and \`$$...$$\` for math (KaTeX is built in), v-click for steps, and Vue components with canvas or SVG for demos.
 

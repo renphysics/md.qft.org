@@ -329,7 +329,7 @@ describe('each conversion step', () => {
     }), recorder().bundler);
     assert.equal(result.html, '');
     assert.deepEqual(codes(result.issues), ['slidev-monaco-unsupported']);
-    assert.match(result.issues[0].message, /Monaco code editor[\s\S]*monaco: false/);
+    assert.match(result.issues[0].message, /Monaco code editor[\s\S]*monaco: false[\s\S]*then open a new ZIP of the project \(with dist\/ inside\)\.$/);
   });
 
   it('refuses builds that use Web Workers, with the files named', async () => {
@@ -366,6 +366,9 @@ describe('each conversion step', () => {
     assert.equal(broken.html, '');
     assert.deepEqual(codes(broken.issues), ['slidev-bundle-failed']);
     assert.match(broken.issues[0].message, /not-there\.js, which is not in the build/);
+    // The advice is given once (VF4.4), in the words of the Slidev prompt (VF4.7).
+    assert.equal(broken.issues[0].message.match(/build again|open a/gi)?.length, 2, broken.issues[0].message);
+    assert.match(broken.issues[0].message, /which is not in the build\. Build again with "npx slidev build", then open a new ZIP of the project \(with dist\/ inside\)\.$/);
 
     const wrongKind = await convertSlidevFiles(smallBuild(), { kind: 'reveal', entry: 'index.html', issues: [], flags: {} }, recorder().bundler);
     assert.deepEqual(codes(wrongKind.issues), ['slidev-entry-missing']);

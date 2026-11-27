@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildPlayable, openDeck } from '../src/lib/deck-project';
 import { exportPresentationHtml } from '../src/lib/presentation-runtime';
-import { MARKED_LICENSE, presentationNotices, type PresentationLicenceTexts } from '../src/lib/presentation-notices';
+import { APACHE_LICENSE_2, MARKED_LICENSE, presentationNotices, type PresentationLicenceTexts } from '../src/lib/presentation-notices';
 import { nodeVendorProvider } from './helpers/deck-vendor-node';
 import { htmlFixture } from './helpers/deck-fixtures';
 
@@ -77,6 +77,22 @@ test('a plain page gets only the application notice, and a Slidev build never mo
   assert.equal(presentationNotices(looksLikeEverything, 'slidev-build', texts).length, 1);
   assert.equal(presentationNotices(looksLikeEverything, 'reveal', texts).length, 6);
   assert.ok(MARKED_LICENSE.includes('Christopher Jeffrey'));
+});
+
+test('the mhchem notice carries the whole Apache License 2.0, the same text as THIRD_PARTY_NOTICES.md', () => {
+  const notices = presentationNotices('.katex{} \\ce mhchem', 'reveal', texts);
+  const mhchem = notices.find((notice) => notice.title.startsWith('mhchem'));
+  assert.ok(mhchem);
+  assert.match(mhchem.text, /Martin Hensel/);
+  assert.match(mhchem.text, /Apache License\n\nVersion 2\.0, January 2004/);
+  assert.match(mhchem.text, /TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION[\s\S]*END OF TERMS AND CONDITIONS/);
+  assert.ok(mhchem.text.length < 64_000, 'within the bound the export puts on one notice');
+  const notices3rd = file('THIRD_PARTY_NOTICES.md').split('\n');
+  const start = notices3rd.indexOf('The Apache License 2.0:') + 3;
+  const end = notices3rd.indexOf('END OF TERMS AND CONDITIONS', start);
+  assert.equal(APACHE_LICENSE_2.trim(), notices3rd.slice(start, end + 1).map((line) => line.trimEnd()).join('\n'));
+  const text = noticeText(exportPresentationHtml('<p>Deck</p>', 'Deck', { notices }));
+  assert.ok(text.includes('END OF TERMS AND CONDITIONS'), 'the export keeps all of it');
 });
 
 test('notices are set as text and bounded', () => {
