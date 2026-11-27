@@ -481,7 +481,7 @@ export function deckSourceNote(project: DeckProject): string {
         ? 'This package plays its compiled slides, so it is read-only here. To change it, revise the source with your editor or AI assistant, rebuild the package with the QFT Slidev tool, then open the new ZIP.'
         : 'This package holds compiled slides only, so it is read-only here. To change it, rebuild it from its Slidev project, then open the new ZIP.';
     case 'slidev-build':
-      return 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a ZIP of the new dist folder.';
+      return 'This is a built Slidev presentation, so it is read-only here. To change it, edit the Slidev project, run "npx slidev build" again, then open a new ZIP of the project (with dist/ inside).';
     case 'slidev-source':
       return 'This is the source of a Slidev presentation, which has to be built before it can play. Run "npx slidev build" in the project, then open a ZIP of the dist folder.';
     default:
@@ -584,7 +584,7 @@ async function convertSlidevBuildForPlayback(project: DeckProject, deps: BuildDe
     }
     const reason = cleanReportedText(error instanceof Error ? error.message : String(error), 300);
     // Every failure ends with what to do; the converter's own texts mostly say it already.
-    const next = /build again|open the zip again|reload the page/i.test(reason) ? '' : ' Open a ZIP of the whole dist folder, or build again with "npx slidev build".';
+    const next = /build again|open the zip again|reload the page/i.test(reason) ? '' : ' Build again with "npx slidev build", then open a new ZIP of the project (with dist/ inside).';
     return {
       html: '',
       issues: [{ code: 'slidev-convert-failed', severity: 'error', message: `The Slidev build could not be converted${reason ? `: ${reason}` : '.'}${next}` }],

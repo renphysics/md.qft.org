@@ -180,6 +180,7 @@ describe('building playable decks', () => {
     assert.equal(project.detection.engineVersion, '53.1.0');
     assert.equal(isEditableDeck(project), false);
     assert.match(deckSourceNote(project), /read-only here[\s\S]*npx slidev build/);
+    assert.match(deckSourceNote(project), /then open a new ZIP of the project \(with dist\/ inside\)\.$/, 'the words of the Slidev prompt');
     const progress: string[] = [];
     let prepared = '';
     const result = await buildPlayable(project, deps({

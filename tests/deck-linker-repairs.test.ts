@@ -269,7 +269,7 @@ describe('wording (VF6.5, VF6.8)', () => {
   it('says what to do about a script that is not part of a Slidev build', async () => {
     const converted = await convert(slidevBuild({ head: '<script src="/extra.js"></script>' }));
     assert.equal(converted.issues.find((item) => item.code === 'script-left-out')?.message,
-      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, open a ZIP of the whole dist folder, or build again with “npx slidev build”.');
+      'The script /extra.js is not part of the Slidev build, so it was left out. If something is missing in the slides, build again with “npx slidev build”, then open a new ZIP of the project (with dist/ inside).');
   });
 
   it('ends the inline-script notes with a next step, and says "AI assistant"', async () => {
