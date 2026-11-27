@@ -4,7 +4,7 @@ import { strToU8, zipSync, type Zippable } from 'fflate';
 import { readDeckArchive } from '../src/lib/deck-archive.ts';
 import { detectDeck } from '../src/lib/deck-detect.ts';
 import vm from 'node:vm';
-import { linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
+import { hasRevealLayoutRule, linkDeck, replaceIframes } from '../src/lib/deck-linker.ts';
 import { mathJaxStandInSource } from '../src/lib/deck-linker-runtime.ts';
 import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
@@ -104,6 +104,13 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     'index.html': reveal(`<section>A</section>${'<script>x();</script>'.repeat(2000)}<script>Reveal.initialize({ plugins: [${Array.from({ length: 50_000 }, (_, index) => `P${index}`).join(', ')}] });</script>`),
   })) },
   { name: 'a stylesheet of 100,000 ".reveal" followed by white space and ">"', run: () => link(deck({ 'index.html': reveal(`<section>A</section><style>${'.reveal >  > '.repeat(100_000)}</style>`) })) },
+  // W3.3: the content test for the Reveal.js layout in a <style> element and in a stylesheet file.
+  { name: 'a stylesheet of 100,000 ".reveal .slides section{" and "/*" that never close', run: async () => {
+    const css = '.reveal .slides  >  section {position:'.repeat(50_000) + '/* .reveal .slides'.repeat(50_000);
+    const result = await link(deck({ 'index.html': reveal('<section>A</section>').replace('</head>', `<style>${css}</style><link rel="stylesheet" href="a.css"></head>`), 'a.css': css }));
+    assert.ok(result.issues.some((issue) => issue.code === 'reveal-style-missing'));
+  } },
+  { name: 'hasRevealLayoutRule on 2 MB of ".reveal" and white space', run: () => assert.equal(hasRevealLayoutRule(`.slides{${'.reveal      '.repeat(170_000)}`), false) },
   { name: '40,000 elements with class names inside one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<div class="a controls b">x</div>'.repeat(40_000)}</section>`) })) },
   // VF1.1 and VF1.3: one sibling search per removed element (6.5 s in the site), and every <base> resolved against the one before.
   { name: '150,000 sibling <noscript> elements in one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<noscript>x</noscript>'.repeat(150_000)}</section>`) })) },

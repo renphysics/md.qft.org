@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { zipSync } from 'fflate';
 import { detectDeck } from '../src/lib/deck-detect.ts';
-import { linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
+import { hasRevealLayoutRule, linkDeck, repairFormulaTags, typesetsSingleDollars, type LinkOptions, type LinkResult } from '../src/lib/deck-linker.ts';
 import { buildPlayable, isPlayable, openDeck } from '../src/lib/deck-project.ts';
 import { convertSlidevFiles } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles } from '../src/lib/deck-types.ts';
@@ -208,9 +209,24 @@ describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
   const warning = 'This Reveal.js presentation has no Reveal.js stylesheet (reveal.css), so the slides will be laid out wrongly. Ask your AI assistant to keep the links to reveal.css and a theme.';
   const handWritten = '.reveal { position: relative; } .reveal .slides { position: absolute; } .reveal .slides > section { display: none; }';
 
-  it('warns when reveal.css was replaced by a hand-written file', async () => {
-    const result = await link({ 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-base.css">' }), 'css/reveal-base.css': handWritten });
-    assert.deepEqual(result.issues.filter((item) => item.code === 'reveal-style-missing').map((item) => [item.severity, item.message]), [['warning', warning]]);
+  // The layout rule of reveal.css, as the browser check of the review measured it (review W3.3).
+  const layout = '.reveal .slides>section,.reveal .slides>section>section{display:none;position:absolute;width:100%}';
+
+  it('warns when reveal.css was replaced by a hand-written file or a cosmetic rule, in a file or a style element', async () => {
+    const cosmetic = '.reveal .slides section { background: #eef; }';
+    const cases: Record<string, string>[] = [
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-base.css">' }), 'css/reveal-base.css': handWritten },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${handWritten}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${cosmetic}</style>` }) },
+      // The rule in a comment, or inside the body of another rule, does not count.
+      { 'index.html': reveal('<section>A</section>', { head: `<style>/* ${layout} */ ${cosmetic}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal .slides > section { color: red } .other { position: absolute }</style>' }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal .slides > section-like { position: absolute }</style>' }) },
+    ];
+    for (const files of cases) {
+      const result = await link(files);
+      assert.deepEqual(result.issues.filter((item) => item.code === 'reveal-style-missing').map((item) => [item.severity, item.message]), [['warning', warning]], files['index.html']);
+    }
   });
 
   it('is quiet with the bundled, a local or an inline Reveal.js stylesheet, and for pages that are not Reveal.js', async () => {
@@ -218,14 +234,37 @@ describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
       { 'index.html': reveal('<section>A</section>') },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="dist/reveal.css"><link rel="stylesheet" href="dist/theme/black.css">' }), 'dist/reveal.css': '.reveal .slides{}', 'dist/theme/black.css': 'body{}' },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/theme.css">' }), 'css/theme.css': '@import url(../lib/reveal.min.css);', 'lib/reveal.min.css': '.reveal{}' },
-      { 'index.html': reveal('<section>A</section>', { head: `<style>${handWritten}</style>` }) },
       { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="https://unpkg.com/reveal.js/dist/reveal.css">' }) },
+      // By content, under any name and with any combinator spelling (review W3.3).
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/styles.css">' }), 'css/styles.css': `body{margin:0}\n${layout}` },
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-5.1.0.min.css">' }), 'css/reveal-5.1.0.min.css': layout },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${layout}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>@media screen { .reveal  .slides\n>\nsection { display: none; POSITION : absolute; } }</style>' }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal>.slides>section{transition:none;position:absolute}</style>' }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<style>.reveal .slides section { position: absolute; top: 0 }</style>' }) },
       { 'index.html': page('<div class="reveal"><div class="slides"><section>A</section></div></div><style>body{}</style>') },
     ];
     for (const files of quiet) {
       const result = await link(files);
       assert.ok(!codes(result).includes('reveal-style-missing'), files['index.html']);
     }
+  });
+});
+
+describe('the content test for the Reveal.js layout (review W3.3)', () => {
+  it('finds the layout in the real reveal.css of versions 3 to 6, under any name', async () => {
+    const real = readFileSync(new URL('../node_modules/reveal.js/dist/reveal.css', import.meta.url), 'utf8');
+    assert.equal(hasRevealLayoutRule(real), true);
+    assert.equal(hasRevealLayoutRule('.reveal .slides > section, .reveal .slides > section > section {\n  display: none;\n  position: absolute;\n  width: 100%; }'), true, 'the 3.x file');
+    const result = await link({ 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/styles.css">' }), 'css/styles.css': real });
+    assert.ok(!codes(result).includes('reveal-style-missing'));
+  });
+
+  it('does not count a rule that is not closed, or a comment that is not closed', () => {
+    assert.equal(hasRevealLayoutRule('.reveal .slides > section { position: absolute'), false);
+    assert.equal(hasRevealLayoutRule('/* .reveal .slides > section { position: absolute }'), false);
+    assert.equal(hasRevealLayoutRule('.reveal .slides > section { position: relative } x { position: absolute }'), false);
+    assert.equal(hasRevealLayoutRule(''), false);
   });
 });
 

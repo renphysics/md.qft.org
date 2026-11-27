@@ -973,8 +973,10 @@ class DeckLinker {
       if (chain.includes(key) || chain.length >= MAX_IMPORT_DEPTH) return '';
       this.inlinedFiles += 1;
       this.usedFiles.add(target.path);
-      if (/(?:^|\/)reveal(?:\.min)?\.css$/i.test(target.path)) this.revealStylesheet = true;
-      return this.rewriteCss(decodeText(this.files.get(target.path)!, target.path), { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
+      const css = decodeText(this.files.get(target.path)!, target.path);
+      // A copy of reveal.css under its own name, or any file that holds its layout (review W3.3).
+      if (!this.revealStylesheet && (mapLibraryPath(target.path)?.role === 'reveal-style' || hasRevealLayoutRule(css))) this.revealStylesheet = true;
+      return this.rewriteCss(css, { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
     }
     if (target.kind === 'missing') {
       const reference = mapLibraryPath(target.path);
@@ -1868,7 +1870,7 @@ class DeckLinker {
       if (name === 'style') {
         const css = textOf(element);
         // A single-file presentation carries Reveal.js's rules inline.
-        if (!this.revealStylesheet && /\.reveal[\s>]+\.slides\b/.test(css)) this.revealStylesheet = true;
+        if (!this.revealStylesheet && hasRevealLayoutRule(css)) this.revealStylesheet = true;
         const rewritten = await this.rewriteCss(css, { kind: 'deck', dir: this.baseDir });
         if (rewritten !== css) setText(element, element.namespaceURI === NS.HTML ? escapeStyleText(rewritten) : rewritten);
       }
@@ -2313,6 +2315,42 @@ const MARKDOWN_TOO_LARGE = '## Slides too large\n\nThese slides are too large to
  * tags cannot have one either, so the search for it stops. Returns undefined
  * when the result would grow beyond maxLength.
  */
+/**
+ * Whether a stylesheet lays out Reveal.js slides (review W3.3): a rule whose
+ * selector puts `section` inside `.reveal .slides` (any combinator) and whose
+ * body sets `position: absolute`, as reveal.css does. A cosmetic rule alone
+ * does not count. One pass: comments are cut with indexOf, and each rule's
+ * selector and body are disjoint pieces of the text.
+ */
+export function hasRevealLayoutRule(css: string): boolean {
+  if (!css.includes('.slides')) return false;
+  const parts: string[] = [];
+  for (let at = 0; at < css.length;) {
+    const open = css.indexOf('/*', at);
+    if (open < 0) { parts.push(css.slice(at)); break; }
+    parts.push(css.slice(at, open), ' ');
+    const close = css.indexOf('*/', open + 2);
+    at = close < 0 ? css.length : close + 2;
+  }
+  const text = parts.join('');
+  const selector = /\.reveal\s*>?\s*\.slides\s*>?\s*section(?![\w-])/i;
+  const absolute = /(?:^|[\s;])position\s*:\s*absolute(?![\w-])/i;
+  let last = -1;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '}') { last = index; continue; }
+    if (char !== '{') continue;
+    // The body of a rule runs to the next brace; a "{" there means a block such as @media.
+    let end = index + 1;
+    while (end < text.length && text[end] !== '{' && text[end] !== '}') end += 1;
+    if (end < text.length && text[end] === '}' && selector.test(text.slice(last + 1, index)) && absolute.test(text.slice(index + 1, end))) return true;
+    last = index;
+    if (text[end] === '}') { last = end; index = end; }
+    else index = end - 1;
+  }
+  return false;
+}
+
 export function replaceIframes(text: string, replace: (tag: string) => string, maxLength: number): string | undefined {
   const opening = /<iframe\b/gi;
   const closing = /<\/iframe>/gi;
