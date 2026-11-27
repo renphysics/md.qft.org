@@ -3,7 +3,7 @@ import type { StoredPresentation, StoredPresentationInfo } from '../lib/presenta
 import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
 import { formatDeckReport, isSiteSideCode, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
-import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, showLoadFailure } from '../lib/load-failure';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, reloadButton, showLoadFailure } from '../lib/load-failure';
 import {
   PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath,
 } from '../lib/presentation-messages';
@@ -463,6 +463,8 @@ export class PresentationLibrary extends HTMLElement {
         quote.textContent = problem.text;
         line.append(label, quote);
       } else line.textContent = problem.text;
+      // A part of the site that could not be loaded: the next step is one click away.
+      if (problem.origin === 'player' && problem.text === LOAD_FAILURE_TEXT) line.append(' ', reloadButton());
       return line;
     });
     if (this.problems.hidden) {

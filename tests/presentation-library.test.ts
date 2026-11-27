@@ -78,6 +78,7 @@ function library(dependencies: Dependencies = {}) {
     exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
     STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, isSiteSideCode,
     // The real one builds elements with the page's document; here it records where the sentence and its Reload button went.
+    reloadButton() { return { tag: 'button', textContent: 'Reload the page' }; },
     showLoadFailure(area: any) { calls.loadFailures.push(area); area.replaceChildren({ textContent: LOAD_FAILURE_TEXT }, ' ', { textContent: 'Reload the page' }); area.textContent = LOAD_FAILURE_TEXT; },
     formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
     Date: class extends Date { static now() { return clock.now; } },
@@ -1077,6 +1078,18 @@ test('a Slidev converter whose page script cannot be fetched is reported as unav
   });
   const g = library();
   assert.deepEqual(await g.instance.buildDeps(g.instance.operation).convertSlidev(new Map(), {}, {}), { html: '<p>converted</p>', issues: [] });
+});
+
+test('the fixed load-failure sentence in the stage\'s problem box has a Reload button; the presentation\'s own words never do', () => {
+  const f = library();
+  f.instance.reportProblem('player', LOAD_FAILURE_TEXT);
+  f.instance.reportProblem('presentation', LOAD_FAILURE_TEXT);
+  f.instance.reportProblem('player', 'Something else.');
+  const lines = f.control('[data-pres-problem]').children;
+  assert.deepEqual(lines[0].children.map((child: any) => child.textContent ?? child), [' ', 'Reload the page']);
+  assert.equal(lines[0].textContent, LOAD_FAILURE_TEXT);
+  assert.equal(lines[1].children.some((child: any) => child.tag === 'button'), false);
+  assert.deepEqual(lines[2].children, []);
 });
 
 test('Source files whose code cannot be loaded show the fixed sentence with Reload in place of "Opening the files…"', async () => {

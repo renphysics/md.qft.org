@@ -175,6 +175,7 @@ export default async function run(t) {
     const slidev = readFileSync(new URL('../fixtures/slidev-default-build.zip', import.meta.url));
     await page.locator('[data-file-input]').setInputFiles({ name: 'slidev-build.zip', mimeType: 'application/zip', buffer: slidev });
     await until(async () => (await page.locator('[data-pres-problem]').textContent()).includes(LOAD_FAILURE), 'the fixed sentence for the converter');
+    assert.equal(await page.locator('[data-pres-problem] [data-reload-page]').isVisible(), true, 'Reload on the stage');
     assert.doesNotMatch(await page.locator('[data-pres-dialog]').textContent(), /Check the internet connection/);
     // Nothing to send to an AI assistant: no Copy report for AI, and the hint says what to do instead.
     assert.equal(await page.locator('[data-pres-report]').isVisible(), false, 'no Copy report for AI');
