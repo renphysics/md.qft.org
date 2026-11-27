@@ -122,3 +122,18 @@ describe('a "<" in a formula (VF2a.2, VM.3)', () => {
     assert.deepEqual(repairFormulaTags(`\\( a<x${'y'.repeat(3000)}\\)`).repaired, 1, 'within reach');
   });
 });
+
+describe('links that are not web pages (VF2a.3, VF2b.4)', () => {
+  it('keeps a link without its scheme as an https website link', async () => {
+    const result = await link({ 'index.html': page('<a id="l" href="//example.org/x?q=1#f">site</a>') });
+    assert.match(result.html, /<a id="l" href="https:\/\/example\.org\/x\?q=1#f">/);
+    assert.ok(!codes(result).includes('file-links'));
+  });
+
+  it('names e-mail and phone links, which cannot open from the player', async () => {
+    const result = await link({ 'index.html': page('<a href="mailto:teacher@example.com?subject=Hi">Mail</a> <a href=" tel:+41%2044 123">Call</a> <a href="mailto:teacher@example.com">again</a>') });
+    const note = issue(result, 'contact-links');
+    assert.equal(note?.message, 'E-mail and phone links do not open in the player: mailto:teacher@example.com, tel:+41 44 123. Show the address as text on the slide.');
+    assert.equal(note?.severity, 'warning');
+  });
+});

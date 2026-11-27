@@ -577,6 +577,8 @@ class DeckLinker {
   private readonly usedFiles = new Set<string>();
   /** Files of the deck that links (a and area elements) point to. */
   private readonly fileLinks = new Set<string>();
+  /** mailto: and tel: addresses that links point to. */
+  private readonly contactLinks = new Set<string>();
   private readonly skippedLower = new Map<string, string>();
   /** Script elements that hold a bundled library, not the deck's own code. */
   private readonly vendorElements = new WeakSet<Element>();
@@ -1835,21 +1837,43 @@ class DeckLinker {
     }
   }
 
-  /** A link to another file of the deck (a page, a worksheet): it cannot open in the player. */
+  /**
+   * A link to another file of the deck (a page, a worksheet) or to an e-mail
+   * address or phone number: it cannot open in the player. A link to a
+   * website without its scheme (//host/path) is a website link, kept as https.
+   */
   private noteLink(element: Element): void {
     const href = getAttribute(element, 'href');
     if (href === undefined) return;
+    const value = href.replace(/[\t\n\r]/g, '').trim();
+    if (value.startsWith('//')) {
+      const target = remoteTarget(value);
+      if (target.kind === 'remote') setAttribute(element, 'href', target.url);
+      return;
+    }
+    const contact = /^(mailto|tel):([^?#]{0,200})/i.exec(value);
+    if (contact) {
+      if (this.contactLinks.size < 50) this.contactLinks.add(`${contact[1].toLowerCase()}:${safeDecode(contact[2]).trim()}`);
+      return;
+    }
     const target = this.resolve(href, this.baseDir);
     if (target.kind === 'local' || target.kind === 'missing') this.fileLinks.add(target.path);
   }
 
   private linkNote(): void {
-    if (!this.fileLinks.size) return;
-    const links = [...this.fileLinks];
-    const shown = namedList(links);
-    this.report('file-links', 'warning',
-      `Links to other files of the presentation do not open in the player: ${shown}. Put what they show on a slide, or open those files outside the player.`,
-      links.slice(0, 3).join(', '));
+    if (this.fileLinks.size) {
+      const links = [...this.fileLinks];
+      const shown = namedList(links);
+      this.report('file-links', 'warning',
+        `Links to other files of the presentation do not open in the player: ${shown}. Put what they show on a slide, or open those files outside the player.`,
+        links.slice(0, 3).join(', '));
+    }
+    if (this.contactLinks.size) {
+      const links = [...this.contactLinks];
+      this.report('contact-links', 'warning',
+        `E-mail and phone links do not open in the player: ${namedList(links)}. Show the address as text on the slide.`,
+        links.slice(0, 3).join(', '));
+    }
   }
 
   /**
