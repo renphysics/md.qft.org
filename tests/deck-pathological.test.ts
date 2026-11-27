@@ -71,6 +71,7 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
   { name: 'Reveal.initialize with 50,000 unknown plugins and 2,000 scripts', run: () => link(deck({
     'index.html': reveal(`<section>A</section>${'<script>x();</script>'.repeat(2000)}<script>Reveal.initialize({ plugins: [${Array.from({ length: 50_000 }, (_, index) => `P${index}`).join(', ')}] });</script>`),
   })) },
+  { name: 'a stylesheet of 100,000 ".reveal" followed by white space and ">"', run: () => link(deck({ 'index.html': reveal(`<section>A</section><style>${'.reveal >  > '.repeat(100_000)}</style>`) })) },
   { name: '40,000 elements with class names inside one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<div class="a controls b">x</div>'.repeat(40_000)}</section>`) })) },
   // VF1.1 and VF1.3: one sibling search per removed element (6.5 s in the site), and every <base> resolved against the one before.
   { name: '150,000 sibling <noscript> elements in one slide', run: () => link(deck({ 'index.html': reveal(`<section>${'<noscript>x</noscript>'.repeat(150_000)}</section>`) })) },

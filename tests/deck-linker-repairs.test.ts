@@ -202,3 +202,28 @@ describe('Reveal.js plugins that were left out (VF2b.8)', () => {
     assert.equal(typeof context.RevealPointer, 'function');
   });
 });
+
+describe('a Reveal.js presentation without its stylesheet (VF5.1)', () => {
+  const warning = 'This Reveal.js presentation has no Reveal.js stylesheet (reveal.css), so the slides will be laid out wrongly. Ask your AI assistant to keep the links to reveal.css and a theme.';
+  const handWritten = '.reveal { position: relative; } .reveal .slides { position: absolute; } .reveal .slides > section { display: none; }';
+
+  it('warns when reveal.css was replaced by a hand-written file', async () => {
+    const result = await link({ 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/reveal-base.css">' }), 'css/reveal-base.css': handWritten });
+    assert.deepEqual(result.issues.filter((item) => item.code === 'reveal-style-missing').map((item) => [item.severity, item.message]), [['warning', warning]]);
+  });
+
+  it('is quiet with the bundled, a local or an inline Reveal.js stylesheet, and for pages that are not Reveal.js', async () => {
+    const quiet = [
+      { 'index.html': reveal('<section>A</section>') },
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="dist/reveal.css"><link rel="stylesheet" href="dist/theme/black.css">' }), 'dist/reveal.css': '.reveal .slides{}', 'dist/theme/black.css': 'body{}' },
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="css/theme.css">' }), 'css/theme.css': '@import url(../lib/reveal.min.css);', 'lib/reveal.min.css': '.reveal{}' },
+      { 'index.html': reveal('<section>A</section>', { head: `<style>${handWritten}</style>` }) },
+      { 'index.html': reveal('<section>A</section>', { head: '<link rel="stylesheet" href="https://unpkg.com/reveal.js/dist/reveal.css">' }) },
+      { 'index.html': page('<div class="reveal"><div class="slides"><section>A</section></div></div><style>body{}</style>') },
+    ];
+    for (const files of quiet) {
+      const result = await link(files);
+      assert.ok(!codes(result).includes('reveal-style-missing'), files['index.html']);
+    }
+  });
+});

@@ -577,6 +577,10 @@ class DeckLinker {
   private mathInserted = false;
   private katexInDeck = { script: false, autoRender: false, style: false };
   private mhchem = false;
+  /** Reveal.js's own stylesheet is in the finished document (review VF5.1). */
+  private revealStylesheet = false;
+  /** Reveal.js itself is in the finished document, bundled or the deck's own reveal.js. */
+  private revealScript = false;
   private embeddedVideo = false;
   private unsupportedModules: string[] = [];
   /** Deck files the finished document already contains, inlined or embedded. */
@@ -947,6 +951,7 @@ class DeckLinker {
       if (chain.includes(key) || chain.length >= MAX_IMPORT_DEPTH) return '';
       this.inlinedFiles += 1;
       this.usedFiles.add(target.path);
+      if (/(?:^|\/)reveal(?:\.min)?\.css$/i.test(target.path)) this.revealStylesheet = true;
       return this.rewriteCss(decodeText(this.files.get(target.path)!, target.path), { kind: 'deck', dir: dirname(target.path) }, [...chain, key]);
     }
     if (target.kind === 'missing') {
@@ -973,6 +978,7 @@ class DeckLinker {
     if (chain.includes(key) || this.includedVendor.has(key)) return '';
     const css = await this.vendor.text(file);
     if (css === undefined) { this.reportMissing(file.path); return ''; }
+    if (file.library === 'reveal.js' && file.path === 'dist/reveal.css') this.revealStylesheet = true;
     this.includedVendor.add(key);
     if (!this.bundled.includes(key)) this.bundled.push(key);
     return this.rewriteCss(stripSourceMapComment(css), { kind: 'vendor', library: file.library, dir: dirname(file.path) }, [...chain, key]);
@@ -983,6 +989,7 @@ class DeckLinker {
   private async vendorScripts(reference: LibraryReference, from: string, attributes: Record<string, string> = {}, note = true): Promise<Element[]> {
     if (note) this.noteBundled(reference, from);
     if (reference.role === 'reveal-math') return this.mathElements();
+    if (reference.role === 'reveal-core') this.revealScript = true;
     const elements: Element[] = [];
     for (const path of reference.files) {
       const file = { library: reference.library, path };
@@ -1066,6 +1073,7 @@ class DeckLinker {
       case 'local': {
         this.usedFiles.add(target.path);
         if (this.isMathPlugin(target.path)) return this.mathElements();
+        if (/(?:^|\/)reveal(?:\.min)?\.js$/i.test(target.path)) this.revealScript = true;
         const code = stripSourceMapComment(decodeText(this.files.get(target.path)!, target.path));
         this.inlinedFiles += 1;
         this.classicTexts.push(code);
@@ -1749,6 +1757,8 @@ class DeckLinker {
       }
       if (name === 'style') {
         const css = textOf(element);
+        // A single-file presentation carries Reveal.js's rules inline.
+        if (!this.revealStylesheet && /\.reveal[\s>]+\.slides\b/.test(css)) this.revealStylesheet = true;
         const rewritten = await this.rewriteCss(css, { kind: 'deck', dir: this.baseDir });
         if (rewritten !== css) setText(element, element.namespaceURI === NS.HTML ? escapeStyleText(rewritten) : rewritten);
       }
@@ -1780,6 +1790,7 @@ class DeckLinker {
       prepend(body, scriptElement(mediaHelperSource(), { [LINKER_MARKER]: 'media' satisfies LinkerScript }));
     }
     this.sweep();
+    this.revealStyleNote();
     this.mathNote();
     this.moduleNote();
     this.linkNote();
@@ -1939,6 +1950,16 @@ class DeckLinker {
         else this.reportOther(trimmed);
       }
     }
+  }
+
+  /**
+   * A Reveal.js presentation without reveal.css shows its slides stacked and
+   * unscaled; an AI assistant once replaced the file by a hand-written one.
+   */
+  private revealStyleNote(): void {
+    if (this.revealStylesheet || !this.revealScript || (this.detection.engine !== 'reveal' && this.detection.kind !== 'reveal')) return;
+    this.report('reveal-style-missing', 'warning',
+      'This Reveal.js presentation has no Reveal.js stylesheet (reveal.css), so the slides will be laid out wrongly. Ask your AI assistant to keep the links to reveal.css and a theme.');
   }
 
   private mathNote(): void {
