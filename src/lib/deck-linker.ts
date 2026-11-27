@@ -8,7 +8,7 @@ import {
   LINKER_MARKER, dependencyAdapterSource, escapeScriptText, escapeStyleText, handlerScriptSource,
   mathJaxConfigSource, mathJaxStandInSource, mathStandInSource, mediaHelperSource, pluginStubSource, scriptEventSource, stripSourceMapComment, type DependencyAction, type HandlerSource, type LinkerScript,
 } from './deck-linker-runtime';
-import { defaultImportBindings, scanModuleImports, scanStringLiterals } from './deck-linker-modules';
+import { defaultImportBindings, scanModuleImports, scanStringLiterals, withoutComments } from './deck-linker-modules';
 import { cleanReportedText } from './presentation-messages';
 import { PRESENTATION_LIMITS } from './presentation-package';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
@@ -1916,8 +1916,9 @@ class DeckLinker {
    */
   private storageNote(): void {
     if (this.detection.engine === 'slidev') return;
-    const writes = /\b(?:local|session)Storage\s*\.\s*setItem\s*\(|\b(?:local|session)Storage\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,200}\])\s*=(?!=)|\bindexedDB\s*\.\s*open\s*\(|\bcookie\s*=(?!=)/;
-    if (![...this.classicTexts, ...this.moduleTexts].some((code) => !this.libraryTexts.has(code) && writes.test(code))) return;
+    // Writes only: an assignment to document.cookie, not a read, and nothing in a comment (review W3.4).
+    const writes = /\b(?:local|session)Storage\s*\.\s*setItem\s*\(|\b(?:local|session)Storage\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,200}\])\s*=(?!=)|\bindexedDB\s*\.\s*open\s*\(|\bdocument\s*\.\s*cookie\s*=(?!=)/;
+    if (![...this.classicTexts, ...this.moduleTexts].some((code) => !this.libraryTexts.has(code) && writes.test(withoutComments(code)))) return;
     this.report('browser-storage', 'info',
       'The presentation saves data in the browser, for example progress or scores. In the player this lasts only until the presentation is stopped.');
   }

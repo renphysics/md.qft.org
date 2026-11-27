@@ -281,7 +281,9 @@ describe('data saved in the browser (VF5.3)', () => {
   });
 
   it('is quiet for reads, comparisons and the deck\'s own copy of Reveal.js', async () => {
-    for (const code of ['const slide = localStorage.getItem("slide");', 'if (document.cookie == "") {}', 'var name = "localStorage";']) {
+    for (const code of ['const slide = localStorage.getItem("slide");', 'if (document.cookie == "") {}', 'var name = "localStorage";',
+      // Review W3.4: a cookie read into a variable named cookie, and writes that are only mentioned in comments.
+      'var cookie = document.cookie;', '// localStorage.setItem("x", 1);\nvar y = 1;', '/* document.cookie = "a=1"; sessionStorage.x = 2; */ var z = "//";']) {
       assert.ok(!codes(await link({ 'index.html': page(`<p>x</p><script>${code}</script>`) })).includes('browser-storage'), code);
     }
     const local = await link({

@@ -94,6 +94,11 @@ const rows: { name: string; run: () => Promise<unknown> | unknown }[] = [
     const result = await link(deck({ 'index.html': page(`<script>${'localStorage[1; sessionStorage .   x   ; '.repeat(100_000)}</script>`) }));
     assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
   } },
+  // W3.4: the storage scan reads the code without its comments.
+  { name: 'a script of 50,000 comments and "document.cookie" reads', run: async () => {
+    const result = await link(deck({ 'index.html': page(`<script>${'/* localStorage.setItem( */ var c = document.cookie; // x = 1\n'.repeat(50_000)}</script>`) }));
+    assert.ok(!result.issues.some((issue) => issue.code === 'browser-storage'));
+  } },
   { name: 'a script with 100,000 strings naming different missing files', run: () => link(deck({ 'index.html': page(`<script>${Array.from({ length: 100_000 }, (_, index) => `fetch("d/${index}.json");`).join('')}</script>`) })) },
   // F2b.3, F5.2 and F5.3: plugin lists, class names and a "<" inside formulas.
   { name: 'a page with 100,000 formulas holding "<x" and one closing delimiter', run: () => link(deck({ 'index.html': page(`<p>${'\\(a<x '.repeat(100_000)}\\)</p>`) })) },

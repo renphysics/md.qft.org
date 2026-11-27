@@ -326,3 +326,14 @@ export function defaultImportBindings(clause: string): ImportBinding[] | undefin
   }
   return bindings.length ? bindings : undefined;
 }
+
+/**
+ * The code's tokens joined by spaces, without its comments (review W3.4):
+ * for scans that must not count text in a comment. The code itself when it
+ * could not be read to its end.
+ */
+export function withoutComments(code: string): string {
+  if (!code.includes('/')) return code;
+  const { tokens, complete } = tokenize(code);
+  return complete ? tokens.map((token) => token.value).join(' ') : code;
+}
