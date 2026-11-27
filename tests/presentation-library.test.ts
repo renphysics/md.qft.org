@@ -737,6 +737,35 @@ test('a rescued deck shows a strip above the slides, cleared by the next start',
   assert.equal(f.control('[data-pres-rescued]').hidden, true);
 });
 
+test('a Reveal.js deck gets the start-up check; a late start withdraws the strip; the player\'s limits are its own words', () => {
+  const f = library();
+  f.show(revealProject(), revealPlayable());
+  const { options } = f.calls.players[0];
+  assert.equal(options.startCheck, 'reveal');
+  options.onState('loading');
+  options.onState('ready');
+  options.onStalled('recovered', undefined);
+  assert.equal(f.control('[data-pres-rescued]').hidden, true, 'nothing to withdraw before a rescue');
+  options.onStalled('rescued', undefined);
+  assert.equal(f.control('[data-pres-rescued]').hidden, false);
+  options.onStalled('recovered', undefined);
+  assert.equal(f.control('[data-pres-rescued]').hidden, true, 'the deck started itself with its own settings');
+  assert.equal(f.instance.stall, undefined, 'the report says it plays');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+
+  options.onLimit({ code: 'speaker-view', text: 'The speaker view (S key) is not available in the player.', counted: false });
+  assert.equal(f.instance.runtime.length, 0, 'information is no problem');
+  assert.equal(f.control('[data-pres-player-status]').textContent, 'Playing locally');
+  options.onLimit({ code: 'question', text: 'The presentation asked a question in a pop-up window.', counted: true });
+  const [line] = f.control('[data-pres-runtime-list]').children;
+  assert.equal(line.textContent, 'The presentation asked a question in a pop-up window.', 'without the “reported” label');
+  assert.equal(JSON.stringify(f.instance.runtime), JSON.stringify([{ origin: 'player', text: 'The presentation asked a question in a pop-up window.' }]));
+
+  const plain = library();
+  plain.show(fixtureProject({ kind: 'html', engine: 'html', title: 'Own slides' }), revealPlayable());
+  assert.equal(plain.calls.players[0].options.startCheck, undefined, 'no start-up check for other presentations');
+});
+
 test('a link to a website shows a strip; only its button opens the address, in a new tab without an opener', () => {
   const f = library();
   f.show(revealProject(), revealPlayable());

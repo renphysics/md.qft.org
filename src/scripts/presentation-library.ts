@@ -109,7 +109,7 @@ export class PresentationLibrary extends HTMLElement {
    */
   private replayPending = false;
   /** Set when a Reveal.js deck stopped during start-up, for this playback. */
-  private stall?: PresentationStall;
+  private stall?: Exclude<PresentationStall, 'recovered'>;
   /** When the current playback started (Start, Restart or a replay), for opening the notes. */
   private playbackStarted = 0;
   /** The website the deck's last link points to, while its strip shows. */
@@ -717,6 +717,8 @@ export class PresentationLibrary extends HTMLElement {
       title: project.title,
       sandboxUrl: this.dataset.sandboxUrl!,
       profile: playable.profile,
+      // The start-up rescue is only for presentations detected as Reveal.js.
+      ...(project.engine === 'reveal' ? { startCheck: 'reveal' as const } : {}),
       onState: (state) => {
         this.playerState = state;
         // Each start (Start, Restart, a replay after edits) begins without
@@ -734,6 +736,15 @@ export class PresentationLibrary extends HTMLElement {
         this.addRuntime('presentation', message);
         // Problems right after a start are most often why the slides look
         // wrong (an edit with a syntax error, a missing library): show them.
+        if (first && this.runtime.length && Date.now() - this.playbackStarted < 5000) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
+        this.renderStatus();
+      },
+      // What the player could not do, in its own words (no "reported" label).
+      // Information such as the speaker view is no problem: not listed here.
+      onLimit: (limit) => {
+        if (!limit.counted) return;
+        const first = !this.runtime.length;
+        this.addRuntime('player', limit.text);
         if (first && this.runtime.length && Date.now() - this.playbackStarted < 5000) this.q<HTMLDetailsElement>('[data-pres-notes]').open = true;
         this.renderStatus();
       },
@@ -771,6 +782,14 @@ export class PresentationLibrary extends HTMLElement {
    * above the slides, which the player started with basic settings.
    */
   private showStall(detail: PresentationStall, firstError: string | undefined): void {
+    if (detail === 'recovered') {
+      // The deck started Reveal.js itself after all, with its own settings.
+      if (this.stall !== 'rescued') return;
+      this.stall = undefined;
+      this.q('[data-pres-rescued]').hidden = true;
+      this.renderStatus();
+      return;
+    }
     this.stall = detail;
     if (detail === 'rescued') {
       this.q('[data-pres-rescued-text]').textContent = STALL_RESCUED_TEXT;
@@ -1109,7 +1128,9 @@ export class PresentationLibrary extends HTMLElement {
     const { noticesForExport } = await import('../lib/presentation-notice-texts');
     if (this.active !== active) return;
     const notices = noticesForExport(active.playable.html, active.project.kind);
-    const html = exportPresentationHtml(active.playable.html, active.project.title, { profile: active.playable.profile, notices });
+    const html = exportPresentationHtml(active.playable.html, active.project.title, {
+      profile: active.playable.profile, notices, ...(active.project.engine === 'reveal' ? { startCheck: 'reveal' as const } : {}),
+    });
     download(new Blob([html], { type: 'text/html;charset=utf-8' }), `${fileName(active.project.title)}.html`);
     this.notice('Standalone player downloaded. Open it offline and choose Start to run the slides.');
   }
