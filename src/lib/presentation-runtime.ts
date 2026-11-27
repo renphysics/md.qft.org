@@ -38,11 +38,11 @@ export type PresentationStartCheck = 'reveal';
 
 /**
  * Something the player could not do for the deck. The deck can only choose
- * the code (and, for the blocked-* codes, a host name of letters, digits,
- * dots and dashes with an optional port); the text is the player's own.
+ * the code (and, for the blocked-* codes, a host name that passes the strict
+ * check of presentationHostName); the text is the player's own.
  */
 export type PresentationLimitCode =
-  | 'question' | 'new-window' | 'speaker-view' | 'print'
+  | 'question' | 'new-window' | 'speaker-view' | 'print' | 'form'
   | 'blocked-picture' | 'blocked-font' | 'blocked-style' | 'blocked-script' | 'blocked-media'
   | 'blocked-request' | 'blocked-page' | 'blocked-other'
   | 'missing-picture' | 'missing-media' | 'missing-file'
@@ -54,8 +54,28 @@ export interface PresentationLimit {
   host?: string;
   /** The player's own sentence for this limit, with what to do next. Plain text. */
   text: string;
-  /** false for information that is no problem of the deck (the speaker view). */
+  /** false for information that is no problem of the deck (the speaker view, printing). */
   counted: boolean;
+}
+
+/**
+ * The deck replaced itself with a page at another address (a script set
+ * location.href to a website): the browser refused it, and the deck is gone
+ * from its frame. See onLeft.
+ */
+export interface PresentationLeft {
+  /**
+   * The host of that address when it is http or https and passes the strict
+   * check (presentationHostName), with a port if any; undefined otherwise.
+   * Chosen by the deck: show it only inside the app's own sentence.
+   */
+  host?: string;
+  /**
+   * Whether this page had user activation when the message arrived
+   * (navigator.userActivation.isActive), that is, whether the person had
+   * just acted, most likely with a click in the deck.
+   */
+  active: boolean;
 }
 
 export interface PresentationPlayerOptions {
@@ -118,6 +138,18 @@ export interface PresentationPlayerOptions {
   onLimit?: (limit: PresentationLimit) => void;
   /** Tolerant profile only: pass 'reveal' for a deck detected as Reveal.js. See PresentationStartCheck. */
   startCheck?: PresentationStartCheck;
+  /**
+   * Tolerant profile only, at most once per playback: the deck replaced
+   * itself with a page at another address (see PresentationLeft). No later
+   * message of that playback is accepted; the frame shows the browser's
+   * error page until the host calls start(), update() or stop(). Without
+   * this option (and always in the strict profile), the player stops with
+   * an error in its own words (onError with origin 'player'):
+   * "The presentation tried to replace its slides with a page from HOST, so
+   * the player stopped it. Choose Start to play it again. Ask your AI
+   * assistant to use an ordinary link for that page."
+   */
+  onLeft?: (left: PresentationLeft) => void;
 }
 
 /**
@@ -183,13 +215,37 @@ const EXPORT_NOTICE_TEXT = 64_000;
  */
 function presentationRuntimeFactory() {
   /**
+   * A host name the player may put in its own sentences: labels of 1 to 63
+   * characters from a-z, 0-9 and "-" that neither start nor end with a dash,
+   * joined by single dots, at most 253 characters, at least two labels or
+   * exactly "localhost", and an optional port from 1 to 65535. Anything else
+   * gives the sentence without a host. No outer references: the runner and
+   * the deck's bootstrap get this exact function as an argument.
+   */
+  function presentationHostName(value: unknown): boolean {
+    if (typeof value !== 'string' || !value || value.length > 259) return false;
+    const colon = value.indexOf(':');
+    const name = colon < 0 ? value : value.slice(0, colon);
+    if (colon >= 0) {
+      const port = value.slice(colon + 1);
+      if (!/^[1-9]\d{0,4}$/.test(port) || Number(port) > 65535) return false;
+    }
+    if (!name || name.length > 253) return false;
+    const labels = name.split('.');
+    if (labels.length < 2 && name !== 'localhost') return false;
+    for (const label of labels) if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) return false;
+    return true;
+  }
+
+  /**
    * Only this trusted shell owns the application iframe. Its blob-only frame
    * policy also prevents the application navigating itself to an HTTP URL.
    * Kept self-contained for the static runner and standalone classroom exports.
    */
-  function presentationSandboxBootstrap(): void {
+  function presentationSandboxBootstrap(isHost: (value: unknown) => boolean): void {
     if (window.parent === window || window.origin !== 'null') return;
     let used = false;
+    let left = false;
     let token = '';
     let frame: HTMLIFrameElement | undefined;
     let objectUrl: string | undefined;
@@ -201,14 +257,17 @@ function presentationRuntimeFactory() {
         if (message.qftPresentation !== 1 || message.token !== token) return;
         // The deck can read its token and forge any message, so relay only
         // known kinds, each with its detail checked again here.
+        // 'left' is not among them: only this shell says that the deck left.
         const kind = message.kind;
         const detail = message.detail;
+        const space = typeof detail === 'string' ? detail.indexOf(' ') : -1;
         if (kind === 'ready' || kind === 'escape') send(kind);
         else if (kind === 'stalled' && (detail === 'rescued' || detail === 'blank' || detail === 'recovered')) send(kind, detail);
         // A limit is a code from the player's fixed list, for blocked files
         // followed by one host name; the host writes the sentence for it.
         else if (kind === 'limit' && typeof detail === 'string' && detail.length <= 300
-          && /^(?:question|new-window|speaker-view|print|blocked-(?:picture|font|style|script|media|request|page|other)|missing-(?:picture|media|file)|failed-step|link-too-long)(?: [a-z0-9.-]{1,253}(?::\d{1,5})?)?$/.test(detail)) send(kind, detail);
+          && /^(?:question|new-window|speaker-view|print|form|blocked-(?:picture|font|style|script|media|request|page|other)|missing-(?:picture|media|file)|failed-step|link-too-long)$/.test(space < 0 ? detail : detail.slice(0, space))
+          && (space < 0 || isHost(detail.slice(space + 1)))) send(kind, detail);
         else if (kind === 'link' && typeof detail === 'string' && /^https?:\/\/[^\s]{1,1990}$/i.test(detail)) send(kind, detail);
         else if ((kind === 'error' || kind === 'warning') && typeof detail === 'string') send(kind, detail.slice(0, 350));
         else if (kind === 'position' && typeof detail === 'string' && /^\d{1,4}\/\d{1,4}(?:\/\d{1,4})?$/.test(detail)) send(kind, detail);
@@ -251,8 +310,20 @@ function presentationRuntimeFactory() {
       // focus-without-user-activation policy. The host hands focus over once
       // the presentation is ready, then asks with qft-presentation-focus.
     });
+    // This shell loads nothing itself: a violation here is the deck's frame
+    // going to another address (a script set location.href to a website),
+    // which the frame policy refuses. The deck is then gone from its frame.
+    // Say so once, with the host when the address has a plain one (the
+    // browser gives only the origin here); the host page decides what next.
     document.addEventListener('securitypolicyviolation', (event) => {
-      if (used) send('error', `The presentation attempted an unsupported navigation or resource (${event.effectiveDirective}). Use a fully bundled offline presentation.`);
+      if (!used || left) return;
+      left = true;
+      let host = '';
+      try {
+        const url = new URL(String(event.blockedURI ?? ''));
+        if ((url.protocol === 'http:' || url.protocol === 'https:') && isHost(url.host)) host = url.host;
+      } catch { /* No address. */ }
+      send('left', host);
     });
     window.addEventListener('pagehide', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); }, { once: true });
   }
@@ -265,16 +336,17 @@ function presentationRuntimeFactory() {
     // In a portable export every layer uses the outer export's same nonce.
     const scriptPolicy = scriptNonce ? `'nonce-${scriptNonce}'` : "'unsafe-inline'";
     const policy = `default-src 'none'; script-src ${scriptPolicy}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
-    const setup = `(()=>{const __name=(value)=>value;(${presentationSandboxBootstrap.toString()})();})();`.replace(/<\/script/gi, '<\\/script');
+    const setup = `(()=>{const __name=(value)=>value;(${presentationSandboxBootstrap.toString()})(${presentationHostName.toString()});})();`.replace(/<\/script/gi, '<\\/script');
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'; script-src-attr 'none'"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex, nofollow"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Isolated presentation player</title><style>body{margin:0;padding:24px;background:#faf8f4;color:#66616a;font:14px/1.6 system-ui,sans-serif}</style></head><body><p>Open a presentation from the Markdown workspace.</p><script${scriptNonce ? ` nonce="${scriptNonce}"` : ''}>${setup}</script></body></html>`;
   }
 
   /**
    * No outer references: also serialized into the isolated document, where it
    * runs before any deck code. `tolerant` selects the tolerant profile;
-   * `revealCheck` (tolerant only) runs the Reveal.js start-up check.
+   * `revealCheck` (tolerant only) runs the Reveal.js start-up check;
+   * `isHost` is presentationHostName.
    */
-  function presentationBootstrap(token: string, tolerant: boolean, revealCheck?: boolean): void {
+  function presentationBootstrap(token: string, tolerant: boolean, revealCheck: boolean | undefined, isHost: (value: unknown) => boolean): void {
     let failed = false;
     let reportedErrors = 0;
     const warned = new Set<string>();
@@ -306,6 +378,16 @@ function presentationRuntimeFactory() {
     const describe = (value: unknown) => {
       try { return String((value as { message?: unknown } | null | undefined)?.message || value || ''); }
       catch { return ''; }
+    };
+    // Tolerant only: a link to a website, passed to the host (at most 30 per
+    // playback); the host shows the address and opens it only on its own
+    // button. Too long to offer: a limit instead.
+    let links = 0;
+    const offerLink = (href: string) => {
+      if (href.length > 2000) { limit('link-too-long'); return; }
+      if (links >= 30) return;
+      links += 1;
+      send('link', href);
     };
 
     // Slidev and Vue utilities can consult Web Storage. Opaque frames have no
@@ -544,12 +626,32 @@ function presentationRuntimeFactory() {
       // As in the sandbox without allow-modals: no answer. Say so once.
       replace('confirm', function confirm() { limit('question'); return false; });
       replace('prompt', function prompt() { limit('question'); return null; });
-      replace('open', function open(_url?: unknown, name?: unknown) {
+      // Whether the person has just acted in the deck: the browser's user
+      // activation, or where it has none, a trusted pointer or key event
+      // within the last second.
+      let lastInput = -Infinity;
+      const activation = (() => { try { return (navigator as { userActivation?: { isActive?: unknown } }).userActivation; } catch { return undefined; } })();
+      if (!activation) {
+        for (const type of ['pointerdown', 'mousedown', 'touchend', 'keydown', 'click']) {
+          window.addEventListener(type, (event) => { if (event.isTrusted === true) lastInput = Date.now(); }, true);
+        }
+      }
+      const acted = () => {
+        try { if (activation) return activation.isActive === true; } catch { return false; }
+        return Date.now() - lastInput < 1000;
+      };
+      replace('open', function open(url?: unknown, name?: unknown) {
         // Reveal.js's notes plugin names its window; that is the speaker
         // view (S key), a documented limit of the player and no problem.
         let speaker = false;
         try { speaker = String(name) === 'reveal.js - Notes'; } catch { /* Another window. */ }
-        limit(speaker ? 'speaker-view' : 'new-window');
+        // A button that opens a website, right after the person's action:
+        // offer the address as a link, as for a clicked link. Relative
+        // addresses are not resolved.
+        let address = '';
+        if (!speaker) { try { address = String(url); } catch { address = ''; } }
+        if (!speaker && /^https?:\/\/[^\s]+$/i.test(address) && acted()) offerLink(address);
+        else limit(speaker ? 'speaker-view' : 'new-window');
         opening = true;
         setTimeout(() => { opening = false; }, 0);
         return null;
@@ -577,6 +679,8 @@ function presentationRuntimeFactory() {
     // (bounded), and decide on an element's error a moment later, as the two
     // events come in either order.
     const blockedTargets = new WeakSet<object>();
+    // Addresses (and their origins) of link previews that were offered.
+    const previewed = new Set<string>();
     const blockedAddresses = new Set<string>();
     const blocked = (event: SecurityPolicyViolationEvent) => {
       try { const target = event.target; if (target && typeof target === 'object' && target !== document) blockedTargets.add(target); } catch { /* Only the address is known. */ }
@@ -588,10 +692,15 @@ function presentationRuntimeFactory() {
       const kinds: Record<string, string> = { img: 'picture', font: 'font', style: 'style', script: 'script', media: 'media', connect: 'request', frame: 'page', child: 'page' };
       const kind = Object.prototype.hasOwnProperty.call(kinds, directive.split('-')[0]) ? kinds[directive.split('-')[0]] : 'other';
       let host = '';
+      let origin = '';
       try {
         const url = new URL(address);
-        if ((url.protocol === 'http:' || url.protocol === 'https:') && /^[a-z0-9.-]{1,253}(?::\d{1,5})?$/.test(url.host)) host = url.host;
+        if (url.protocol === 'http:' || url.protocol === 'https:') origin = url.origin;
+        if (origin && isHost(url.host)) host = url.host;
       } catch { /* Not an address, for example 'inline' or 'eval'. */ }
+      // A Reveal.js link preview of a link that was just offered: the notice
+      // stands for it, and no page is embedded in a slide.
+      if (kind === 'page' && (previewed.has(address) || (origin && previewed.has(origin)))) return;
       limit(`blocked-${kind}`, host);
     };
     const wasBlocked = (target: EventTarget | null) => {
@@ -611,7 +720,9 @@ function presentationRuntimeFactory() {
     window.addEventListener('error', (event) => {
       if (event instanceof ErrorEvent) {
         if (ignoreError(event)) return;
-        const text = describe(event.message);
+        let text = describe(event.message);
+        // throw '' (or undefined, or null) gives only the browser's prefix.
+        if (/^\s*Uncaught(?:\s+(?:undefined|null|''|""))?\s*$/.test(text)) text = '';
         sawError = true;
         if (!firstError && text) firstError = text.slice(0, 350);
         if (text) report(text);
@@ -709,24 +820,67 @@ function presentationRuntimeFactory() {
     // page and shows only the address, until the person chooses its own
     // button. The deck can still send a link message itself; it can at most
     // put a labelled address on the stage.
-    let links = 0;
     // Tolerant only: clicks that the deck's own code cancelled. The
     // bootstrap's own preventDefault() below does not count.
     const cancelledByDeck = new WeakSet<object>();
     let ownCancel = false;
     if (tolerant) {
+      const mark = (event: unknown) => { if (!ownCancel) { try { cancelledByDeck.add(event as object); } catch { /* Not an event. */ } } };
       try {
         const original = Event.prototype.preventDefault;
         if (typeof original === 'function') {
-          Object.defineProperty(Event.prototype, 'preventDefault', {
-            configurable: true, writable: true,
-            value: function preventDefault(this: Event) {
-              if (!ownCancel) { try { cancelledByDeck.add(this); } catch { /* Not an event. */ } }
-              return original.call(this);
-            },
-          });
+          const preventDefault = function preventDefault(this: Event) { mark(this); return original.call(this); };
+          try { Object.defineProperty(preventDefault, 'name', { value: 'preventDefault' }); } catch { /* Keep the name it has. */ }
+          Object.defineProperty(Event.prototype, 'preventDefault', { configurable: true, writable: true, value: preventDefault });
         }
       } catch { /* Then every website link is offered, as before. */ }
+      // event.returnValue = false cancels too.
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(Event.prototype, 'returnValue');
+        const get = descriptor?.get;
+        const set = descriptor?.set;
+        if (descriptor && get && set) {
+          Object.defineProperty(Event.prototype, 'returnValue', {
+            configurable: true, enumerable: descriptor.enumerable,
+            get() { return get.call(this); },
+            set(value: unknown) { if (!value) mark(this); set.call(this, value); },
+          });
+        }
+      } catch { /* Then such a link is offered. */ }
+      // element.onclick = function () { ...; return false; } cancels the click
+      // without calling preventDefault(): wrap the handler as it is assigned.
+      // Reading the property still gives the function the deck assigned.
+      const owners: unknown[] = [];
+      try { owners.push(HTMLElement.prototype, SVGElement.prototype, Document.prototype, window); } catch { /* Fewer owners. */ }
+      for (const owner of owners) {
+        for (const name of ['onclick', 'onauxclick']) {
+          try {
+            const descriptor = Object.getOwnPropertyDescriptor(owner, name);
+            const get = descriptor?.get;
+            const set = descriptor?.set;
+            if (!descriptor || !get || !set) continue;
+            const assigned = new WeakMap<object, [unknown, unknown]>();
+            Object.defineProperty(owner, name, {
+              configurable: true, enumerable: descriptor.enumerable,
+              get() {
+                const value = get.call(this);
+                const entry = assigned.get(this);
+                return entry && value === entry[1] ? entry[0] : value;
+              },
+              set(handler: unknown) {
+                if (typeof handler !== 'function') { assigned.delete(this); set.call(this, handler); return; }
+                const wrapper = function (this: unknown, event: unknown) {
+                  const result = (handler as (...values: unknown[]) => unknown).apply(this, arguments as unknown as unknown[]);
+                  if (result === false) mark(event);
+                  return result;
+                };
+                assigned.set(this, [handler, wrapper]);
+                set.call(this, wrapper);
+              },
+            });
+          } catch { /* Then such a link is offered. */ }
+        }
+      }
     }
     // Reveal.js link previews (data-preview-link, or previewLinks) cancel the
     // click themselves and cannot load in the player: offer those links.
@@ -756,15 +910,119 @@ function presentationRuntimeFactory() {
       if (href.length > 2000) { limit('link-too-long'); return; }
       if (links >= 30) return;
       const offered = preview(element);
+      if (offered && previewed.size < 60) {
+        previewed.add(href);
+        try { previewed.add(new URL(href).origin); } catch { /* The address alone. */ }
+      }
       setTimeout(() => {
-        if ((!offered && cancelledByDeck.has(event)) || links >= 30) return;
-        links += 1;
-        send('link', href);
+        if (!offered && cancelledByDeck.has(event)) return;
+        offerLink(href);
       }, 0);
     };
     window.addEventListener('click', follow, true);
     window.addEventListener('auxclick', follow, true);
-    document.addEventListener('submit', (event) => event.preventDefault(), true);
+    // A form never goes to a server from the player. In the tolerant
+    // profile only the browser's own (trusted) submit events are cancelled
+    // here, so that the deck's handlers alone decide about the ones below.
+    let nativeSubmits = 0;
+    document.addEventListener('submit', (event) => {
+      if (tolerant) {
+        if (event.isTrusted !== true) return;
+        nativeSubmits += 1;
+      }
+      ownCancel = true;
+      try { event.preventDefault(); } finally { ownCancel = false; }
+    }, true);
+    if (tolerant) {
+      // The sandbox has no allow-forms: Chromium drops a submission before
+      // its submit event, so a quiz's submit handler would never run. Fire
+      // the event the browser dropped, as the browser would: validation
+      // first, then a cancelable submit event. Nothing is ever sent; when no
+      // handler cancels it, the form would have gone to a server: a limit.
+      const isSubmitButton = (element: unknown): element is HTMLButtonElement | HTMLInputElement => {
+        try {
+          if (element instanceof HTMLButtonElement) return element.type === 'submit';
+          if (element instanceof HTMLInputElement) return element.type === 'submit' || element.type === 'image';
+        } catch { /* Not an element of this document. */ }
+        return false;
+      };
+      const submit = (form: HTMLFormElement, submitter: HTMLButtonElement | HTMLInputElement | null) => {
+        try {
+          if (!form.isConnected) return;
+          if (!form.noValidate && !submitter?.formNoValidate && !form.reportValidity()) return;
+          const init = { bubbles: true, cancelable: true, submitter };
+          const event = typeof SubmitEvent === 'function' ? new SubmitEvent('submit', init) : new Event('submit', init);
+          if (!form.dispatchEvent(event)) return;
+          // A dialog form only closes its dialog.
+          const method = (submitter?.getAttribute('formmethod') || form.getAttribute('method') || '').trim().toLowerCase();
+          const dialog = method === 'dialog' ? form.closest('dialog') : null;
+          if (dialog) dialog.close(submitter?.value ?? '');
+          else if (method !== 'dialog') limit('form');
+        } catch { /* The deck's own handlers report their errors themselves. */ }
+      };
+      let submitClicks = 0;
+      window.addEventListener('click', (event) => {
+        if (event.isTrusted !== true) return;
+        let button: Element | null = null;
+        try {
+          const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+          button = ((path[0] ?? event.target) as Element | null)?.closest?.('button,input') ?? null;
+        } catch { button = null; }
+        if (!isSubmitButton(button) || button.matches(':disabled') || !button.form) return;
+        const form = button.form;
+        const before = nativeSubmits;
+        submitClicks += 1;
+        setTimeout(() => { if (!event.defaultPrevented && nativeSubmits === before) submit(form, button as HTMLButtonElement | HTMLInputElement); }, 0);
+      }, true);
+      // Enter in a single-line field: with a submit button, the browser
+      // clicks it (above); without one, implicit submission applies when the
+      // form has at most one such field.
+      const single = ['text', 'search', 'url', 'tel', 'email', 'password', 'date', 'month', 'week', 'time', 'datetime-local', 'number'];
+      window.addEventListener('keypress', (event) => {
+        if (event.isTrusted !== true || event.key !== 'Enter' || event.isComposing) return;
+        let form: HTMLFormElement | null = null;
+        try {
+          const field = event.target;
+          if (field instanceof HTMLInputElement && single.includes(field.type)) form = field.form;
+        } catch { form = null; }
+        if (!form) return;
+        const before = nativeSubmits;
+        const clicks = submitClicks;
+        setTimeout(() => {
+          if (!form || event.defaultPrevented || nativeSubmits !== before || submitClicks !== clicks) return;
+          try {
+            const elements = Array.from(form.elements);
+            if (elements.some(isSubmitButton)) return;
+            if (elements.filter((element) => element instanceof HTMLInputElement && single.includes(element.type)).length > 1) return;
+          } catch { return; }
+          submit(form, null);
+        }, 0);
+      }, true);
+      // requestSubmit() does nothing in the sandbox either: do the same steps
+      // after the browser's own checks of the submitter. submit() never
+      // fires an event; it stays as it is, with the limit.
+      try {
+        const prototype = HTMLFormElement.prototype;
+        const request = prototype.requestSubmit;
+        if (typeof request === 'function') {
+          Object.defineProperty(prototype, 'requestSubmit', {
+            configurable: true, writable: true,
+            value: function requestSubmit(this: HTMLFormElement, submitter?: HTMLElement | null) {
+              const before = nativeSubmits;
+              request.apply(this, arguments as unknown as [HTMLElement?]);
+              if (nativeSubmits === before) submit(this, isSubmitButton(submitter) ? submitter : null);
+            },
+          });
+        }
+        const send = prototype.submit;
+        if (typeof send === 'function') {
+          Object.defineProperty(prototype, 'submit', {
+            configurable: true, writable: true,
+            value: function submit(this: HTMLFormElement) { limit('form'); return send.call(this); },
+          });
+        }
+      } catch { /* Keep the browser's behaviour. */ }
+    }
     // Tolerant, and only when the host says the deck is a Reveal.js one: a
     // deck whose start-up script stopped with an error before
     // Reveal.initialize shows a blank stage. Two seconds after load, try to
@@ -788,8 +1046,48 @@ function presentationRuntimeFactory() {
     // slides instead, and withdraw the notice.
     type RevealApi = {
       initialize?: unknown; isReady?: unknown; configure?: unknown; registerPlugin?: unknown; hasPlugin?: unknown;
+      on?: unknown; off?: unknown; addEventListener?: unknown; removeEventListener?: unknown;
+      getIndices?: unknown; getCurrentSlide?: unknown; getRevealElement?: unknown;
     };
+    // The deck started late while the rescue's own start had not become
+    // ready yet: the check below decides, and stays silent if it does.
+    let lateStarted = false;
     const adopt = (reveal: RevealApi) => {
+      // 'ready' has already fired (or will) for the rescue's own start, so
+      // handlers that the deck registers for it from now on would never run:
+      // remember them (at most 50) and call each once after a late start.
+      let readyHandlers: unknown[] | undefined = [];
+      const record = (name: 'on' | 'addEventListener' | 'off' | 'removeEventListener') => {
+        const original = reveal[name];
+        if (typeof original !== 'function') return;
+        const adding = name === 'on' || name === 'addEventListener';
+        const value = function (this: unknown, type?: unknown, handler?: unknown, ...rest: unknown[]) {
+          if (type === 'ready' && readyHandlers) {
+            if (!adding) readyHandlers = readyHandlers.filter((entry) => entry !== handler);
+            else if (handler && readyHandlers.length < 50) readyHandlers.push(handler);
+          }
+          return (original as (...values: unknown[]) => unknown).call(this, type, handler, ...rest);
+        };
+        try { Object.defineProperty(reveal, name, { configurable: true, writable: true, value }); } catch { /* Not recorded. */ }
+      };
+      for (const name of ['on', 'addEventListener', 'off', 'removeEventListener'] as const) record(name);
+      const callReady = () => {
+        const handlers = readyHandlers ?? [];
+        readyHandlers = undefined;
+        try { if (typeof reveal.isReady !== 'function' || !reveal.isReady()) return; } catch { return; }
+        let event: Event;
+        try {
+          event = new Event('ready');
+          const indices = typeof reveal.getIndices === 'function' ? reveal.getIndices() as { h?: unknown; v?: unknown } : {};
+          Object.assign(event, { indexh: indices?.h, indexv: indices?.v, currentSlide: typeof reveal.getCurrentSlide === 'function' ? reveal.getCurrentSlide() : undefined });
+        } catch { return; }
+        for (const handler of handlers) {
+          try {
+            if (typeof handler === 'function') handler.call(reveal, event);
+            else (handler as { handleEvent?: (event: Event) => unknown }).handleEvent?.(event);
+          } catch (error) { report(describe(error) || 'The presentation encountered an error.'); }
+        }
+      };
       const lateStart = function initialize(options?: unknown) {
         try {
           if (options && typeof options === 'object') {
@@ -810,13 +1108,42 @@ function presentationRuntimeFactory() {
             }
           }
         } catch { /* Keep the basic settings. */ }
+        // After the task that called initialize, so that handlers registered
+        // right after the call are included.
+        if (readyHandlers) setTimeout(callReady, 0);
         if (rescuedSent && !recovered) { recovered = true; send('stalled', 'recovered'); }
-        // Started before the rescue was confirmed: no notice at all.
-        else if (!stalled) stalled = true;
+        // Started before the rescue was confirmed: no notice at all, once
+        // Reveal.js is ready; until then the check below still decides.
+        else if (!stalled) {
+          if (revealReady) stalled = true;
+          else lateStarted = true;
+        }
         return Promise.resolve(reveal);
       };
       try { Object.defineProperty(reveal, 'initialize', { configurable: true, writable: true, value: lateStart }); }
       catch { try { reveal.initialize = lateStart; } catch { /* Then the deck's call is refused, as before. */ } }
+      // Reveal.js 4 and later: the global is also the constructor. A late
+      // new Reveal(element, options) on the rescued element gives the running
+      // slides, whose initialize() is the late start above; another element
+      // gets a new deck as usual.
+      if (typeof (reveal as unknown) !== 'function') return;
+      try {
+        const root = typeof reveal.getRevealElement === 'function' ? reveal.getRevealElement() : undefined;
+        const Constructor = reveal as unknown as new (...values: unknown[]) => object;
+        const wrapped: typeof Constructor = new Proxy(Constructor, {
+          construct(target, values, newTarget): object {
+            const [element, settings] = values;
+            const node = typeof Node === 'function' && element instanceof Node;
+            const own = !!root && (element === root || (!node && settings === undefined && document.querySelector('.reveal') === root));
+            if (!own) return Reflect.construct(target, values, newTarget === wrapped ? target : newTarget);
+            const given = element === root ? settings : element;
+            const instance = Object.create(reveal) as Record<string, unknown>;
+            instance.initialize = (more?: unknown) => lateStart({ ...(given && typeof given === 'object' ? given : {}), ...(more && typeof more === 'object' ? more : {}) });
+            return instance;
+          },
+        });
+        (window as { Reveal?: unknown }).Reveal = wrapped;
+      } catch { /* Then a second deck starts on the same element, as before. */ }
     };
     const rescue = () => {
       if (stalled || revealReady || !sawError) return;
@@ -847,10 +1174,16 @@ function presentationRuntimeFactory() {
       } catch { started = false; }
       if (!started) { stall('blank'); return; }
       // Say 'rescued' only once Reveal.js reports ready, so the host never
-      // promises slides that do not show.
-      if (revealReady) { stall('rescued'); return; }
-      document.addEventListener('ready', () => { if (revealReady) stall('rescued'); });
-      setTimeout(() => stall(revealReady ? 'rescued' : 'blank'), 3000);
+      // promises slides that do not show; nothing if the deck has started
+      // itself late by then.
+      const settle = () => {
+        if (stalled) return;
+        if (revealReady && lateStarted) { stalled = true; return; }
+        stall(revealReady ? 'rescued' : 'blank');
+      };
+      if (revealReady) { settle(); return; }
+      document.addEventListener('ready', () => { if (revealReady) settle(); });
+      setTimeout(settle, 3000);
     };
     window.addEventListener('load', () => {
       // Module scripts finish before load. Two animation frames allow Vue's
@@ -935,7 +1268,7 @@ function presentationRuntimeFactory() {
     // policy intersects with the first and restricts all execution to inline code.
     const inlineOnly = "script-src 'unsafe-inline'; script-src-attr 'none'";
     const revealCheck = tolerant && options?.startCheck === 'reveal';
-    const setup = `(()=>{const __name=(value)=>value;(${presentationBootstrap.toString()})(${JSON.stringify(token)},${tolerant},${revealCheck});})();`.replace(/<\/script/gi, '<\\/script');
+    const setup = `(()=>{const __name=(value)=>value;(${presentationBootstrap.toString()})(${JSON.stringify(token)},${tolerant},${revealCheck},${presentationHostName.toString()});})();`.replace(/<\/script/gi, '<\\/script');
     const escapeAttribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     // Template parsing discards the html and body tags, so read their
     // attributes with the browser's own parser in an inert document, which
@@ -967,44 +1300,57 @@ function presentationRuntimeFactory() {
    */
   function presentationLimit(detail: unknown): PresentationLimit | undefined {
     if (typeof detail !== 'string' || detail.length > 300) return undefined;
-    const match = /^([a-z-]{1,20})(?: ([a-z0-9.-]{1,253}(?::\d{1,5})?))?$/.exec(detail);
+    const match = /^([a-z-]{1,20})(?: (\S{1,259}))?$/.exec(detail);
     if (!match) return undefined;
     const code = match[1] as PresentationLimitCode;
     const host = match[2];
+    if (host !== undefined && !presentationHostName(host)) return undefined;
+    // What happened, then what to do: "Ask your AI assistant to ...", since
+    // the teacher cannot add files to the presentation here.
     const fixed: Partial<Record<PresentationLimitCode, string>> = {
       question: 'The presentation asked a question in a pop-up window. The player cannot show those, so the question got no answer. Ask your AI assistant to put the question on the slide instead.',
       'new-window': 'The presentation tried to open a new window, which the player cannot do. Ask your AI assistant to show that content on a slide instead.',
       'speaker-view': 'The speaker view (S key) is not available in the player.',
-      print: 'The presentation tried to print, which the player cannot do. Ask your AI assistant for a printable copy of the slides, for example a PDF.',
-      'missing-picture': 'A picture could not be shown. It may be missing from the ZIP or damaged: check the file, then make the ZIP again.',
-      'missing-media': 'A video or sound could not be played. It may be missing from the ZIP or in a format this browser cannot play: check the file, then make the ZIP again.',
-      'missing-file': 'A file that the presentation uses could not be loaded. It may be missing from the ZIP: check the file, then make the ZIP again.',
+      print: "The presentation tried to print, which the player cannot do. To print the slides, open the presentation's own file in your web browser and print from there.",
+      form: 'The presentation tried to send a form, which the player cannot do because it works offline. Ask your AI assistant to check the answers with a script on the slide instead.',
+      'missing-picture': 'A picture could not be shown: its file is missing or damaged. Ask your AI assistant to check that file and include it in the presentation.',
+      'missing-media': 'A video or sound could not be played: its file is missing, damaged or in a format this browser cannot play. Ask your AI assistant to check that file and include it in the presentation.',
+      'missing-file': 'A file that the presentation uses could not be loaded: it is missing or damaged. Ask your AI assistant to check that file and include it in the presentation.',
       'failed-step': "A step in the presentation's code failed without saying why. If something on the slides does not work, ask your AI assistant to check the presentation's scripts.",
       'link-too-long': 'A link in the presentation is too long to offer here. Ask your AI assistant for a shorter link.',
     };
     // Files from the internet: with the host name where the address had one.
     const remote: Partial<Record<PresentationLimitCode, [string, string]>> = {
-      'blocked-picture': [`A picture from ${host} needs the internet, so it is not shown. Put the file in the ZIP.`,
-        'A picture could not be loaded, because the player works offline. Put the file in the ZIP.'],
-      'blocked-font': [`A font from ${host} needs the internet, so the slides use a font installed on this device instead. Put the font file in the ZIP if it matters.`,
-        'A font could not be loaded, so the slides use a font installed on this device instead.'],
-      'blocked-style': [`A stylesheet from ${host} needs the internet, so it is left out and the slides may look different. Put the file in the ZIP.`,
+      'blocked-picture': [`A picture from ${host} needs the internet, so it is not shown. Ask your AI assistant to put the picture inside the presentation.`,
+        'A picture could not be loaded, because the player works offline. Ask your AI assistant to put the picture inside the presentation.'],
+      'blocked-font': [`A font from ${host} needs the internet, so the slides use a font installed on this device instead. If the font matters, ask your AI assistant to put it inside the presentation.`,
+        'A font could not be loaded, so the slides use a font installed on this device instead. If the font matters, ask your AI assistant to put it inside the presentation.'],
+      'blocked-style': [`A stylesheet from ${host} needs the internet, so it is left out and the slides may look different. Ask your AI assistant to put the styles inside the presentation.`,
         'A stylesheet could not be loaded, so the slides may look different. Ask your AI assistant to put the styles inside the presentation.'],
-      'blocked-script': [`A script from ${host} needs the internet, so it did not run. Put the file in the ZIP.`,
+      'blocked-script': [`A script from ${host} needs the internet, so it did not run. Ask your AI assistant to put the script inside the presentation.`,
         'The player stopped some code of the presentation from running (for example eval or an inline event handler). Ask your AI assistant to put all code in ordinary script elements and attach actions with addEventListener.'],
-      'blocked-media': [`A video or sound from ${host} needs the internet, so it does not play. Put the file in the ZIP.`,
-        'A video or sound could not be loaded, because the player works offline. Put the file in the ZIP.'],
-      'blocked-request': [`The presentation tried to load data from ${host}. The player works offline, so the request was stopped. If the slides need that data, ask your AI assistant to put it inside the presentation.`,
-        'The presentation tried to load data. The player works offline, so the request was stopped. If the slides need that data, ask your AI assistant to put it inside the presentation.'],
+      'blocked-media': [`A video or sound from ${host} needs the internet, so it does not play. Ask your AI assistant to put the video or sound inside the presentation.`,
+        'A video or sound could not be loaded, because the player works offline. Ask your AI assistant to put the video or sound inside the presentation.'],
+      'blocked-request': [`The presentation tried to load data from ${host}. The player works offline, so the request was stopped. Ask your AI assistant to put the data inside the presentation.`,
+        'The presentation tried to load data. The player works offline, so the request was stopped. Ask your AI assistant to put the data inside the presentation.'],
       'blocked-page': [`A page from ${host} is embedded in a slide. The player works offline, so it is not shown. Ask your AI assistant to show a picture or a link instead.`,
-        'A page is embedded in a slide. The player cannot show embedded pages. Ask your AI assistant to show a picture or a link instead.'],
-      'blocked-other': [`The presentation tried to load a file from ${host}. The player works offline, so it was not loaded. Put the file in the ZIP.`,
-        'The player stopped something that the presentation tried to load or run. Ask your AI assistant to keep everything the slides need inside the ZIP.'],
+        'A page is embedded in a slide. The player works offline, so it is not shown. Ask your AI assistant to show a picture or a link instead.'],
+      'blocked-other': [`The presentation tried to load a file from ${host}. The player works offline, so it was not loaded. Ask your AI assistant to put the file inside the presentation.`,
+        'The player stopped something that the presentation tried to load or run. Ask your AI assistant to keep everything the slides need inside the presentation.'],
     };
     const pair = Object.prototype.hasOwnProperty.call(remote, code) ? remote[code] : undefined;
     if (pair) return { code, ...(host ? { host } : {}), text: host ? pair[0] : pair[1], counted: true };
     const text = !host && Object.prototype.hasOwnProperty.call(fixed, code) ? fixed[code] : undefined;
-    return text ? { code, text, counted: code !== 'speaker-view' } : undefined;
+    // Information about the player, no fault of the presentation: listed, not counted.
+    return text ? { code, text, counted: code !== 'speaker-view' && code !== 'print' } : undefined;
+  }
+
+  /**
+   * The player's own sentence when the presentation replaced itself with a
+   * page at another address (see onLeft); `next` says how to play it again.
+   */
+  function presentationLeftText(host: string | undefined, next: string): string {
+    return `The presentation tried to replace its slides with a page${host ? ` from ${host}` : ''}, so the player stopped it. ${next} Ask your AI assistant to use an ordinary link for that page.`;
   }
 
   /** "h/v" or "h/v/f", digits only: a slide position the player can restore. */
@@ -1035,6 +1381,8 @@ function presentationRuntimeFactory() {
     let stalled: PresentationStall | undefined;
     let recovered = false;
     let links = 0;
+    // Set when the deck left its frame: nothing more of that playback counts.
+    let ended = false;
     const limits = new Set<string>();
     const setState = (value: PresentationPlayerState) => { state = value; options.onState?.(value); };
     const nonce = () => [...crypto.getRandomValues(new Uint8Array(18))].map((value) => value.toString(16).padStart(2, '0')).join('');
@@ -1064,7 +1412,7 @@ function presentationRuntimeFactory() {
     const start = (startOptions?: PresentationStartOptions) => {
       if (disposed) return;
       stop(); errors = 0; warnings = 0; reportedPosition = ''; reportedSlides = -1;
-      lastWarning = undefined; stalled = undefined; recovered = false; links = 0; limits.clear();
+      lastWarning = undefined; stalled = undefined; recovered = false; links = 0; ended = false; limits.clear();
       const requested = startOptions?.position;
       const restore = isPresentationPosition(requested) ? requested : undefined;
       position = restore;
@@ -1107,10 +1455,21 @@ function presentationRuntimeFactory() {
     window.addEventListener('message', (event) => {
       if (!frame || event.source !== frame.contentWindow || !event.data || typeof event.data !== 'object') return;
       const message = event.data;
-      if (message.qftPresentation !== 1 || message.token !== token) return;
+      if (message.qftPresentation !== 1 || message.token !== token || ended) return;
       const kind = message.kind;
       const detail: unknown = message.detail;
-      if (kind === 'ready' && state === 'loading') {
+      if (kind === 'left') {
+        // Only the runner sends this (it never relays one from the deck),
+        // but check its detail again: a plain host name, or nothing.
+        if (typeof detail !== 'string' || (detail !== '' && !presentationHostName(detail))) return;
+        ended = true;
+        if (timeout !== undefined) window.clearTimeout(timeout);
+        timeout = undefined;
+        const host = detail || undefined;
+        const activation = typeof navigator === 'undefined' ? undefined : navigator.userActivation;
+        if (tolerant && options.onLeft) options.onLeft({ ...(host ? { host } : {}), active: activation?.isActive === true });
+        else fail(presentationLeftText(host, 'Choose Start to play it again.'), 'player');
+      } else if (kind === 'ready' && state === 'loading') {
         if (timeout !== undefined) window.clearTimeout(timeout);
         timeout = undefined;
         setState('ready');
@@ -1186,6 +1545,8 @@ function presentationRuntimeFactory() {
     runnerDocument: presentationRunnerDocument,
     isPosition: isPresentationPosition,
     limit: presentationLimit,
+    hostName: presentationHostName,
+    leftText: presentationLeftText,
   };
 }
 
@@ -1205,6 +1566,16 @@ export function preparePresentationDocument(html: string, token: string, scriptN
  */
 export function describePresentationLimit(detail: unknown): PresentationLimit | undefined {
   return presentationRuntimeFactory().limit(detail);
+}
+
+/**
+ * The strict host check for host names in the player's own sentences: DNS
+ * labels of a-z, 0-9 and "-" (1 to 63 characters, no dash at either end),
+ * at least two labels or "localhost", at most 253 characters, and an
+ * optional port from 1 to 65535.
+ */
+export function presentationHostName(value: unknown): boolean {
+  return presentationRuntimeFactory().hostName(value);
 }
 
 /** "h/v" or "h/v/f", digits only: a slide position that start() and update() accept. */
@@ -1228,6 +1599,8 @@ export function presentationRuntimeSource(): string {
  * fullscreen requests (F in Reveal.js) work as the Fullscreen button does.
  */
 /** The standalone copy has no notes or report, so its next step differs from the library's. */
+/** The export page's own sentence when the deck replaced itself with another page, split where the host goes. */
+const EXPORT_LEFT_TEXT = ['The presentation tried to replace its slides with a page', ', so the player stopped it. Choose Start presentation to play it again. Ask your AI assistant to use an ordinary link for that page.'] as const;
 const EXPORT_STALL_NEXT = 'Open the presentation in the library of md.qft.org to see the notes from the check, or ask your AI assistant for a corrected version.';
 
 export function exportPresentationHtml(html: string, title: string, options: PresentationExportOptions = {}): string {
@@ -1244,6 +1617,6 @@ export function exportPresentationHtml(html: string, title: string, options: Pre
   const noticeSection = notices.length
     ? `<details id="notices"><summary>Third-party notices</summary><div class="notices"><p>This copy contains the code and fonts listed here. Their licences ask for these notices to travel with every copy.</p>${notices.join('')}</div></details>`
     : '';
-  const script = `const createPlayer=${presentationRuntimeSource()};const host=document.getElementById('presentation');const status=document.getElementById('status');const start=document.getElementById('start');const stop=document.getElementById('stop');const fullscreen=document.getElementById('fullscreen');const placeholder=document.getElementById('placeholder');const problem=document.getElementById('problem');const stalled=document.getElementById('stalled');const rescued=document.getElementById('rescued');const link=document.getElementById('link');const linkText=document.getElementById('link-text');const linkParts=(()=>{const __name=(value)=>value;return (${linkParts.toString()});})();let linkUrl;let linkTimer;let rescuedDue=false;let blank=false;const live='Live · use the slide controls or arrow keys';const showNotices=()=>{link.hidden=!linkUrl;rescued.hidden=!!linkUrl||!rescuedDue;};const hideLink=()=>{window.clearTimeout(linkTimer);linkUrl=undefined;showNotices();};const startedLate=()=>{if(!blank)return;blank=false;stalled.hidden=true;status.textContent=live;};document.getElementById('link-open').addEventListener('click',()=>{const url=linkUrl;hideLink();if(url)window.open(url.href,'_blank','noopener,noreferrer');player.focus();});document.getElementById('link-dismiss').addEventListener('click',()=>{hideLink();player.focus();});document.getElementById('rescued-dismiss').addEventListener('click',()=>{rescuedDue=false;showNotices();player.focus();});const player=createPlayer(host,${json(html)},{title:${json(title)},scriptNonce:${json(nonce)},profile:${json(profile)},${startCheck ? `startCheck:${json(startCheck)},` : ''}onState(state){start.textContent=state==='stopped'?'Start presentation':'Restart';stop.disabled=state==='stopped';status.textContent=state==='stopped'?'Ready to present · works offline':state==='loading'?'Opening presentation…':state==='ready'?live:'Presentation needs attention';placeholder.hidden=state==='loading'||state==='ready';if(state!=='error')problem.hidden=true;if(state==='loading'||state==='stopped'){blank=false;stalled.hidden=true;rescuedDue=false;hideLink();}},onStalled(detail,first){if(detail==='recovered'){rescuedDue=false;showNotices();return;}if(detail==='rescued'){rescuedDue=true;showNotices();return;}blank=true;const intro=document.createElement('p');intro.textContent=${json(STALL_BLANK_TEXT)};const lines=[intro];if(first){const line=document.createElement('p');const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=first;line.append(label,quote);lines.push(line);}const next=document.createElement('p');next.textContent=${json(EXPORT_STALL_NEXT)};lines.push(next);stalled.replaceChildren(...lines);stalled.hidden=false;status.textContent='The slides did not start';},onPosition(){hideLink();startedLate();},onSlides(){startedLate();},onLink(url){if(!player.isRunning())return;const parts=linkParts(url);const strong=document.createElement('strong');strong.textContent=parts.host;linkText.replaceChildren('The presentation links to ',strong,parts.rest,parts.shortened?'':'.');linkUrl=url;window.clearTimeout(linkTimer);linkTimer=window.setTimeout(hideLink,20000);showNotices();},onError(message,origin){problem.replaceChildren();if(origin==='presentation'){const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=message;problem.append(label,quote);}else problem.textContent=message;problem.hidden=false;},onEscape(){if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});},onFullscreenRequest(request){void setFullscreen(request==='enter');}});async function setFullscreen(enter){try{if(enter&&!document.fullscreenElement)await document.getElementById('stage').requestFullscreen();else if(!enter&&document.fullscreenElement)await document.exitFullscreen();player.focus();}catch{status.textContent='Fullscreen is unavailable. Use the browser fullscreen command.';}}start.addEventListener('click',()=>player.start());stop.addEventListener('click',()=>player.stop());fullscreen.addEventListener('click',()=>{if(!player.isRunning())player.start();void setFullscreen(!document.fullscreenElement);});window.addEventListener('pagehide',()=>player.destroy(),{once:true});`;
+  const script = `const createPlayer=${presentationRuntimeSource()};const host=document.getElementById('presentation');const status=document.getElementById('status');const start=document.getElementById('start');const stop=document.getElementById('stop');const fullscreen=document.getElementById('fullscreen');const placeholder=document.getElementById('placeholder');const problem=document.getElementById('problem');const stalled=document.getElementById('stalled');const rescued=document.getElementById('rescued');const link=document.getElementById('link');const linkText=document.getElementById('link-text');const linkParts=(()=>{const __name=(value)=>value;return (${linkParts.toString()});})();const leftText=(host)=>${json(EXPORT_LEFT_TEXT[0])}+(host?' from '+host:'')+${json(EXPORT_LEFT_TEXT[1])};let linkUrl;let linkTimer;let rescuedDue=false;let blank=false;const live='Live · use the slide controls or arrow keys';const showNotices=()=>{link.hidden=!linkUrl;rescued.hidden=!!linkUrl||!rescuedDue;};const hideLink=()=>{window.clearTimeout(linkTimer);linkUrl=undefined;showNotices();};const startedLate=()=>{if(!blank)return;blank=false;stalled.hidden=true;status.textContent=live;};document.getElementById('link-open').addEventListener('click',()=>{const url=linkUrl;hideLink();if(url)window.open(url.href,'_blank','noopener,noreferrer');player.focus();});document.getElementById('link-dismiss').addEventListener('click',()=>{hideLink();player.focus();});document.getElementById('rescued-dismiss').addEventListener('click',()=>{rescuedDue=false;showNotices();player.focus();});const player=createPlayer(host,${json(html)},{title:${json(title)},scriptNonce:${json(nonce)},profile:${json(profile)},${startCheck ? `startCheck:${json(startCheck)},` : ''}onState(state){start.textContent=state==='stopped'?'Start presentation':'Restart';stop.disabled=state==='stopped';status.textContent=state==='stopped'?'Ready to present · works offline':state==='loading'?'Opening presentation…':state==='ready'?live:'Presentation needs attention';placeholder.hidden=state==='loading'||state==='ready';if(state!=='error')problem.hidden=true;if(state==='loading'||state==='stopped'){blank=false;stalled.hidden=true;rescuedDue=false;hideLink();}},onStalled(detail,first){if(detail==='recovered'){rescuedDue=false;showNotices();return;}if(detail==='rescued'){rescuedDue=true;showNotices();return;}blank=true;const intro=document.createElement('p');intro.textContent=${json(STALL_BLANK_TEXT)};const lines=[intro];if(first){const line=document.createElement('p');const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=first;line.append(label,quote);lines.push(line);}const next=document.createElement('p');next.textContent=${json(EXPORT_STALL_NEXT)};lines.push(next);stalled.replaceChildren(...lines);stalled.hidden=false;status.textContent='The slides did not start';},onPosition(){hideLink();startedLate();},onSlides(){startedLate();},onLink(url){if(!player.isRunning())return;const parts=linkParts(url);const strong=document.createElement('strong');strong.textContent=parts.host;linkText.replaceChildren('The presentation links to ',strong,parts.rest,parts.shortened?'':'.');linkUrl=url;window.clearTimeout(linkTimer);linkTimer=window.setTimeout(hideLink,20000);showNotices();},onError(message,origin){problem.replaceChildren();if(origin==='presentation'){const label=document.createElement('strong');label.textContent='The presentation reported: ';const quote=document.createElement('q');quote.textContent=message;problem.append(label,quote);}else problem.textContent=message;problem.hidden=false;},onLeft(left){player.stop();problem.textContent=leftText(left.host);problem.hidden=false;},onEscape(){if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});},onFullscreenRequest(request){void setFullscreen(request==='enter');}});async function setFullscreen(enter){try{if(enter&&!document.fullscreenElement)await document.getElementById('stage').requestFullscreen();else if(!enter&&document.fullscreenElement)await document.exitFullscreen();player.focus();}catch{status.textContent='Fullscreen is unavailable. Use the browser fullscreen command.';}}start.addEventListener('click',()=>player.start());stop.addEventListener('click',()=>player.stop());fullscreen.addEventListener('click',()=>{if(!player.isRunning())player.start();void setFullscreen(!document.fullscreenElement);});window.addEventListener('pagehide',()=>player.destroy(),{once:true});`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src 'self' blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'; script-src-attr 'none'"><title>${escape(title)}</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f6f4f0;color:#292626;font:14px/1.5 system-ui,sans-serif}header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid #e1ddd7;min-height:52px}h1{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}nav{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;border:1px solid #d3cdc4;border-radius:6px;background:#fff;padding:7px 12px;cursor:pointer}nav button:first-child{background:#773b49;border-color:#773b49;color:#fff}button:disabled{opacity:.5;cursor:default}button:focus-visible{outline:3px solid #b17683;outline-offset:3px}#stage{position:relative;display:flex;flex-direction:column;height:calc(100dvh - 96px);min-height:240px;background:#fff}#stage:fullscreen{height:100dvh;width:100vw}#presentation{position:relative;flex:1;min-height:0;width:100%}#strips{position:absolute;top:0;left:0;right:0;height:50%;z-index:3;display:flex;flex-direction:column;overflow:hidden;pointer-events:none}.strip{flex:0 1 auto;min-height:0;display:flex;align-items:stretch;gap:6px 14px;padding:7px 14px;background:#f6efdc;color:#4a3a14;border-bottom:1px solid #d6c08f;box-shadow:0 4px 14px #0004;font-size:13px;pointer-events:auto}.strip[hidden]{display:none}.strip p{flex:1 1 auto;min-width:0;min-height:0;max-height:100%;margin:0;overflow-y:auto;overflow-wrap:anywhere;align-self:center}.strip div{flex:none;display:flex;gap:8px;align-items:center;align-self:center}.strip button{padding:4px 10px}.strip button.open{background:#773b49;border-color:#773b49;color:#fff}#stalled{position:absolute;top:16px;left:50%;transform:translateX(-50%);width:min(640px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;z-index:2;margin:0;padding:12px 16px;border:1px solid #cf8796;border-left-width:4px;border-radius:6px;background:#fff0f3;color:#84283d;overflow-wrap:anywhere;box-shadow:0 8px 28px #0003}#stalled[hidden]{display:none}#stalled p{margin:0}#stalled p+p{margin-top:8px}#placeholder{position:absolute;inset:0;display:grid;place-content:center;padding:30px;text-align:center;pointer-events:none}#placeholder[hidden]{display:none}#placeholder>strong{font-size:clamp(22px,4vw,42px);font-weight:600}#problem{max-width:640px;margin:8px auto 0;padding:12px 16px;border:1px solid #cf8796;border-radius:6px;background:#fff0f3;color:#84283d;overflow-wrap:anywhere}#problem[hidden]{display:none}footer{display:flex;flex-wrap:wrap;align-items:center;gap:0 16px;padding:0 18px;min-height:44px;font-size:12px}#status{flex:1 1 240px;margin:0;padding:10px 0}#notices summary{cursor:pointer;padding:10px 0;color:#5d5855}#notices summary:focus-visible{outline:3px solid #b17683;outline-offset:3px}#notices[open]{flex-basis:100%;padding-bottom:18px}#notices .notices{max-height:60vh;overflow:auto;border:1px solid #e1ddd7;border-radius:6px;background:#fff;padding:4px 14px}#notices h2{font-size:13px;margin:14px 0 6px}#notices pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}@media(max-width:600px){header{flex-wrap:wrap}h1{flex-basis:100%}#stage{height:calc(100dvh - 140px)}.strip{gap:8px;padding:5px 8px;font-size:12px}.strip div{flex-direction:column;align-items:stretch;gap:4px}}</style></head><body><header><h1>${escape(title)}</h1><nav aria-label="Presentation controls"><button id="start">Start presentation</button><button id="stop" disabled>Stop</button><button id="fullscreen">Fullscreen</button></nav></header><main id="stage"><div id="strips"><div class="strip" id="rescued" role="status" hidden><p>${escape(STALL_RESCUED_TEXT)}</p><div><button type="button" id="rescued-dismiss">Dismiss</button></div></div><div class="strip" id="link" role="status" hidden><p id="link-text"></p><div><button type="button" class="open" id="link-open">Open link in a new tab</button><button type="button" id="link-dismiss">Dismiss</button></div></div></div><div id="presentation"></div><div id="stalled" role="alert" hidden></div><div id="placeholder"><strong>${escape(title)}</strong><p>Choose Start presentation to run the interactive slides.</p><p id="problem" role="alert" hidden></p></div></main><footer><p id="status" role="status" aria-live="polite">Ready to present · works offline</p>${noticeSection}</footer><script nonce="${nonce}">${script.replace(/<\/script/gi, '<\\/script')}</script></body></html>`;
 }
