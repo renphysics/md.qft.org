@@ -57,6 +57,8 @@ test('ordinary Markdown, a blog post, Marp slides and the examples of this site 
   assert.equal(looksLikeSlidevSource(''), false);
   assert.equal(looksLikeSlidevSource('# Notes\n\nPlain text.\n\n---\n\n## Second slide\n\n$$E = mc^2$$\n'), false);
   assert.equal(looksLikeSlidevSource('---\nlayout: post\ntitle: Hello\ndate: 2026-01-02\ncategories: physics\n---\n\n# Hello\n\nText.\n'), false, 'a blog post');
+  // Two of Slidev's keys in the document's own front matter are not a slide's block (closing check Y3.3: nothing pinned this).
+  assert.equal(looksLikeSlidevSource('---\nlayout: post\ntitle: Hello\ntheme: minima\n---\n\n# Hello\n\nText.\n'), false, 'a Jekyll post with a theme');
   assert.equal(looksLikeSlidevSource('---\nmarp: true\ntheme: gaia\nclass: lead\ntransition: fade\nbackground: white\n---\n\n# Marp\n\n---\n\n<!-- _class: lead -->\n\n# End\n'), false, 'Marp says what it is');
   assert.equal(looksLikeSlidevSource('---\ntheme: default\ntitle: Waves\n---\n\n# Waves\n\n---\n\n## Second\n\nText.\n'), false, 'one setting alone is not enough');
   assert.equal(looksLikeSlidevSource('# An HTML table\n\n<DIV>\n\n<Details>\n\ntext\n'), false, 'one capitalised tag alone is not enough');
@@ -89,6 +91,24 @@ test('both sentences say what the text is, what happens to it here, and what pla
     assert.match(text, /show as text/);
     assert.match(text, /run "npx slidev build" in its project and open a ZIP of the project \(with dist\/ inside\), or ask your AI assistant for the built presentation\.$/);
     assert.doesNotMatch(text, /deck/i);
+  }
+});
+
+test('a component line is still told from an HTML tag', () => {
+  const withLine = (line: string) => `---\ntheme: seriph\nlayout: cover\n---\n\n# Talk\n\n${line}\n`;
+  for (const line of ['<Counter :start="1" />', '<Counter/>', '  <Tweet id="20">', '<A1 />', '<Ab>', `<A${'b'.repeat(81)} />`]) assert.equal(looksLikeSlidevSource(withLine(line)), true, line);
+  for (const line of ['<div class="x">', '<A>', '<ABC />', '<a1 />', 'See <Counter /> here', '<Counter', `<A${'b'.repeat(82)} />`]) assert.equal(looksLikeSlidevSource(withLine(line)), false, line);
+});
+
+test('one long odd line takes time in proportion to its length (closing check Y2.1)', () => {
+  // The first two took 13 s at 100,000 characters in the browser: the tab froze when such a file was opened.
+  const lines = ['<A' + 'a'.repeat(390_000), '<A' + '1'.repeat(390_000), '<Ab>' + ' '.repeat(390_000) + 'x', ' '.repeat(390_000) + 'x', '<Ab ' + 'x="1" '.repeat(65_000),
+    '<Ab\n'.repeat(97_000), ('<Ab ' + 'x'.repeat(299) + '\n').repeat(1300), '---\nlayout: x\n' + 'a'.repeat(390_000), '---\nlayout: x\n' + 'a-b '.repeat(97_000) + ': c'];
+  for (const line of lines) {
+    const started = performance.now();
+    looksLikeSlidevSource(`# Notes\n\n${line}\n`);
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 1000, `${line.slice(0, 20)}…: ${Math.round(elapsed)} ms`);
   }
 });
 

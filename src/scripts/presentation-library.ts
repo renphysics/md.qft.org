@@ -792,9 +792,18 @@ export class PresentationLibrary extends HTMLElement {
     let operation = this.operation;
     try {
       // Chosen from the open library: say at once that the file is being read.
-      if (this.q<HTMLDialogElement>('[data-pres-dialog]').open) this.notice(`Opening ${visiblePath(file.name).slice(0, 120)}…`);
-      const deckProject = await import('../lib/deck-project');
-      const project = await deckProject.openDeck(file);
+      const announced = this.q<HTMLDialogElement>('[data-pres-dialog]').open;
+      if (announced) this.notice(`Opening ${visiblePath(file.name).slice(0, 120)}…`);
+      let deckProject: typeof import('../lib/deck-project');
+      let project: Awaited<ReturnType<typeof deckProject.openDeck>>;
+      try {
+        deckProject = await import('../lib/deck-project');
+        project = await deckProject.openDeck(file);
+      } catch (error) {
+        // The caller says why the file was refused (a ZIP with too many files, a damaged one): the dialog must not go on saying that it is opening.
+        if (announced && operation === this.operation) this.notice();
+        throw error;
+      }
       if (!project) { this.notice(); return false; }
       if (operation !== this.operation) return true;
       // A presentation dropped on the open one would replace it: ask first, as Close does.

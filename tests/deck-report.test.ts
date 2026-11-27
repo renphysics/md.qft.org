@@ -277,7 +277,7 @@ describe('advice for a presentation opened as one HTML file', () => {
   // (The detection's notes about files from the internet or missing from the ZIP are replaced by the linker's for such a file.)
   const cases: [code: string, html: string, today: string, advice: string][] = [
     ['missing-file', reveal('', '<img src="pics/missing.png">'), ' Add the file to the ZIP.',
-      ' Put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.'],
+      ' Ask your AI assistant to put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.'],
     ['es-modules-unsupported', reveal('', '', '<script type="module">import { x } from "https://example.org/x.mjs"; console.log(x);</script><script>Reveal.initialize();</script>'),
       ' directly in index.html.', ' directly in the HTML file.'],
     ['es-modules-unsupported', reveal('', '', '<script type="module">import Menu from "reveal-menu"; Reveal.initialize({ plugins: [Menu] });</script>'),

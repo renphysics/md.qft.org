@@ -37,9 +37,11 @@ const SLIDE_FRONTMATTER = /^---[ \t]*\r?\n(?:layout|class|transition|clicks|back
 
 /**
  * A line that is only a component tag in Vue's spelling, such as
- * `<Counter :start="1" />`. HTML tags are not written this way.
+ * `<Counter :start="1" />`. HTML tags are not written this way. The name is
+ * one bounded run: two runs that can share the same letters took time with
+ * the square of a long line (closing check Y2.1).
  */
-const COMPONENT_LINE = /^[ \t]*<[A-Z][a-z0-9]+[A-Za-z0-9]*(?:\s[^<>\n]{0,300})?\/?>[ \t]*$/m;
+const COMPONENT_LINE = /^[ \t]*<[A-Z][a-z0-9][A-Za-z0-9]{0,80}(?:\s[^<>\n]{0,300})?\/?>[ \t]*$/m;
 
 /**
  * The text with the lines inside fenced code blocks emptied (the fence lines
