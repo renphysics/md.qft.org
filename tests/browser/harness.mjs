@@ -113,6 +113,19 @@ export async function startPreview() {
 /**
  * Per-suite state: named steps, observed pages, and the error, console,
  * failed-request, and external-request records that every suite must keep empty.
+ *
+ * A request that the browser cancels because the suite itself closed its page
+ * is not a failed resource. The Check workflow's first run on GitHub failed
+ * the `slides` suite with one aborted request, for a font that the HTML
+ * export fetches, waits for and embeds, in a step that closes its page as
+ * soon as the download is saved. What was measured here: a page has all of a
+ * fetched file a moment before the browser reports the request as finished;
+ * while the page is busy that report does not come, and when the page is then
+ * closed the Chromium build on this machine reports nothing at all. The build
+ * on GitHub's runner evidently reports the request as aborted. Such requests
+ * are listed in `closedWhileLoading` and do not fail a suite. Every failed
+ * request is recorded with its step, page and kind, so that the results file
+ * alone says where it came from.
  */
 export class SuiteContext {
   constructor({ browser, baseUrl, artifacts, name }) {
@@ -124,7 +137,11 @@ export class SuiteContext {
     this.pageErrors = [];
     this.consoleErrors = [];
     this.failedRequests = [];
+    this.closedWhileLoading = [];
     this.externalRequests = [];
+    /** Pages and contexts that the suite has asked to close. */
+    this.closing = new WeakSet();
+    this.currentStep = undefined;
     this.observedPages = [];
     this.contexts = [];
     this.allowedConsole = [];
@@ -134,6 +151,7 @@ export class SuiteContext {
 
   /** Run one named, user-visible behaviour. */
   async step(name, action) {
+    this.currentStep = name;
     await action();
     this.checks.push(name);
     console.log(`PASS ${this.name}: ${name}`);
@@ -151,8 +169,24 @@ export class SuiteContext {
    */
   allowBlockedRequest(pattern) { this.allowedBlockedRequests.push(pattern); }
 
+  /** Remember when the suite itself asks for a page or a context to close. */
+  noteClose(target) {
+    const close = target.close.bind(target);
+    target.close = (...parameters) => {
+      this.closing.add(target);
+      return close(...parameters);
+    };
+    return target;
+  }
+
+  /** True once the suite has asked for this page, or its context, to close. */
+  isClosing(page) {
+    return this.closing.has(page) || this.closing.has(page.context()) || page.isClosed();
+  }
+
   observe(page) {
     this.observedPages.push(page);
+    this.noteClose(page);
     page.on('pageerror', error => {
       if (this.allowedPageErrors.some(pattern => pattern.test(error.message))) return;
       this.pageErrors.push({ page: page.url(), message: error.message });
@@ -166,7 +200,10 @@ export class SuiteContext {
     page.on('requestfailed', request => {
       const error = request.failure()?.errorText;
       if (error === 'csp' && this.allowedBlockedRequests.some(pattern => pattern.test(request.url()))) return;
-      this.failedRequests.push({ url: request.url(), error });
+      // Enough to tell from the results alone where a failure came from.
+      const record = { url: request.url(), error, step: this.currentStep, resource: request.resourceType(), method: request.method(), page: page.url() };
+      if (error === 'net::ERR_ABORTED' && this.isClosing(page)) this.closedWhileLoading.push(record);
+      else this.failedRequests.push(record);
     });
     return page;
   }
@@ -176,7 +213,7 @@ export class SuiteContext {
    * so a CDN dependency is reported instead of silently loaded.
    */
   async newContext(options = {}) {
-    const context = await this.browser.newContext({ viewport: { width: 1440, height: 1000 }, ...options });
+    const context = this.noteClose(await this.browser.newContext({ viewport: { width: 1440, height: 1000 }, ...options }));
     this.contexts.push(context);
     const allowedOrigin = new URL(this.baseUrl).origin;
     await context.route('**/*', route => {
@@ -222,6 +259,7 @@ export class SuiteContext {
     return {
       checks: this.checks, pageErrors: this.pageErrors, consoleErrors: this.consoleErrors,
       failedRequests: this.failedRequests, externalRequests: this.externalRequests,
+      closedWhileLoading: this.closedWhileLoading,
     };
   }
 
