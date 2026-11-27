@@ -569,9 +569,11 @@ ${registrations}
  */
 export function scriptEventSource(type: 'load' | 'error', code: string, target?: string): string {
   const element = target === undefined ? 'document.currentScript' : `document.querySelector(${JSON.stringify(target)}) || document.currentScript`;
+  // The event parameter is the innermost scope, as in the browser: the
+  // element's own legacy event property must not hide it (review X3.6).
   return `(function (element) {
-  (function (event) { with (document) with (this) {
+  (function () { with (document) with (this) { (function (event) {
 ${code}
-} }).call(element, new Event(${JSON.stringify(type)}));
+}).call(this, new Event(${JSON.stringify(type)})); } }).call(element);
 })(${element});`;
 }

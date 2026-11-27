@@ -129,8 +129,9 @@ describe('onload of a replaced script', () => {
 
 describe('the script that runs the code', () => {
   it('calls the code once with this set to the target and an event of the type', () => {
-    const target = { id: 'replacement' };
-    const self = { id: 'self' };
+    // A script element has a legacy event property (an empty string) that must not hide the Event (review X3.6).
+    const target = { id: 'replacement', event: '' };
+    const self = { id: 'self', event: '' };
     class FakeEvent { constructor(readonly type: string) {} }
     const seen: unknown[] = [];
     const context = vm.createContext({
