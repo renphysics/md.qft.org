@@ -191,6 +191,14 @@ describe('linking the test decks', () => {
     assert.deepEqual(result.stats.largestAssets, [{ path: 'assets/pic.png', bytes: loadFixtureDeck('local-project').get('assets/pic.png')!.length }]);
   });
 
+  it('keeps a module script that divides after a postfix ++ (review of pull request 2)', async () => {
+    // Such a script was read as cut off, and left out whole with the note for unsupported imports.
+    const script = 'let frame = 0; function tick() { const seconds = frame++ / 60; document.title = String(seconds); } tick();';
+    const result = await link({ 'index.html': page(`<h1>Clock</h1><script type="module">${script}</script>`) }, { detection: { kind: 'html', engine: 'html' } });
+    assert.deepEqual(result.issues.filter((item) => item.code === 'es-modules-unsupported'), []);
+    assert.deepEqual(scripts(result.html).filter((item) => !item.marker).map((item) => [item.type, item.code]), [['module', script]]);
+  });
+
   it('reports the module deck as not playable instead of guessing', async () => {
     const result = await link(loadFixtureDeck('esm-project'));
     const issue = result.issues.find((item) => item.code === 'es-modules-unsupported');
@@ -703,6 +711,28 @@ describe('module import scanning', () => {
     const dynamic = scanModuleImports(code).imports.filter((item) => item.kind === 'dynamic');
     assert.deepEqual(dynamic.map((item) => item.callEnd === undefined ? undefined : code.slice(item.start, item.callEnd)),
       ['import(`./slide-1.js`)', 'import(name+("x"))', 'import("./c.js")', undefined]);
+  });
+
+  it('reads a slash after a postfix ++ or -- as a division (review of pull request 2)', () => {
+    // The slash was taken for the start of a regular expression, and the script for one that is cut off.
+    for (const code of [
+      'let n = 4; const half = n++ / 2;',
+      'let n = 4; const half = n-- / 2; console.log(half);',
+      'const t = frame++ / 60; const s = "a/b";',
+      'const r = list[i]++ / 2;',
+      'const r = (o.n)++ / 2;',
+      'const r = this.count-- / total;',
+    ]) assert.deepEqual(scanModuleImports(code), { imports: [], complete: true }, code);
+    // What follows such a division is read as code: an import is found, a string is a string.
+    const code = "let n = 1; const a = n++ / 2; import('./a.js'); const s = 'it/s'; import x from './x.js';";
+    assert.deepEqual(scanModuleImports(code).imports.map((item) => [item.kind, item.specifier]), [['dynamic', './a.js'], ['import', './x.js']]);
+    assert.deepEqual(scanStringLiterals("i++ / 2; const s = 'a/b';")?.map((item) => item.value), ['a/b']);
+    // A regular expression after an operator is still one, also after a prefix ++ or -- (odd, but valid):
+    // the quote inside each would otherwise open a string that never ends.
+    for (const code of ["const s = 'x' + /a+'/.source;", 'const r = /a/g; ++/b"/.lastIndex;', "const v = a++ + /c'/.test(s);", 'x = y - --/d`/.lastIndex;', 'return ++/e"/.lastIndex',
+      "const v = a + +/f'/.lastIndex;", "const w = a+-/g'/.lastIndex;"]) {
+      assert.equal(scanModuleImports(code).complete, true, code);
+    }
   });
 
   it('lists string literals and plain templates, but not tagged or substituted templates', () => {

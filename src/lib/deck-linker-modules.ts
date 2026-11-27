@@ -60,12 +60,19 @@ function tokenize(code: string): { tokens: Token[]; complete: boolean } {
   let position = 0;
   const length = code.length;
   const last = () => tokens[tokens.length - 1];
+  /** True when an expression can end with this token, so that a slash after it divides. */
+  const endsExpression = (token: Token) => token.type === 'name' ? !KEYWORDS_BEFORE_EXPRESSION.has(token.value)
+    : token.type === 'punct' ? token.value === ')' || token.value === ']' : true;
   const regexAllowed = () => {
     const previous = last();
     if (!previous) return true;
-    if (previous.type === 'name') return KEYWORDS_BEFORE_EXPRESSION.has(previous.value);
-    if (previous.type === 'punct') return previous.value !== ')' && previous.value !== ']';
-    return false;
+    if (!endsExpression(previous) && previous.type === 'punct' && (previous.value === '+' || previous.value === '-') && tokens.length > 2) {
+      // `n++ / 2`: two adjacent signs after an operand are a postfix operator, and the slash divides
+      // (review of pull request 2: the script was read as cut off inside a regular expression).
+      const sign = tokens[tokens.length - 2];
+      if (sign.type === 'punct' && sign.value === previous.value && sign.end === previous.start) return !endsExpression(tokens[tokens.length - 3]);
+    }
+    return !endsExpression(previous);
   };
   /** Reads template characters from `from` up to the closing backtick or the next ${. */
   const templatePart = (from: number): number | undefined => {
