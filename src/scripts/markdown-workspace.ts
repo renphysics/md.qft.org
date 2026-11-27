@@ -21,6 +21,7 @@ import { generateLessonPrompt, createStarterLesson, type LessonAIInput } from '.
 import { generateSlidevPrompt } from '../lib/slidev-prompt';
 import { generateRevealPrompt } from '../lib/reveal-prompt';
 import { checkLesson, formatLessonReport } from '../lib/lesson-check';
+import { looksLikeSlidevSource, SLIDEV_SOURCE_OPENED_TEXT } from '../lib/slidev-source';
 import type { LessonFileChange } from '../lib/lesson-revision';
 import type { WorkspaceBundle } from '../lib/document-bundle';
 import { createInteractiveDemos, type InteractiveDemoController } from './interactive-demo-runtime';
@@ -1415,7 +1416,10 @@ class MarkdownWorkspace extends HTMLElement {
     const source = await file.text();
     if (source.length > MAX_SOURCE_LENGTH) throw new Error('This file is too large. The preview supports up to 400,000 characters.');
     await this.newDocument(file.name.replace(/\.(md|markdown|txt)$/i, '').slice(0, 100) || 'Imported document', source);
-    this.notify('Opened as a new document. Your original file is unchanged.');
+    // A lone Slidev slides.md opens as a document, with its layouts and
+    // components as text: say so, and say what plays instead.
+    if (looksLikeSlidevSource(source)) this.notify(SLIDEV_SOURCE_OPENED_TEXT, 30_000);
+    else this.notify('Opened as a new document. Your original file is unchanged.');
   }
 
   private aiInput(): LessonAIInput {

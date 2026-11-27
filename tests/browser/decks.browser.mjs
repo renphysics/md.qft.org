@@ -267,6 +267,25 @@ export default async function run(t) {
     assert.equal(await dialog.isVisible(), false, 'a lesson never opens as a presentation');
   });
 
+  await t.step('A lone Slidev slides.md opens as a document and says that it has to be built first', async () => {
+    const toast = page.locator('[data-toast]');
+    await choose(page, '[data-file-input]', 'slides.md', Buffer.from(loadFixtureDeck('slidev-source').get('slides.md')), 'text/markdown');
+    await until(async () => /source of a Slidev presentation/.test(await toast.textContent()), 'the notice about Slidev source');
+    const notice = await toast.textContent();
+    assert.match(notice, /^Opened as a Markdown document\./);
+    assert.match(notice, /npx slidev build/);
+    assert.match(notice, /ZIP of the project \(with dist\/ inside\)/);
+    assert.equal(await toast.isVisible(), true);
+    assert.equal(await dialog.isVisible(), false, 'the text opens in the workspace');
+    await until(async () => (await page.locator('[data-editor]').textContent()).includes('Count the nodes'), 'the Slidev text in the editor');
+    // The notice stays long enough to read: it is still there after the usual five and a half seconds.
+    await page.waitForTimeout(6500);
+    assert.equal(await toast.isVisible(), true);
+    // An ordinary Markdown file keeps the short notice.
+    await choose(page, '[data-file-input]', 'notes.md', Buffer.from('# Notes\n\nPlain text.\n'), 'text/markdown');
+    await until(async () => (await toast.textContent()) === 'Opened as a new document. Your original file is unchanged.', 'the ordinary notice');
+  });
+
   await t.step('The shipped Slidev example plays, takes the keyboard and its demo works', async () => {
     await page.locator('[data-open-presentations]').click();
     await page.locator('[data-pres-example]').click();

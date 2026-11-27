@@ -3,6 +3,7 @@ import { decodeText } from './deck-archive';
 import { BUNDLED_VERSIONS, mapLibraryUrl } from './deck-vendor';
 import { cleanReportedText } from './presentation-messages';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
+import { SLIDEV_SOURCE_SCORE, slidevMarkdownScore } from './slidev-source';
 
 /**
  * Work out what an imported folder or ZIP is, and what will stand in the way
@@ -804,22 +805,6 @@ function slidevPackage(files: DeckFiles, path: string): boolean {
   } catch { return false; }
 }
 
-const HEADMATTER_KEYS = ['theme', 'addons', 'layout', 'transition', 'mdc', 'comark', 'drawings', 'fonts', 'routerMode',
-  'canvasWidth', 'aspectRatio', 'highlighter', 'lineNumbers', 'colorSchema', 'titleTemplate', 'themeConfig', 'monaco',
-  'twoslash', 'seoMeta', 'presenter', 'download', 'exportFilename', 'defaults', 'background', 'clicks', 'info'];
-const SLIDEV_SYNTAX = [/<v-clicks?\b/i, /\bv-click\b/, /\bv-motion\b/, /\bv-mark\b/, /\bv-drag\b/, /^::\s*[\w-]{1,40}\s*::\s*$/m,
-  /```[\w-]{0,40}\s*\{monaco[\w-]{0,20}\}/, /^<<<\s+\S/m, /\$slidev\b/, /````md\s+magic-move/, /^src:\s*\S{1,200}\.md\s*$/m,
-  /<(?:Toc|Tweet|Youtube|SlidevVideo|Arrow|AutoFitText|LightOrDark|RenderWhen|Transform|VDragArrow|PoweredBySlidev|SlideCurrentNo|SlidesTotal)\b/];
-
-function slidevMarkdownScore(text: string, path: string): { score: number; title?: string } {
-  const head = /^﻿?---\r?\n([\s\S]{0,20000}?)\r?\n---/.exec(text)?.[1] ?? '';
-  if (/^marp:\s*true/m.test(head)) return { score: -10 };
-  const keys = HEADMATTER_KEYS.filter((key) => new RegExp(`^${key}:`, 'm').test(head)).length;
-  const syntax = SLIDEV_SYNTAX.filter((pattern) => pattern.test(text)).length;
-  const title = /^title:\s*["']?(.{1,200}?)["']?\s*$/m.exec(head)?.[1] ?? /^#\s+(.{1,200})$/m.exec(text)?.[1];
-  return { score: keys + 2 * syntax + (/(?:^|\/)slides\.md$/i.test(path) ? 1 : 0), title };
-}
-
 function detectSlidevSource(files: DeckFiles, paths: string[], issues: IssueList): DeckDetection | undefined {
   const manifest = paths.filter((path) => /(?:^|\/)package\.json$/.test(path)).sort(byDepth).find((path) => slidevPackage(files, path));
   const markdown = paths.filter((path) => /\.md$/i.test(path) && !/(?:^|\/)(?:readme|changelog|license)[\w.-]*$/i.test(path)).sort(byDepth).slice(0, 12);
@@ -831,7 +816,7 @@ function detectSlidevSource(files: DeckFiles, paths: string[], issues: IssueList
     const preferred = manifest && path === dirOf(manifest) + 'slides.md' ? 5 : 0;
     if (!best || result.score + preferred > best.score) best = { path, score: result.score + preferred, title: result.title };
   }
-  if (!manifest && !(best && best.score >= 4)) return undefined;
+  if (!manifest && !(best && best.score >= SLIDEV_SOURCE_SCORE)) return undefined;
   const entry = best && best.score > 0 ? best.path : undefined;
   issues.add('slidev-source', 'error',
     `This is the source of a Slidev presentation${entry ? ` (${shown(entry, 80)})` : ''}, which has to be built before it can play. Run "npx slidev build" in the project, which makes its dist folder, then open a new ZIP of the project (with dist/ inside), or ask your AI assistant for the built presentation.`,
