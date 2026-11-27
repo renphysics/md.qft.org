@@ -92,7 +92,19 @@ A clean clone of the commit that adds this record, on 2026-11-27, with the steps
 
 New unit tests since the closing fixes cover the room KaTeX gets for the added equation numbers (a 90-row environment, the plugin forms, `tex2chtml`, a macro that calls itself), the classes the stand-in never typesets and Reveal.js's text copy for screen readers (`deck-linker-mathjax-numbers`), the time the Slidev test takes on long lines (`slidev-source`), the ZIP-name rule in four two-byte code pages and the rule for a part of the ZIP on its own (`deck-zip-code-pages`), the print sentence between the two print events (`presentation-runtime`), and the advice for a single HTML file (`deck-report`, `docs-quotes`). New browser steps cover the long environment with repeated typesetting and the text copy (`deck-linker`), a ZIP refused while it is read and a large file opened over an open presentation (`deck-editing`), and the width of the long notice at 320 px (`decks`).
 
-The browser suites now take about four and a half minutes on four cores, so the commit that adds this record raises the time limit of the Check workflow from 15 to 30 minutes. The workflow itself was not run on GitHub: it runs for pull requests, pushes to `main` and manual dispatch, and none was made for this branch.
+The browser suites now take about four and a half minutes on four cores, so the commit that adds this record raises the time limit of the Check workflow from 15 to 30 minutes. The workflow first ran when the pull request was opened (next section).
+
+### The pull request: the Check workflow and an automated review
+
+The Check workflow ran on GitHub for the first time when the pull request was opened, for the commit that adds this record. Every step passed except the browser checks: 11 of the 12 suites passed, and `slides` failed after all five of its steps had passed, with one request reported as aborted (`net::ERR_ABORTED`) for a KaTeX font file. The whole job took under six minutes.
+
+That font is requested once in the suite, by the HTML export, which waits for all its font files and embeds them. The export succeeded, and the exported file passed its own check in the same step. The step closes its page as soon as the download is saved. Measured on the development machine: a page has all of a fetched file a moment before the browser reports the request as finished; while the page is busy that report does not come; and when the page is then closed, the Chromium build there reports nothing, also in 100 repetitions of the export, 60 of them with the machine under load. The build on GitHub's runner reported an abort. That it did so when the page was closed is an inference: the results file of that run did not say where a failed request came from.
+
+The harness now records every failed request with its step, page and kind. A request reported as aborted after the suite itself asked for its page to close is listed apart (`closedWhileLoading` in the results file) and does not fail the suite; every other failed request still does. Five unit tests pin the rule (`browser-harness`).
+
+An automated review of the pull request reported one finding, which was confirmed: the scanner that finds a script's imports took the slash in `n++ / 2` for the start of a regular expression, read the script as cut off, and the linker then left a module script out whole, with the note for unsupported imports, although it imported nothing. A slash after a postfix `++` or `--` is now read as a division. Of 171 scripts at hand (the test fixtures, the bundled Reveal.js and KaTeX, the site's own scripts and the AI-made presentations) one is read differently, and now correctly: a component of Slidev's own build.
+
+With these two changes the unit tests number 864, of which 862 pass and 2 are skipped; `npm run check` and the 12 browser suites pass on the development machine. The result of the workflow for the commit with these changes is on the pull request.
 
 ### Not verified
 
@@ -103,7 +115,7 @@ The browser suites now take about four and a half minutes on four cores, so the 
 - **Some forms and builds.** Reveal's plugin form `RevealMath.MathJax4` was not run (MathJax 4 loaded by itself was). The two unit tests and the browser check that build Slidev projects were skipped, as the tables say.
 - **ZIP names.** Only Chromium's decoders were used. Names of rare characters (GB2312 level 2, Big5) can still keep the garbled name of an unused picture, and so can a ZIP that mixes parts in an old code page with UTF-8 parts; one such case was built by hand, and Big5 and Shift_JIS level-2 names were not enumerated.
 - **The browser-level side channels** named above, on purpose.
-- **The deployed site.** These changes were not deployed; nothing was checked on the live host, and the Check workflow did not run on GitHub.
+- **The deployed site.** These changes were not deployed; nothing was checked on the live host.
 - **Not built, so not verified:** editing Slidev source in the browser, a served mode for files loaded while playing, a speaker view, PDF export of imported presentations, dropped folders and pasted HTML.
 
 ## Fixes after an independent review — 2026-11-26
