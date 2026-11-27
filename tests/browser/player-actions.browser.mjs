@@ -124,7 +124,7 @@ export default async function run(t) {
     await page.waitForTimeout(300);
     const reported = await events(page);
     assert.deepEqual(limitCodes(reported), ['form'], 'once per playback');
-    assert.equal(reported.limits[0].text, 'The presentation tried to send a form, which the player cannot do because it works offline. Ask your AI assistant to check the answers with a script on the slide instead.');
+    assert.equal(reported.limits[0].text, `The presentation tried to send a form, and the player sends nothing anywhere. If the quiz still shows its result, nothing is lost. Ask your AI assistant to give the button type="button", or to cancel the form's submission in its script.`);
     assert.equal(reported.limits[0].counted, true);
     assert.equal(reported.states.at(-1), 'ready', 'the presentation keeps playing');
     assert.ok(frame.url().startsWith('blob:'));

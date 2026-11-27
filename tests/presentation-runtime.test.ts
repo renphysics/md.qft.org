@@ -1567,8 +1567,9 @@ test('every limit has a plain sentence of the player\'s own; problems say what t
   for (const limit of texts) {
     assert.ok(limit && limit.text.length < 350, JSON.stringify(limit));
     assert.doesNotMatch(limit.text, /deck|img-src|asynchronous|The presentation reported/i, limit.text);
-    // The teacher cannot add files here: the next step goes through the AI assistant.
-    assert.doesNotMatch(limit.text, /ZIP/, limit.text);
+    // The teacher cannot add files here: the next step goes through the AI assistant
+    // (printing names a step the teacher takes outside the player, for a ZIP too).
+    if (limit.code !== 'print') assert.doesNotMatch(limit.text, /ZIP/, limit.text);
     if (limit.code !== 'speaker-view' && limit.code !== 'print') {
       assert.equal(limit.counted, true);
       assert.match(limit.text, /\. (?:If [^.]+, a|A)sk your AI assistant (?:to|for) [^.]+\.$/, `${limit.code} says what happened, then what to ask for: ${limit.text}`);
@@ -1577,9 +1578,9 @@ test('every limit has a plain sentence of the player\'s own; problems say what t
   assert.deepEqual(describePresentationLimit('speaker-view'), { code: 'speaker-view', text: 'The speaker view (S key) is not available in the player.', counted: false });
   // Printing is a limit of the player, not a fault of the presentation: listed, not counted, with a step the teacher can take.
   assert.deepEqual(describePresentationLimit('print'), { code: 'print', counted: false,
-    text: "The presentation tried to print, which the player cannot do. To print the slides, open the presentation's own file in your web browser and print from there." });
+    text: "The presentation tried to print, which the player cannot do. To print the slides, open the presentation's HTML file in your web browser (unzip a ZIP first) and print from there." });
   assert.deepEqual(describePresentationLimit('form'), { code: 'form', counted: true,
-    text: 'The presentation tried to send a form, which the player cannot do because it works offline. Ask your AI assistant to check the answers with a script on the slide instead.' });
+    text: `The presentation tried to send a form, and the player sends nothing anywhere. If the quiz still shows its result, nothing is lost. Ask your AI assistant to give the button type="button", or to cancel the form's submission in its script.` });
   assert.equal(describePresentationLimit('blocked-picture cdn.example.org')!.text, 'A picture from cdn.example.org needs the internet, so it is not shown. Ask your AI assistant to put the picture inside the presentation.');
   assert.equal(describePresentationLimit('blocked-request cdn.example.org')!.text, 'The presentation tried to load data from cdn.example.org. The player works offline, so the request was stopped. Ask your AI assistant to put the data inside the presentation.');
   assert.equal(describePresentationLimit('blocked-page cdn.example.org')!.text, 'A page from cdn.example.org is embedded in a slide. The player works offline, so it is not shown. Ask your AI assistant to show a picture or a link instead.');
