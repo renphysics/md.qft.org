@@ -46,6 +46,152 @@ export function stripSourceMapComment(code: string): string {
 }
 
 /**
+ * Equation numbers as MathJax gives them, for both math stand-ins (final
+ * check: KaTeX numbered every AMS environment with a CSS counter, which skips
+ * slides that are not displayed, and ignored MathJax's own setting). Before
+ * KaTeX sees a formula, `numberEquations` turns each environment at its top
+ * level into the starred form and gives each row that MathJax would number an
+ * explicit \tag{N} (multline: one number, on its last row), records \label,
+ * and fills \eqref and \ref for names it knows. The counter and the labels
+ * live in one object per document, shared by both stand-ins. One pass over
+ * the formula; each argument read is at most 200 characters. Written with
+ * String.raw, so a backslash here is a backslash in the script.
+ */
+const equationNumbersSource = String.raw`  var equations = window.__qftEquations;
+  if (!equations || typeof equations.count !== 'number' || !equations.labels) {
+    equations = { count: 0, labels: Object.create(null) };
+    try { Object.defineProperty(window, '__qftEquations', { value: equations }); } catch (error) {}
+  }
+  // MathJax 3 and 4 tex.tags, MathJax 2 TeX.equationNumbers.autoNumber: 'none' (the default), 'ams' or 'all' (read as 'ams').
+  function tagMode(value) {
+    value = typeof value === 'string' ? value.toLowerCase() : '';
+    return value === 'ams' || value === 'all' ? 'ams' : 'none';
+  }
+  var starred = { equation: 'equation*', align: 'align*', alignat: 'alignat*', gather: 'gather*', flalign: 'align*', eqnarray: 'align*', multline: 'gather*',
+    'equation*': 'equation*', 'align*': 'align*', 'alignat*': 'alignat*', 'gather*': 'gather*', 'flalign*': 'align*', 'eqnarray*': 'align*', 'multline*': 'gather*' };
+  // The end of the brace group that starts at text[at] (after spaces), or -1.
+  function group(text, at) {
+    while (text.charAt(at) === ' ' || text.charAt(at) === '\n' || text.charAt(at) === '\t') at += 1;
+    if (text.charAt(at) !== '{') return -1;
+    var depth = 0;
+    for (var index = at, limit = Math.min(text.length, at + 200); index < limit; index += 1) {
+      var char = text.charAt(index);
+      if (char === '\\') index += 1;
+      else if (char === '{') depth += 1;
+      else if (char === '}' && (depth -= 1) === 0) return index + 1;
+    }
+    return -1;
+  }
+  function argument(text, at, end) { return text.slice(text.indexOf('{', at) + 1, end - 1); }
+  function label(name, value) { if (value != null && !(name in equations.labels)) equations.labels[name] = value; }
+  // refs: whether \eqref and \ref are still the stand-in's own (the deck's macros win).
+  function numberEquations(math, mode, refs) {
+    var edits = [], depth = 0, nesting = 0, env = null, row = null, outside = { labels: [] };
+    function newRow() { row = { labels: [], content: false }; }
+    function endRow(at) { row.at = at; env.rows.push(row); newRow(); }
+    function endEnv() {
+      var rows = env.rows, number = function () { equations.count += 1; return String(equations.count); };
+      if (env.multline) {
+        var unit = { labels: [], at: rows[rows.length - 1].at };
+        rows.forEach(function (item) {
+          unit.labels = unit.labels.concat(item.labels);
+          if (item.notag) unit.notag = true;
+          if (item.tag != null && unit.tag == null) unit.tag = item.tag;
+          if (item.content) unit.at = item.at;
+        });
+        rows = [unit];
+      } else if (rows.length > 1 && !rows[rows.length - 1].content) rows = rows.slice(0, -1);
+      rows.forEach(function (item) {
+        var value = item.notag ? null : item.tag != null ? item.tag : env.numbered && mode === 'ams' ? number() : null;
+        if (value != null && item.tag == null) edits.push({ from: item.at, to: item.at, text: '\\tag{' + value + '}' });
+        item.labels.forEach(function (name) { label(name, value); });
+      });
+      edits.push(env.begin, { from: env.endFrom, to: env.endTo, text: '{' + env.name + '}' });
+      env = null; row = null;
+    }
+    for (var index = 0; index < math.length; index += 1) {
+      var char = math.charAt(index);
+      var current = row || outside;
+      if (char === '%') { var line = math.indexOf('\n', index); index = line < 0 ? math.length : line; continue; }
+      if (char === '{') { depth += 1; current.content = true; continue; }
+      if (char === '}') { depth -= 1; current.content = true; continue; }
+      if (char !== '\\') { if (char !== ' ' && char !== '\n' && char !== '\t') current.content = true; continue; }
+      var next = math.charAt(index + 1);
+      if (next === '\\') {
+        if (env && env.split && depth === env.depth && nesting === 0) {
+          endRow(index);
+          var after = index + 2;
+          if (math.charAt(after) === '*') after += 1;
+          while (math.charAt(after) === ' ' || math.charAt(after) === '\n') after += 1;
+          var close = math.charAt(after) === '[' ? math.slice(after, after + 50).indexOf(']') : -1;
+          index = after + (close > 0 ? close + 1 : 0) - 1;
+        } else { index += 1; current.content = true; }
+        continue;
+      }
+      var word = /^[A-Za-z]+/.exec(math.slice(index + 1, index + 40));
+      if (!word) { index += 1; current.content = true; continue; }
+      word = word[0];
+      var start = index, end = index + 1 + word.length;
+      index = end - 1;
+      if (word === 'notag' || word === 'nonumber') { current.notag = true; continue; }
+      if (word === 'label' || word === 'eqref' || word === 'ref' || word === 'tag' || word === 'begin' || word === 'end') {
+        var star = word === 'tag' && math.charAt(end) === '*' ? 1 : 0;
+        var stop = group(math, end + star);
+        if (stop < 0) { current.content = true; continue; }
+        var name = argument(math, end, stop);
+        index = stop - 1;
+        if (word === 'label') { current.labels.push(name); continue; }
+        if (word !== 'end') current.content = true;
+        if (word === 'tag') { if (current.tag == null) current.tag = name.replace(/^\s+|\s+$/g, ''); continue; }
+        if (word === 'eqref' || word === 'ref') { if (refs[word]) edits.push({ from: start, to: stop, ref: name, eqref: word === 'eqref' }); continue; }
+        var target = name.replace(/^\s+|\s+$/g, '');
+        if (word === 'begin') {
+          if (!env && depth === 0 && nesting === 0 && Object.prototype.hasOwnProperty.call(starred, target)) {
+            env = { name: starred[target], numbered: target.charAt(target.length - 1) !== '*', multline: target.indexOf('multline') === 0,
+              split: target.indexOf('equation') !== 0, depth: depth, rows: [], begin: { from: math.indexOf('{', end), to: stop, text: '{' + starred[target] + '}' } };
+            newRow();
+          } else nesting += 1;
+        } else if (nesting > 0) { nesting -= 1; current.content = true; }
+        else if (env && depth === env.depth) {
+          env.endFrom = math.indexOf('{', end); env.endTo = stop;
+          endRow(start);
+          endEnv();
+        }
+        continue;
+      }
+      current.content = true;
+    }
+    if (outside.tag != null && !outside.notag) outside.labels.forEach(function (name) { label(name, outside.tag); });
+    if (!edits.length) return math;
+    edits.sort(function (a, b) { return a.from - b.from; });
+    var out = '', at = 0;
+    edits.forEach(function (edit) {
+      if (edit.from < at) return;
+      var text = edit.text;
+      if (edit.ref != null) {
+        var value = equations.labels[edit.ref];
+        text = value == null ? math.slice(edit.from, edit.to) : '\\text{' + (edit.eqref ? '(' + value + ')' : value) + '}';
+      }
+      out += math.slice(at, edit.from) + text;
+      at = edit.to;
+    });
+    return out + math.slice(at);
+  }
+  // The rewrite for a configuration: numbers, then the layouts KaTeX lacks
+  // (preProcess); nested environments are starred too, so that KaTeX never
+  // numbers by itself.
+  function numbering(mode, given) {
+    var defaults = defaultMacros();
+    var refs = { eqref: given['\\eqref'] === defaults['\\eqref'], ref: given['\\ref'] === defaults['\\ref'] };
+    return function (math) {
+      return preProcess(numberEquations(String(math), mode, refs).replace(/\\(begin|end)\{(equation|align|alignat|gather|flalign|eqnarray|multline)\}/g, function (whole, side, name) {
+        return '\\' + side + '{' + starred[name] + '}';
+      }));
+    };
+  }
+`;
+
+/**
  * Helpers that both math stand-ins share, as script source: the delimiter
  * pairs of a configuration, the macros for MathJax-only commands, the
  * eqnarray, multline and flalign rewrite, and the placeholder for references
@@ -75,8 +221,9 @@ function mathHelpersSource(): string {
     } catch (error) { return ''; }
   }
   // MathJax-only commands that KaTeX does not know: \\\\label and \\\\require
-  // produce nothing, \\\\eqref and \\\\ref a placeholder (KaTeX numbers nothing),
-  // \\\\unicode the character. The deck's own macros of the same names win.
+  // produce nothing, \\\\eqref and \\\\ref a placeholder for a name that
+  // numberEquations does not know, \\\\unicode the character. The deck's own
+  // macros of the same names win.
   function defaultMacros() {
     return {
       '\\\\label': { tokens: [], numArgs: 1 },
@@ -101,7 +248,7 @@ function mathHelpersSource(): string {
     });
     return result;
   }
-  // MathJax also typesets LaTeX environments written directly in the text
+${equationNumbersSource}  // MathJax also typesets LaTeX environments written directly in the text
   // (review W3.2), unless processEnvironments is false. These are the ones
   // KaTeX can typeset at the top level; eqnarray, multline and flalign go
   // through preProcess.
@@ -118,9 +265,11 @@ function mathHelpersSource(): string {
     }).map(function (entry) { return entry[0]; });
   }
   // MathJax also reads \\\\eqref{…} and \\\\ref{…} in ordinary text (review
-  // VF2b.3); show the same placeholder as inside a formula. One walk over
-  // the text, skipping typeset formulas and the ignored elements.
-  var reference = /\\\\(eqref|ref)\\s*\\{[^{}\\n]{0,200}\\}/g;
+  // VF2b.3); show the number of a known name, else the same placeholder as
+  // inside a formula. Called after each typesetting of a root, so a reference
+  // before its equation in that root is known. One walk over the text,
+  // skipping typeset formulas and the ignored elements.
+  var reference = /\\\\(eqref|ref)\\s*\\{([^{}\\n]{0,200})\\}/g;
   function replaceReferences(root, skip) {
     if (!root || !root.nodeType) return;
     var skipped = {};
@@ -131,7 +280,10 @@ function mathHelpersSource(): string {
       if (node.nodeType === 3) {
         var value = node.nodeValue;
         if (value.indexOf('ref') < 0 || value.indexOf('\\\\') < 0) continue;
-        var next = value.replace(reference, function (whole, name) { return name === 'eqref' ? '(?)' : '?'; });
+        var next = value.replace(reference, function (whole, kind, name) {
+          var known = equations.labels[name];
+          return kind === 'eqref' ? '(' + (known == null ? '?' : known) + ')' : known == null ? '?' : known;
+        });
         if (next !== value) node.nodeValue = next;
         continue;
       }
@@ -173,12 +325,14 @@ ${mathHelpersSource()}
     var settings = (id === 'mathjax2' ? (config.mathjax2 || config.math) : config[id]) || {};
     var tex = (id === 'mathjax2' ? settings.tex2jax : settings.tex) || {};
     var skip = id === 'mathjax2' ? tex.skipTags : settings.options && settings.options.skipHtmlTags;
+    var given = macros(id === 'mathjax2' ? settings.TeX && settings.TeX.Macros : tex.macros);
+    var numbers = id === 'mathjax2' ? settings.TeX && settings.TeX.equationNumbers && settings.TeX.equationNumbers.autoNumber : settings.tex && settings.tex.tags;
     return {
       throwOnError: false,
       delimiters: longestFirst(pairs(tex.displayMath || mathjaxDisplay, true).concat(pairs(tex.inlineMath || mathjaxInline, false), environments(tex.processEnvironments))),
       ignoredTags: Array.isArray(skip) ? skip : ignored,
-      macros: macros(id === 'mathjax2' ? settings.TeX && settings.TeX.Macros : tex.macros),
-      preProcess: preProcess
+      macros: given,
+      preProcess: numbering(tagMode(numbers), given)
     };
   }
   function plugin(id) {
@@ -258,13 +412,15 @@ ${mathHelpersSource()}
     var given = {};
     if (plain(config.TeX) && plain(config.TeX.Macros)) Object.assign(given, config.TeX.Macros);
     if (plain(tex.macros)) Object.assign(given, tex.macros);
+    var numbers = tex.tags != null ? tex.tags : plain(config.TeX) && plain(config.TeX.equationNumbers) ? config.TeX.equationNumbers.autoNumber : null;
+    var all = macros(given);
     return {
       throwOnError: false,
       delimiters: longestFirst(pairs(display, true).concat(pairs(inline, false), environments(tex.processEnvironments === false ? false : two.processEnvironments))),
       ignoredTags: skip,
       ignoredClasses: ['tex2jax_ignore', 'mathjax_ignore'],
-      macros: macros(given),
-      preProcess: preProcess
+      macros: all,
+      preProcess: numbering(tagMode(numbers), all)
     };
   }
   function roots(elements) {
@@ -297,7 +453,8 @@ ${mathHelpersSource()}
   function convert(math, options) {
     var node = document.createElement('mjx-container');
     try {
-      window.katex.render(String(math), node, { displayMode: !options || options.display !== false, throwOnError: false, macros: settings().macros });
+      var given = settings();
+      window.katex.render(given.preProcess(String(math)), node, { displayMode: !options || options.display !== false, throwOnError: false, macros: given.macros });
     } catch (error) { node.textContent = String(math); }
     return node;
   }

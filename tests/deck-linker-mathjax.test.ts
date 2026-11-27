@@ -218,9 +218,10 @@ describe('the MathJax stand-in', () => {
     assert.equal(options.macros['\\bold'], '{\\bf #1}');
     assert.equal(options.macros['\\CC'], '\\mathbb{C}');
     assert.equal(typeof options.preProcess, 'function');
-    assert.equal(options.preProcess('\\begin{eqnarray}a&=&b\\end{eqnarray}'), '\\begin{align}a&=&b\\end{align}');
+    // Starred, so that KaTeX numbers nothing by itself (no tags: MathJax's default numbers nothing); tests/deck-linker-mathjax-numbers.test.ts.
+    assert.equal(options.preProcess('\\begin{eqnarray}a&=&b\\end{eqnarray}'), '\\begin{align*}a&=&b\\end{align*}');
     assert.equal(options.preProcess('\\begin{multline*}a\\\\b\\end{multline*}'), '\\begin{gather*}a\\\\b\\end{gather*}');
-    assert.equal(options.preProcess('\\begin{flalign}a&=b\\end{flalign}'), '\\begin{align}a&=b\\end{align}');
+    assert.equal(options.preProcess('\\begin{flalign}a&=b\\end{flalign}'), '\\begin{align*}a&=b\\end{align*}');
   });
 
   it('typesets LaTeX environments written directly in the text, unless processEnvironments is false (review W3.2)', async () => {
