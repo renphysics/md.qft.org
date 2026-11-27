@@ -53,3 +53,25 @@ describe('removals (VF1.1, VF1.3)', () => {
     assert.doesNotMatch(result.html, /noscript|http-equiv/);
   });
 });
+
+describe('class names that Reveal.js uses (VF2a.1)', () => {
+  it('sees them on a slide itself and under .reveal outside the slides', async () => {
+    const onSlide = await link({ 'index.html': reveal('<section><h2>A</h2></section><section class="progress"><h2>C</h2></section>') });
+    assert.match(issue(onSlide, 'reveal-class-name')?.message ?? '', /“progress”/);
+    const outside = await link({ 'index.html': reveal('<section><h2>A</h2></section>', { outside: '<div class="progress">my own progress bar text</div>' }) });
+    assert.match(issue(outside, 'reveal-class-name')?.message ?? '', /“progress”/);
+    const deeper = await link({ 'index.html': reveal('<section>A</section>', { outside: '<div class="tools"><div class="controls"><button>Go</button></div></div>' }) });
+    assert.match(issue(deeper, 'reveal-class-name')?.message ?? '', /“controls”/);
+  });
+
+  it('leaves the .slides element and Reveal.js parts written in the markup of old templates alone', async () => {
+    const result = await link({
+      'index.html': reveal('<section><h2>A</h2></section>', {
+        outside: '<aside class="controls"><a class="left" href="#">&#x25C4;</a><a class="right" href="#">&#x25BA;</a></aside><div class="progress"><span></span></div>',
+      }),
+    });
+    assert.ok(!codes(result).includes('reveal-class-name'), JSON.stringify(result.issues));
+    const outsideReveal = await link({ 'index.html': page('<div class="controls">x</div><div class="reveal"><div class="slides"><section>A</section></div></div><script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script><script>Reveal.initialize();</script>', REVEAL_STYLE) });
+    assert.ok(!codes(outsideReveal).includes('reveal-class-name'));
+  });
+});

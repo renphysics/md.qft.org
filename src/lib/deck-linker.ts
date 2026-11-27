@@ -1784,8 +1784,8 @@ class DeckLinker {
    */
   private classNameNote(): void {
     const found: string[] = [];
-    for (const element of elementsInsideSections(this.document)) {
-      for (const name of (getAttribute(element, 'class') ?? '').split(/\s+/)) {
+    for (const element of elementsStyledAsReveal(this.document)) {
+      for (const name of classesOf(element)) {
         if (REVEAL_OWN_CLASSES.has(name) && !found.includes(name)) found.push(name);
       }
     }
@@ -1952,17 +1952,46 @@ class DeckLinker {
 
 /* ---------------------------------------------------------------- helpers */
 
-/** Elements that have a <section> among their ancestors, in document order. */
-function elementsInsideSections(root: ParentNode): Element[] {
-  const result: Element[] = [];
-  const stack: [ChildNode, boolean][] = [...children(root)].reverse().map((node) => [node, false]);
+const classesOf = (element: Element) => (getAttribute(element, 'class') ?? '').split(/[\t\n\f\r ]+/).filter(Boolean);
+
+/** Any letter or digit in an element's text, its descendants included. */
+function hasWords(element: Element): boolean {
+  const stack: ChildNode[] = [...children(element)];
   while (stack.length) {
-    const [node, inside] = stack.pop()!;
+    const node = stack.pop()!;
+    if (node.nodeName === '#text' && /[\p{L}\p{N}]/u.test((node as DefaultTreeAdapterTypes.TextNode).value)) return true;
+    if (isElement(node)) stack.push(...children(node));
+  }
+  return false;
+}
+
+/**
+ * Elements whose class names reveal.css can restyle as Reveal.js's own parts
+ * (review F5.3, VF2a.1), in document order: every slide <section>, everything
+ * inside one, and everything under the .reveal element outside the slides,
+ * except the .slides element itself and Reveal.js's own parts written in the
+ * markup, as old templates did (a direct child of .reveal with no words, such
+ * as <div class="progress"><span></span></div>).
+ */
+function elementsStyledAsReveal(root: ParentNode): Element[] {
+  const result: Element[] = [];
+  const stack: [ChildNode, 'outside' | 'reveal' | 'slide', Element | null][] = [...children(root)].reverse().map((node) => [node, 'outside', null]);
+  while (stack.length) {
+    const [node, where, parent] = stack.pop()!;
     if (!isElement(node)) continue;
-    if (inside) result.push(node);
-    const below = inside || (localName(node) === 'section' && node.namespaceURI === NS.HTML);
+    const html = node.namespaceURI === NS.HTML;
+    const classes = classesOf(node);
+    let below = where;
+    if (where === 'slide' || (html && localName(node) === 'section')) {
+      result.push(node);
+      below = 'slide';
+    } else if (where === 'reveal') {
+      const slidesElement = classes.includes('slides');
+      const ownPart = parent !== null && classesOf(parent).includes('reveal') && classes.some((name) => REVEAL_OWN_CLASSES.has(name)) && !hasWords(node);
+      if (!slidesElement && !ownPart) result.push(node);
+    } else if (html && classes.includes('reveal')) below = 'reveal';
     const nested = children(node);
-    for (let index = nested.length - 1; index >= 0; index -= 1) stack.push([nested[index], below]);
+    for (let index = nested.length - 1; index >= 0; index -= 1) stack.push([nested[index], below, node]);
   }
   return result;
 }
