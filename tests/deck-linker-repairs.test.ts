@@ -331,6 +331,13 @@ describe('the content test for the Reveal.js layout (review W3.3)', () => {
     assert.equal(hasRevealLayoutRule('.reveal .slides > section { position: relative } x { position: absolute }'), false);
     assert.equal(hasRevealLayoutRule(''), false);
   });
+
+  it('counts a rule only when it positions the section itself, not something inside a slide (review X3.4)', () => {
+    for (const css of ['.reveal .slides section{position:absolute}', '.reveal .slides > section.title:not(.stack) { position: absolute }',
+      '.reveal .slides section > section{position:absolute}', 'p, .reveal .slides>section {position:absolute}']) assert.equal(hasRevealLayoutRule(css), true, css);
+    for (const css of ['.reveal .slides section .badge{position:absolute;top:0;right:0}', '.reveal .slides section img.abs{position:absolute}',
+      '.reveal .slides > section > .box, .reveal .slides section p{position:absolute}', '.reveal .slides div.section{position:absolute}']) assert.equal(hasRevealLayoutRule(css), false, css);
+  });
 });
 
 describe('data saved in the browser (VF5.3)', () => {

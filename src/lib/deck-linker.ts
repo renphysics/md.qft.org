@@ -2374,8 +2374,9 @@ const MARKDOWN_TOO_LARGE = '## Slides too large\n\nThese slides are too large to
  */
 /**
  * Whether a stylesheet lays out Reveal.js slides (review W3.3): a rule whose
- * selector puts `section` inside `.reveal .slides` (any combinator) and whose
- * body sets `position: absolute`, as reveal.css does. A cosmetic rule alone
+ * selector puts `section` inside `.reveal .slides` (any combinator), with the
+ * section as its subject, and whose body sets `position: absolute`, as
+ * reveal.css does. A cosmetic rule alone
  * does not count. One pass: comments are cut with indexOf, and each rule's
  * selector and body are disjoint pieces of the text.
  */
@@ -2391,6 +2392,9 @@ export function hasRevealLayoutRule(css: string): boolean {
   }
   const text = parts.join('');
   const selector = /\.reveal\s*>?\s*\.slides\s*>?\s*section(?![\w-])/i;
+  // The section itself is what the rule positions, not something inside a slide (review X3.4).
+  const subject = /(?:^|[\s>+~])section(?:[.:[][^\s>+~]*)?$/i;
+  const layout = (selectors: string) => selectors.split(',').some((piece) => selector.test(piece) && subject.test(piece.trim()));
   const absolute = /(?:^|[\s;])position\s*:\s*absolute(?![\w-])/i;
   let last = -1;
   for (let index = 0; index < text.length; index += 1) {
@@ -2400,7 +2404,7 @@ export function hasRevealLayoutRule(css: string): boolean {
     // The body of a rule runs to the next brace; a "{" there means a block such as @media.
     let end = index + 1;
     while (end < text.length && text[end] !== '{' && text[end] !== '}') end += 1;
-    if (end < text.length && text[end] === '}' && selector.test(text.slice(last + 1, index)) && absolute.test(text.slice(index + 1, end))) return true;
+    if (end < text.length && text[end] === '}' && layout(text.slice(last + 1, index)) && absolute.test(text.slice(index + 1, end))) return true;
     last = index;
     if (text[end] === '}') { last = end; index = end; }
     else index = end - 1;
