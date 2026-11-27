@@ -88,16 +88,19 @@ const CP850_HIGH = 'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø
 interface CodePage {
   words: string;
   decode: (bytes: Uint8Array) => string | undefined;
+  /** Two bytes for a character, so a character that the slides confirm is strong evidence (see readLegacyNames). */
+  wide?: boolean;
 }
 
 function tableCodePage(words: string, high: string): CodePage {
   return { words, decode: (bytes) => Array.from(bytes, (byte) => byte < 0x80 ? String.fromCharCode(byte) : high[byte - 0x80]).join('') };
 }
 
-function browserCodePage(words: string, label: string): CodePage {
+function browserCodePage(words: string, label: string, wide = false): CodePage {
   let decoder: TextDecoder | null | undefined;
   return {
     words,
+    ...(wide ? { wide } : {}),
     decode: (bytes) => {
       if (decoder === undefined) {
         try { decoder = new TextDecoder(label, { fatal: true }); } catch { decoder = null; }
@@ -110,10 +113,10 @@ function browserCodePage(words: string, label: string): CodePage {
 
 /** In the order they are tried; the earlier one wins a tie. */
 const CODE_PAGES: readonly CodePage[] = [
-  browserCodePage('GBK (Chinese)', 'gb18030'),
-  browserCodePage('Big5 (Traditional Chinese)', 'big5'),
-  browserCodePage('Shift_JIS (Japanese)', 'shift_jis'),
-  browserCodePage('EUC-KR (Korean)', 'euc-kr'),
+  browserCodePage('GBK (Chinese)', 'gb18030', true),
+  browserCodePage('Big5 (Traditional Chinese)', 'big5', true),
+  browserCodePage('Shift_JIS (Japanese)', 'shift_jis', true),
+  browserCodePage('EUC-KR (Korean)', 'euc-kr', true),
   tableCodePage('code page 437 (older Windows in English)', CP437_HIGH),
   tableCodePage('code page 850 (older Windows in Western Europe)', CP850_HIGH),
   browserCodePage('Windows-1252 (Western Europe)', 'windows-1252'),
@@ -309,7 +312,20 @@ function readLegacyNames(bytes: Uint8Array, directory: ArchiveEntry[], cache: Ma
   const direct = candidates.filter((entry) => notUtf8(entry) || matches(page, entry, pieces));
   const folders = new Set(direct.map(topFolder).filter((folder) => folder !== undefined));
   const legacyParts = new Set(reread.filter(notUtf8).map(part));
-  const rereadSet = new Set([...direct, ...candidates.filter((entry) => folders.has(topFolder(entry)!) || legacyParts.has(part(entry)))]);
+  // In a code page with two bytes for a character, a name made only of characters that the names read again
+  // already hold is read again too: default picture names (图片1.png, 图片2.png) happen to be valid UTF-8, and
+  // an unused 图片3.png would keep a garbled name beside them. Other names stay (review X4.1), and one-byte
+  // code pages keep the strict rule, because text spelled in the wrong encoding (cafÃ©.png) occurs in pages.
+  const confirmed = new Set<string>();
+  if (page.wide) for (const entry of direct) for (const character of page.decode(entry.rawName!) ?? '') if (character > '\x7f') confirmed.add(character);
+  const spelled = (entry: ArchiveEntry) => {
+    const name = confirmed.size ? page.decode(entry.rawName!) : undefined;
+    if (!name) return false;
+    let found = false;
+    for (const character of name) if (character > '\x7f') { if (!confirmed.has(character)) return false; found = true; }
+    return found;
+  };
+  const rereadSet = new Set([...direct, ...candidates.filter((entry) => folders.has(topFolder(entry)!) || legacyParts.has(part(entry)) || spelled(entry))]);
   const taken = new Set(directory.map((entry) => collisionKey(entry.name)));
   const entries = directory.map((entry) => {
     if (!rereadSet.has(entry)) return entry;
