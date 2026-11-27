@@ -3,7 +3,7 @@ import type { StoredPresentation, StoredPresentationInfo } from '../lib/presenta
 import type { DeckIssue } from '../lib/deck-types';
 import type { DeckApplyOutcome, DeckConfirmRequest, DeckSourceView } from './deck-sources';
 import { formatDeckReport, isSiteSideCode, type DeckReportInput, type DeckReportRuntimeMessage } from '../lib/deck-report';
-import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../lib/load-failure';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, showLoadFailure } from '../lib/load-failure';
 import {
   PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath,
 } from '../lib/presentation-messages';
@@ -67,17 +67,22 @@ function siteSideFailure(playable: PlayableDeck): boolean {
 }
 
 /**
- * The converter's page script itself could not be fetched. deck-project
- * treats an Error with a string `detail` as "converter unavailable", as it
- * does SlidevConverterUnavailableError, so the same fixed message is shown:
- * the converter's own sentence (slidev-convert-browser.ts), copied, because
- * its module is the thing that failed to load.
+ * The converter's page script itself could not be fetched, or not in time.
+ * deck-project treats an Error with a string `detail` as "converter
+ * unavailable", as it does SlidevConverterUnavailableError. A script that
+ * could not be fetched gets the site's fixed sentence (after a new release a
+ * reload is what helps, not the connection).
  */
-function converterUnavailable(): Error {
-  const error = new Error('The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.') as Error & { detail: string };
+function converterUnavailable(message = LOAD_FAILURE_TEXT, detail = 'the converter script could not be loaded'): Error {
+  const error = new Error(message) as Error & { detail: string };
   error.name = 'SlidevConverterUnavailableError';
-  error.detail = 'the converter script could not be loaded';
+  error.detail = detail;
   return error;
+}
+
+/** The converter's own sentence for a start that took too long (slidev-convert-browser.ts), for the whole limit. */
+function converterTooSlow(limit: number): Error {
+  return converterUnavailable(`The Slidev converter was not ready after ${Math.round(limit / 1000)} seconds. Check the internet connection, reload the page, and open the ZIP again.`, `not ready after ${limit} ms`);
 }
 
 /** The deck on show and what the player plays for it. */
@@ -130,6 +135,12 @@ export class PresentationLibrary extends HTMLElement {
   static readonly rescuedNoticeMs = 12_000;
   /** How long the link notice stays, likewise. */
   static readonly linkNoticeMs = 20_000;
+  /**
+   * SLIDEV_START_TIME_LIMIT of slidev-convert-browser.ts, copied because that
+   * module is what is being downloaded: one limit covers downloading the
+   * converter's page script and starting the converter.
+   */
+  static readonly slidevStartLimitMs = 90_000;
   /** How often one playback is started again after the presentation replaced itself with a page. */
   static readonly leftRestartLimit = 3;
   private abort = new AbortController();
@@ -414,7 +425,10 @@ export class PresentationLibrary extends HTMLElement {
   private notice(value?: unknown): void {
     const area = this.q('[data-pres-notice]');
     // A part of the site that could not be fetched gets one fixed sentence, never the browser's text.
-    area.textContent = value === undefined ? '' : value instanceof Error || isLoadFailure(value) ? errorMessage(value, 'Something went wrong. Close the presentations and try again.') : String(value);
+    const text = value === undefined ? '' : value instanceof Error || isLoadFailure(value) ? errorMessage(value, 'Something went wrong. Close the presentations and try again.') : String(value);
+    // With its Reload button, so the next step is at hand.
+    if (text === LOAD_FAILURE_TEXT) showLoadFailure(area);
+    else area.textContent = text;
     area.hidden = value === undefined;
   }
 
@@ -676,10 +690,29 @@ export class PresentationLibrary extends HTMLElement {
       vendor: async () => (await import('../lib/deck-vendor-browser')).browserVendorProvider(),
       // The converter, its Worker and esbuild.wasm load only when a Slidev build is opened.
       convertSlidev: async (files, detection, options) => {
+        const limit = PresentationLibrary.slidevStartLimitMs;
+        const began = Date.now();
+        let timer = 0;
         let converter: typeof import('../lib/slidev-convert-browser');
-        try { converter = await import('../lib/slidev-convert-browser'); }
-        catch (error) { throw isLoadFailure(error) ? converterUnavailable() : error; }
-        return converter.convertSlidevBuild(files, detection, options);
+        try {
+          // A download that hangs (a slow or filtering network) ends with the same result as a converter that does not start.
+          converter = await Promise.race([
+            import('../lib/slidev-convert-browser'),
+            new Promise<never>((_, reject) => {
+              timer = window.setTimeout(() => reject(converterTooSlow(limit)), limit);
+              options.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+            }),
+          ]);
+        } catch (error) { throw isLoadFailure(error) ? converterUnavailable() : error; }
+        finally { window.clearTimeout(timer); }
+        try {
+          return await converter.convertSlidevBuild(files, detection, { ...options, startTimeLimit: Math.max(1, limit - (Date.now() - began)) });
+        } catch (error) {
+          // Its own "not ready after N seconds" counts the time left; say the whole limit.
+          const failure = error as { name?: unknown; detail?: unknown } | null;
+          if (failure?.name === 'SlidevConverterUnavailableError' && typeof failure.detail === 'string' && failure.detail.startsWith('not ready after')) throw converterTooSlow(limit);
+          throw error;
+        }
       },
       signal: operation === this.operation ? this.operationAbort.signal : AbortSignal.abort(),
       // The real preparation, discarded: a document the player would refuse is reported before saving.
@@ -884,7 +917,9 @@ export class PresentationLibrary extends HTMLElement {
     } catch (error) {
       if (operation === this.operation && !this.active) {
         this.q('[data-pres-start-message]').textContent = 'This file could not be opened.';
-        this.q('[data-pres-start-detail]').textContent = errorMessage(error, 'Close the presentations and open the file again.');
+        const detail = this.q('[data-pres-start-detail]');
+        if (isLoadFailure(error)) showLoadFailure(detail);
+        else detail.textContent = errorMessage(error, 'Close the presentations and open the file again.');
         this.q('[data-pres-player-status]').textContent = 'Could not be opened';
         this.storage('Not saved. Your original file is unchanged.');
       }
@@ -1213,7 +1248,14 @@ export class PresentationLibrary extends HTMLElement {
         }, this.abort.signal);
         return this.sources;
       });
-      this.sourcesLoading.catch(() => { this.sourcesLoading = undefined; });
+      this.sourcesLoading.catch((error) => {
+        this.sourcesLoading = undefined;
+        // In place of "Opening the files…", which would otherwise stay.
+        if (isLoadFailure(error)) {
+          showLoadFailure(this.q('[data-pres-file-message]'));
+          this.q('[data-pres-file-message]').hidden = false;
+        } else this.q('[data-pres-file-message]').textContent = 'The files could not be opened. Reload the page and try again.';
+      });
     }
     const view = await this.sourcesLoading;
     if (this.active === active) await view.show(active.project);

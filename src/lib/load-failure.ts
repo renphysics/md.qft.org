@@ -34,6 +34,27 @@ export function errorMessage(error: unknown, fallback: string): string {
   return typeof message === 'string' && message ? message : fallback;
 }
 
+/**
+ * A "Reload the page" button to put beside the fixed sentence, so the next
+ * step is one click away. Nothing reloads until the person chooses it.
+ */
+export function reloadButton(className = 'button-secondary'): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.dataset.reloadPage = '';
+  button.textContent = 'Reload the page';
+  button.addEventListener('click', () => location.reload());
+  return button;
+}
+
+/** Show the fixed sentence with a Reload button in a message area, in place of what it held. */
+export function showLoadFailure(area: HTMLElement): void {
+  const text = document.createElement('span');
+  text.textContent = LOAD_FAILURE_TEXT;
+  area.replaceChildren(text, ' ', reloadButton());
+}
+
 let watching = false;
 
 /**

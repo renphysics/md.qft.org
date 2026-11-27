@@ -3,7 +3,7 @@ import {
   deckFileList, deckFileText, deckOriginalText, deckSourceNote, isEditableDeck, nextDeckEdits,
   type DeckFileInfo, type DeckProject,
 } from '../lib/deck-project';
-import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../lib/load-failure';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, showLoadFailure } from '../lib/load-failure';
 import { visiblePath } from '../lib/presentation-messages';
 import type { DeckEditor } from './deck-editor';
 
@@ -170,7 +170,12 @@ export class DeckSourceView {
         });
         return this.editor;
       });
-      this.loading.catch((error) => { this.loading = undefined; this.message(isLoadFailure(error) ? LOAD_FAILURE_TEXT : 'The editor could not be opened. Reload the page and try again.'); });
+      this.loading.catch((error) => {
+        this.loading = undefined;
+        if (!isLoadFailure(error)) { this.message('The editor could not be opened. Reload the page and try again.'); return; }
+        this.message(LOAD_FAILURE_TEXT);
+        showLoadFailure(this.q('[data-pres-file-message]'));
+      });
     }
     return this.loading;
   }

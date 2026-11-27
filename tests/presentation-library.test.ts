@@ -29,6 +29,10 @@ interface Dependencies {
   list?: () => Promise<unknown>;
   /** Make loading these lazily loaded modules fail, as after a new release. */
   unloadable?: string[];
+  /** Make loading these lazily loaded modules hang, as on a slow or filtering network. */
+  stalled?: string[];
+  /** The Slidev converter (convertSlidevBuild). */
+  convert?: (files: unknown, detection: unknown, options: any) => Promise<unknown>;
 }
 
 /** Chrome's text for a lazily loaded part of the site that is gone. */
@@ -47,6 +51,8 @@ function library(dependencies: Dependencies = {}) {
     updates: [] as any[], savedEdits: [] as any[], noticeInputs: [] as any[], names: [] as string[], opened: [] as unknown[][], reports: [] as any[], timers: [] as (() => void)[],
     /** The delay of each timer, in the order of `timers`, and the timers cleared. */
     delays: [] as number[], cleared: new Set<number>(), stopped: 0,
+    /** The areas that got the fixed load-failure sentence with its Reload button. */
+    loadFailures: [] as any[],
   };
   const clock = { now: 1_000_000 };
   const controls = new Map<string, any>();
@@ -68,6 +74,8 @@ function library(dependencies: Dependencies = {}) {
     // The host realm's Error, so errors from the real store module are recognised.
     exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
     STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, isSiteSideCode,
+    // The real one builds elements with the page's document; here it records where the sentence and its Reload button went.
+    showLoadFailure(area: any) { calls.loadFailures.push(area); area.replaceChildren({ textContent: LOAD_FAILURE_TEXT }, ' ', { textContent: 'Reload the page' }); area.textContent = LOAD_FAILURE_TEXT; },
     formatDeckReport(input: any) { calls.reports.push(input); return formatDeckReport(input); },
     Date: class extends Date { static now() { return clock.now; } },
     HTMLElement: class { dataset = { sandboxUrl: '/presentation-sandbox.html' }; querySelectorAll() { return []; } dispatchEvent() { return true; } },
@@ -104,7 +112,9 @@ function library(dependencies: Dependencies = {}) {
     preparePresentationDocument() { calls.prepared++; return ''; },
     require(name: string) {
       if (dependencies.unloadable?.includes(name)) throw failedImport(name);
-      if (name === '../lib/slidev-convert-browser') return { convertSlidevBuild: async () => ({ html: '<p>converted</p>', issues: [] }) };
+      // A module object that is a thenable which never settles: the import() waits for ever.
+      if (dependencies.stalled?.includes(name)) return { __esModule: true, then() {} };
+      if (name === '../lib/slidev-convert-browser') return { convertSlidevBuild: (files: unknown, detection: unknown, options: any) => dependencies.convert?.(files, detection, options) ?? Promise.resolve({ html: '<p>converted</p>', issues: [] }) };
       if (name === '../lib/deck-project') {
         return {
           openDeck(input: File) { calls.open++; return dependencies.open?.(input) ?? Promise.resolve(null); },
@@ -1028,6 +1038,7 @@ test('the library shows a load failure in its notice as the fixed sentence', () 
   const real = Object.getPrototypeOf(f.instance).notice;
   real.call(f.instance, failedImport('../lib/deck-sources'));
   assert.equal(f.control('[data-pres-notice]').textContent, LOAD_FAILURE_TEXT);
+  assert.deepEqual(f.calls.loadFailures, [f.control('[data-pres-notice]')], 'with its Reload button');
   real.call(f.instance, new Error('Something else.'));
   assert.equal(f.control('[data-pres-notice]').textContent, 'Something else.');
 });
@@ -1040,11 +1051,54 @@ test('a Slidev converter whose page script cannot be fetched is reported as unav
     assert.equal(error instanceof Error, true);
     assert.equal(error.name, 'SlidevConverterUnavailableError');
     assert.equal(typeof error.detail, 'string');
-    assert.equal(error.message, 'The Slidev converter could not be downloaded. Check the internet connection, reload the page, and open the ZIP again.');
+    assert.equal(error.message, LOAD_FAILURE_TEXT, 'after a new release a reload helps, not the connection');
     return true;
   });
   const g = library();
   assert.deepEqual(await g.instance.buildDeps(g.instance.operation).convertSlidev(new Map(), {}, {}), { html: '<p>converted</p>', issues: [] });
+});
+
+test('Source files whose code cannot be loaded show the fixed sentence with Reload in place of "Opening the files…"', async () => {
+  const f = library({ unloadable: ['./deck-sources'] });
+  f.instance.active = { project: revealProject(), playable: revealPlayable() };
+  await assert.rejects(f.instance.openSources(), (error: unknown) => isLoadFailure(error));
+  await Promise.resolve();
+  const message = f.control('[data-pres-file-message]');
+  assert.deepEqual(f.calls.loadFailures, [message]);
+  assert.equal(message.textContent, LOAD_FAILURE_TEXT);
+  assert.equal(message.hidden, false);
+  assert.equal(f.instance.sourcesLoading, undefined, 'the next try loads again');
+});
+
+test('a converter page script that hangs ends after the converter start limit, with the converter’s own sentence', async () => {
+  const f = library({ stalled: ['../lib/slidev-convert-browser'] });
+  const converting = f.instance.buildDeps(f.instance.operation).convertSlidev(new Map(), {}, {});
+  await new Promise((resolve) => setImmediate(resolve));
+  const index = f.calls.delays.indexOf(90_000);
+  assert.notEqual(index, -1, 'a 90-second limit covers the download');
+  f.calls.timers[index]();
+  await assert.rejects(converting, (error: any) => {
+    assert.equal(error.name, 'SlidevConverterUnavailableError');
+    assert.equal(error.message, 'The Slidev converter was not ready after 90 seconds. Check the internet connection, reload the page, and open the ZIP again.');
+    assert.equal(error.detail, 'not ready after 90000 ms');
+    return true;
+  });
+});
+
+test('the converter gets the time left of the one start limit, and its own time-out names the whole limit', async () => {
+  const seen: any[] = [];
+  const f = library({
+    convert: async (_files, _detection, options) => {
+      seen.push(options);
+      throw Object.assign(new Error('The Slidev converter was not ready after 88 seconds.'), { name: 'SlidevConverterUnavailableError', detail: 'not ready after 88000 ms' });
+    },
+  });
+  const deps = f.instance.buildDeps(f.instance.operation);
+  await assert.rejects(deps.convertSlidev(new Map(), {}, {}), (error: any) => /not ready after 90 seconds/.test(error.message) && error.detail === 'not ready after 90000 ms');
+  assert.equal(seen[0].startTimeLimit, 90_000, 'no time has passed on the fake clock');
+  assert.equal(f.calls.cleared.size >= 1, true, 'the download timer is cleared once the script is there');
+  const g = library({ convert: async () => { throw new Error('Something else.'); } });
+  await assert.rejects(g.instance.buildDeps(g.instance.operation).convertSlidev(new Map(), {}, {}), /Something else\./);
 });
 
 test('a converter that could not load is no fault of the presentation: Try again, and the stage says it could not be opened this time', () => {
@@ -1247,4 +1301,13 @@ test('the presentation\'s own texts and the player\'s sentences each have room f
   for (let index = 1; index <= 22; index++) options.onLimit({ code: 'question', text: `Player sentence ${index}.`, counted: true });
   assert.equal(runtime.filter((entry) => entry.origin === 'player').length, 20);
   assert.equal(runtime.length, 40);
+});
+
+test('the library’s copy of the converter start limit is the converter’s own', () => {
+  const library = readFileSync(new URL('../src/scripts/presentation-library.ts', import.meta.url), 'utf8');
+  const converter = readFileSync(new URL('../src/lib/slidev-convert-browser.ts', import.meta.url), 'utf8');
+  const copy = /static readonly slidevStartLimitMs = ([\d_]+);/.exec(library)?.[1];
+  const own = /export const SLIDEV_START_TIME_LIMIT = ([\d_]+);/.exec(converter)?.[1];
+  assert.ok(copy && own);
+  assert.equal(copy, own);
 });

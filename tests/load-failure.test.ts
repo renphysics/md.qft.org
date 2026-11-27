@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, watchLoadFailures } from '../src/lib/load-failure.ts';
+import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, showLoadFailure, watchLoadFailures } from '../src/lib/load-failure.ts';
 
 describe('a part of the site that could not be loaded', () => {
   it('recognises the failed-import texts of Chrome, Firefox, Safari and Vite', () => {
@@ -43,5 +43,27 @@ describe('a part of the site that could not be loaded', () => {
       listeners[0]!();
       assert.deepEqual(shown, [LOAD_FAILURE_TEXT]);
     } finally { delete global.window; }
+  });
+
+  it('puts the sentence and a Reload button that reloads only when chosen in place of a message', () => {
+    const global = globalThis as { document?: unknown; location?: unknown };
+    let reloads = 0;
+    const element = (tag: string) => ({ tag, textContent: '', type: '', className: '', dataset: {} as Record<string, string>, listeners: {} as Record<string, () => void>, addEventListener(type: string, listener: () => void) { this.listeners[type] = listener; } });
+    global.document = { createElement: element };
+    global.location = { reload: () => { reloads++; } };
+    try {
+      const area = { children: [] as any[], replaceChildren(...children: any[]) { this.children = children; } };
+      showLoadFailure(area as unknown as HTMLElement);
+      const [text, space, button] = area.children;
+      assert.equal(text.textContent, LOAD_FAILURE_TEXT);
+      assert.equal(space, ' ');
+      assert.equal(button.tag, 'button');
+      assert.equal(button.type, 'button');
+      assert.equal(button.textContent, 'Reload the page');
+      assert.equal('reloadPage' in button.dataset, true);
+      assert.equal(reloads, 0, 'nothing reloads by itself');
+      button.listeners.click();
+      assert.equal(reloads, 1);
+    } finally { delete global.document; delete global.location; }
   });
 });

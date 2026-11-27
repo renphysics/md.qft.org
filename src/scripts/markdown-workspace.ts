@@ -40,7 +40,7 @@ import { EXAMPLES } from '../lib/examples';
 import { siteConfig } from '../config/site';
 import { scopedStorageKey } from '../lib/storage-scope';
 import { withBase } from '../lib/site-path';
-import { errorMessage, watchLoadFailures } from '../lib/load-failure';
+import { errorMessage, isLoadFailure, showLoadFailure, watchLoadFailures } from '../lib/load-failure';
 import type { PresentationLibrary } from './presentation-library';
 
 type ViewMode = 'editor' | 'split' | 'preview';
@@ -762,7 +762,9 @@ class MarkdownWorkspace extends HTMLElement {
       if (this.slideLoading) await this.slideLoading;
       if (this.current?.mode === 'slides' && this.slidesRendered) this.slidePreview?.update(this.slidesRendered, this.slideSettings());
     } catch (error) {
-      this.q('[data-slide-host]').textContent = 'Slides could not be loaded. Switch to Document and back to try again.';
+      // A part of the site that could not be fetched: switching back and forth cannot help, a reload does.
+      if (isLoadFailure(error)) showLoadFailure(this.q('[data-slide-host]'));
+      else this.q('[data-slide-host]').textContent = 'Slides could not be loaded. Switch to Document and back to try again.';
       this.notify(messageOf(error), 10_000);
     } finally { this.slideLoading = undefined; }
   }

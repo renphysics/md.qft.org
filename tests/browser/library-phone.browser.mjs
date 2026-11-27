@@ -9,6 +9,7 @@
  * shows the same plain sentence, never the browser's import error.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { until } from './harness.mjs';
 
@@ -149,6 +150,41 @@ export default async function run(t) {
     const gone = /\/_astro\/(presentation-store|deck-project)\.[^/]*\.js$/;
     const expected = t.failedRequests.filter((request) => gone.test(request.url));
     assert.ok(expected.length >= 2, 'the old release\'s files were asked for');
+    t.failedRequests.splice(0, t.failedRequests.length, ...t.failedRequests.filter((request) => !gone.test(request.url)));
+  });
+
+  await t.step('After a new release, Source files, the Slidev converter and the slide preview give the fixed sentence, with Reload where it stays on screen', async () => {
+    t.allowConsoleError(/Failed to load resource: the server responded with a status of 404/);
+    const { page } = await t.newPage({ viewport: { width: 1280, height: 800 } });
+    await t.openWorkspace(page);
+    const gone = /\/_astro\/(deck-sources|deck-editor|slidev-convert-browser|slide-preview)\.[^/]*\.js$/;
+    await page.locator('[data-file-input]').setInputFiles({ name: 'phone-lesson.html', mimeType: 'text/html', buffer: DECK });
+    await page.locator('[data-pres-start-button]').waitFor({ state: 'visible' });
+    await page.route(gone, (route) => route.fulfill({ status: 404, body: 'Not found' }));
+    // Source files: in place of "Opening the files…", and in the notice, each with Reload.
+    await page.locator('[data-pres-view="source"]').click();
+    const message = page.locator('[data-pres-file-message]');
+    await until(async () => (await message.textContent()).startsWith(LOAD_FAILURE), 'the fixed sentence in Source files');
+    assert.equal(await message.locator('[data-reload-page]').isVisible(), true, 'Reload in Source files');
+    await until(async () => (await page.locator('[data-pres-notice]').textContent()).startsWith(LOAD_FAILURE), 'the fixed sentence in the notice');
+    assert.equal(await page.locator('[data-pres-notice] [data-reload-page]').isVisible(), true, 'Reload in the notice');
+    assert.doesNotMatch(await page.locator('[data-pres-dialog]').textContent(), /dynamically imported module|_astro|Opening the files/);
+    await page.locator('[data-pres-close]').click();
+    await page.locator('[data-pres-dialog]').waitFor({ state: 'hidden' });
+    // A Slidev build whose converter script is gone: the fixed sentence, not "check the internet connection".
+    const slidev = readFileSync(new URL('../fixtures/slidev-default-build.zip', import.meta.url));
+    await page.locator('[data-file-input]').setInputFiles({ name: 'slidev-build.zip', mimeType: 'application/zip', buffer: slidev });
+    await until(async () => (await page.locator('[data-pres-problem]').textContent()).includes(LOAD_FAILURE), 'the fixed sentence for the converter');
+    assert.doesNotMatch(await page.locator('[data-pres-dialog]').textContent(), /Check the internet connection/);
+    await page.locator('[data-pres-close]').click();
+    await page.locator('[data-pres-dialog]').waitFor({ state: 'hidden' });
+    // The workspace's slide preview: the fixed sentence with Reload, not "Switch to Document and back".
+    await page.locator('[data-content-mode="slides"]').click();
+    const host = page.locator('[data-slide-host]');
+    await until(async () => (await host.textContent()).startsWith(LOAD_FAILURE), 'the fixed sentence in the slide preview');
+    assert.equal(await host.locator('[data-reload-page]').isVisible(), true, 'Reload in the slide preview');
+    await page.unroute(gone);
+    await page.close();
     t.failedRequests.splice(0, t.failedRequests.length, ...t.failedRequests.filter((request) => !gone.test(request.url)));
   });
 }
