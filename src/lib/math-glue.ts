@@ -22,7 +22,8 @@
 export const KEEP_LIMIT = 16;
 
 const WORD = String.raw`\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Nd}\p{M}`;
-const SPACE = String.raw`  `;
+// A no-break space and a narrow no-break space, written as escapes because they cannot be seen in source.
+const SPACE = String.raw`\u00a0\u202f`;
 const CLOSERS = String.raw`,.;:!?%)\]}'"\-\/‐‑–’”»›…‰°′″`
   + String.raw`、。，．：；！？）］｝〉》」』】〕〗` + SPACE;
 const OPENERS = String.raw`(\[{'"‘‚“„«‹¿¡`

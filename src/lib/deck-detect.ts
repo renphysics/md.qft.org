@@ -4,6 +4,7 @@ import { BUNDLED_VERSIONS, mapLibraryUrl } from './deck-vendor';
 import { cleanReportedText } from './presentation-messages';
 import type { DeckDetection, DeckFiles, DeckIssue } from './deck-types';
 import { SLIDEV_SOURCE_SCORE, slidevMarkdownScore } from './slidev-source';
+import { SLIDEV_PROMPT_RELEASE } from './slidev-prompt';
 
 /**
  * Work out what an imported folder or ZIP is, and what will stand in the way
@@ -805,9 +806,10 @@ const SLIDEV_RELEASE = /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[A-Za-z\d][A-Za-z\d.-]{0,2
  * 51 build made with today's dependencies shows Slidev's own go-to list of
  * slide titles at the top right of every slide (Slidev 51's Goto.vue lists
  * every slide for an empty search and only moves the dialog out of view; 52
- * fixed it). Older releases were not measured, so their note says less.
+ * fixed it). Older releases were not measured, so their note says less. It is
+ * the release that the Slidev instructions ask for, so the two cannot drift.
  */
-const SLIDEV_OLDEST_CHECKED = 52;
+const SLIDEV_OLDEST_CHECKED = SLIDEV_PROMPT_RELEASE;
 const SLIDEV_REMEDY = `ask your AI assistant to change "@slidev/cli" in package.json to "^${SLIDEV_OLDEST_CHECKED}.0.0" or newer, then run npm install and npx slidev build and send the new ZIP.`;
 
 /** The note for a build older than Slidev 52, or undefined; `version` matches SLIDEV_RELEASE. */
