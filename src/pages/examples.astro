@@ -6,11 +6,11 @@ import SiteFooter from '../components/SiteFooter.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title={`Markdown examples: notes, equations & slides — ${siteConfig.name}`} active="examples" description="Open editable study notes, a project report, quantum mechanics, a syntax guide, and Markdown slides. Export a PDF and portable HTML, or present equations.">
+<BaseLayout title={`Markdown examples: notes, equations & slides — ${siteConfig.name}`} active="examples" description="Open editable study notes, a project report, quantum mechanics, a syntax guide, and Markdown slides. Export a PDF or portable HTML, or present your slides.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">A starting point for your next document</span>
     <h1>Markdown examples to make your own.</h1>
-    <p class="page-lead">Start from study notes, a project report, or a mathematical derivation; then explore a quantum phase presentation or teach with interactive physics demonstrations. Open an example as a new local draft, make it your own, and try Save PDF, a portable HTML download, or Present.</p>
+    <p class="page-lead">Start from study notes, a project report, or a mathematical derivation; then teach with interactive physics demonstrations or explore a quantum phase presentation. Open an example as a new local draft, make it your own, and try Save PDF, a portable HTML download, or Present.</p>
     {/* Markdown documents first (the order of EXAMPLES), then the slide decks, then the compiled Slidev lesson. */}
     <div class="example-grid">
       {EXAMPLES.map((example, index) => (

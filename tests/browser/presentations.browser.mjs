@@ -113,8 +113,11 @@ export default async function run(t) {
     // The design lives in the project's style.css, which Slidev loads for the
     // whole presentation. A <style> block in slides.md reaches only the slide
     // it is written in: that is how the first three slides once played with
-    // the plain theme and showed "In phaseAt φ = 0". All four slides are in
-    // the page by now; the hidden ones have their styles too.
+    // the plain theme and showed "In phaseAt φ = 0". Slidev mounts the slide
+    // after the current one as well, so from the third slide all four are in
+    // the page; the hidden ones have their styles too.
+    await heading(frame, 'Change the relative phase.');
+    await frame.locator('.slidev-page-4 .slidev-layout').waitFor({ state: 'attached', timeout: 20_000 });
     const designs = await frame.evaluate(() => [1, 2, 3, 4].map((number) => {
       const layout = document.querySelector(`.slidev-page-${number} .slidev-layout`);
       const style = (element, property) => element ? getComputedStyle(element)[property] : null;

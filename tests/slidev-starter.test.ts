@@ -56,6 +56,9 @@ test('the Starter ZIP has every file of tools/slidev, so a new file means regene
   }
 });
 
+/** A text as a regular expression that matches exactly that text. */
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * Every selector of the style sheets that the compiled presentation carries:
  * the text before each "{". One pass over the text, because the sheets hold
@@ -91,17 +94,27 @@ function compiledSelectors(): string[] {
  */
 test('the Starter ZIP styles every class of its slides for the whole presentation, not for one slide', () => {
   const slides = Buffer.from(starter['source/slides.md']).toString('utf8');
-  const classes = [...new Set([...slides.matchAll(/\bclass="([^"]+)"/g)].flatMap((match) => match[1].split(/\s+/)).filter(Boolean))];
+  // Plain class attributes only: a Vue binding (:class="...") holds an expression, not a list of names.
+  const classes = [...new Set([...slides.matchAll(/(?<![:\w-])class="([^"]+)"/g)].flatMap((match) => match[1].split(/\s+/)).filter(Boolean))];
   for (const expected of ['eyebrow', 'lead', 'concept-grid', 'question-list', 'lesson-note']) assert.ok(classes.includes(expected), `the slides use .${expected}`);
   const compiled = compiledSelectors();
   assert.ok(compiled.length > 100, 'the compiled style sheets were read');
   for (const name of classes) {
-    const uses = new RegExp(`\\.${name}(?![\\w-])`);
+    const uses = new RegExp(`\\.${literal(name)}(?![\\w-])`);
     const selectors = compiled.filter((selector) => uses.test(selector));
     assert.ok(selectors.length, `.${name} has a rule in the compiled presentation`);
     assert.ok(selectors.some((selector) => !selector.includes('[data-v-')),
       `.${name} is styled only inside one slide (a scoped rule): move its rules from the <style> block in slides.md to style.css`);
   }
+});
+
+test('the Starter ZIP keeps its styles in style.css: its slides.md has no <style> block', () => {
+  // The test above cannot see a single rule that moves back into one slide while its class keeps
+  // other rules in style.css. The starter therefore keeps every rule in style.css.
+  const slides = Buffer.from(starter['source/slides.md']).toString('utf8');
+  assert.doesNotMatch(slides, /<style\b/i,
+    'Slidev applies a <style> block in slides.md to the one slide it is written in: put the rule in style.css (see tools/slidev/README.md)');
+  assert.ok(Buffer.from(starter['source/style.css'] ?? []).toString('utf8').includes('.slidev-layout'), 'source/style.css holds the design');
 });
 
 test('the Starter ZIP keeps a label apart from the text beside it even where no style sheet applies', () => {
