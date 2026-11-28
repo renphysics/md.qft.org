@@ -14,6 +14,7 @@ import css from 'highlight.js/lib/languages/css';
 import { isInteractiveFence, renderInteractiveFence, MAX_INTERACTIVE_DEMOS } from './interactive-demos';
 import { projectFilePath, type LessonProject } from './lesson-project';
 import { imageReference } from './image-assets';
+import { divideText, keepWithMath } from './math-glue';
 
 for (const [name, language] of Object.entries({ javascript, typescript, python, json, bash, latex, css })) {
   hljs.registerLanguage(name, language);
@@ -29,6 +30,12 @@ export interface RenderOptions {
   project?: LessonProject;
   /** Workspace-only action. Portable exports omit authoring controls. */
   editableDemos?: boolean;
+  /**
+   * Keep punctuation and attached letters on the line of the inline formula
+   * beside them (see math-glue.ts). On unless false; tests turn it off to
+   * compare with the plain rendering.
+   */
+  keepTextWithMath?: boolean;
 }
 export interface RenderIssue { message: string; line: number }
 export interface DocumentHeading { id: string; text: string; level: number; line: number }
@@ -198,6 +205,23 @@ function renderSource(source: string, options: RenderOptions, slides: boolean): 
     }
   };
   md.renderer.rules.math_inline = (tokens, index) => renderMath(tokens[index], false);
+  if (options.keepTextWithMath !== false) {
+    // An inline formula takes the characters that belong to it from the plain
+    // text tokens beside it, and the text rule leaves exactly those out. Both
+    // decide from the tokens alone, which stay unchanged, so headings, words
+    // and source lines are not affected and no character is lost or doubled.
+    // Display formulas, and neighbours that are not plain text (emphasis, a
+    // link, a footnote mark, a line break), are left as they are.
+    const isMath = (token: Token | undefined) => token?.type === 'math_inline';
+    const share = (tokens: Token[], index: number) =>
+      divideText(tokens[index].content, isMath(tokens[index - 1]), isMath(tokens[index + 1]));
+    md.renderer.rules.math_inline = (tokens, index) => {
+      const leading = tokens[index - 1]?.type === 'text' ? share(tokens, index - 1).forNext : '';
+      const trailing = tokens[index + 1]?.type === 'text' ? share(tokens, index + 1).forPrevious : '';
+      return keepWithMath(leading, renderMath(tokens[index], false), trailing);
+    };
+    md.renderer.rules.text = (tokens, index) => md.utils.escapeHtml(share(tokens, index).rest);
+  }
   md.renderer.rules.math_block = (tokens, index) => `${renderMath(tokens[index], true)}\n`;
 
   // The plugin's footnote/footnote-ref wrappers stay namespaced and deterministic.
