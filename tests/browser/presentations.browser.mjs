@@ -131,6 +131,8 @@ export default async function run(t) {
       'Each of the four slides has the paper background, the serif title and the coloured eyebrow');
     const cards = frame.locator('.slidev-page-2 .concept-grid > div');
     assert.equal(await frame.locator('.slidev-page-2 .concept-grid').evaluate((grid) => getComputedStyle(grid).display), 'grid');
+    assert.deepEqual(await cards.evaluateAll((items) => items.map((item) => getComputedStyle(item).backgroundColor)), ['rgb(240, 235, 229)', 'rgb(240, 235, 229)'],
+      'Each label and its sentence stand on a card of their own');
     assert.deepEqual(await cards.locator('strong').evaluateAll((labels) => labels.map((label) => getComputedStyle(label).display)), ['block', 'block'],
       'Each label is a line of its own');
     assert.deepEqual(await cards.allTextContents(), ['In phase At φ = 0, the contributions reinforce.', 'Out of phase At φ = π, they cancel at this detector.'],

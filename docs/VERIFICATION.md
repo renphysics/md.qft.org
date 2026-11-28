@@ -6,7 +6,7 @@ Two changes that the site's owner asked for after the release described in the n
 
 ### "In phaseAt": the Slidev example had its design on one slide only
 
-On the second slide of the site's Slidev example the labels ran into their sentences: "In phaseAt φ = 0, the contributions reinforce." The player did not cause it. The example's source kept its whole design in one `<style>` block on its last slide, and Slidev applies the `<style>` block of a slide to that slide alone (it compiles the block as a scoped style). So only the last of the four slides had the design. The first three played with the plain default theme, in which the label and its sentence are two inline elements with nothing between them. The package had been like this since the first release (974fa5e).
+On the second slide of the site's Slidev example the labels ran into their sentences: "In phaseAt φ = 0, the contributions reinforce." The player did not cause it. The example's source kept its whole design in one `<style>` block on its last slide, and Slidev applies the `<style>` block of a slide to that slide alone (it compiles the block as a scoped style). So only the last of the four slides had the design. The first three played with the plain default theme, in which the label and its sentence are two inline elements with nothing between them. The package had been like this since the Slidev example was added (974fa5e, pull request #1).
 
 - The shared styles are in `tools/slidev/style.css`, which Slidev loads for the whole presentation. The starter's README says where shared styles belong.
 - In the markup a space separates each label from its text, so the words stay apart even where no style applies.
@@ -21,17 +21,17 @@ Measured in Chromium on the build before the change and on the build after it, a
 | The two cards on the second slide | "In phaseAt φ = 0, the contributions reinforce." and "Out of phaseAt φ = π, they cancel at this detector." | Two cards, each label on a line of its own above its sentence |
 | Console errors, requests to other hosts | None | None |
 
-A visitor who opened the example before has the old package saved in the browser. Opening the example again from the Examples page or from the Presentations library plays the new package and saves it beside the old one; both rows then show the time of import, and the old one can be removed there. The site does not remove it by itself.
+A visitor who opened the example before has the old package saved in the browser. Opening the example again from the Examples page or from the Presentations library plays the new package and saves it beside the old one. The two rows then differ only in the time of import, which both show, and the old one can be removed there. The site does not remove it by itself. For up to about ten minutes after a deployment a browser may still take the old ZIP from its cache; the site then says that the file is already in the library and plays the old copy.
 
 ### The first example is a Markdown document
 
 The list of built-in examples began with two slide decks, and the Examples page began with the compiled Slidev lesson and those two decks. The five Markdown documents now come first, in the same order among themselves as before, in the dialog "Start with an example" and on the Examples page; the two slide decks follow, and the Slidev lesson closes the page. The page's title, description and lead follow the same order. Each of the seven examples still opens with its own name and in its own view, from its card and from the dialog; the guide's links, the lesson button of the demonstration dialog and `?presentation=slidev-example` work as before.
 
-Not changed, and for the owner to decide: the guide page begins with the section on presentations and links the Slidev example first, as it has since the first release, and the starter of **Create with AI** opens as slides, which is its purpose.
+Not changed, and for the owner to decide: the guide page begins with the section on presentations and links the Slidev example first, as it has since the Slidev example was added, and the starter of **Create with AI** opens as slides, which is its purpose.
 
 ### Independent verification
 
-Three verifiers who had not written the change tried to refute it, each read-only in a folder of their own, with their own scripts, against the build before and the build after. None of the claims above was refuted. Two of them rebuilt the example's ZIP, with an identical result. Between them they made five changes of their own to the source and to the page, to see whether the new tests notice. The browser suites noticed every change they were run on. The unit tests missed one: a single rule moved back into one slide while its class kept other rules in `style.css`. The starter's `slides.md` may now hold no `<style>` block at all, and a unit test says so. They ran the two affected browser suites three times each without a failure, and one ran the steps of the Check workflow on a clean clone.
+Three verifiers who had not written the change tried to refute the two commits that hold it (87a1b0c and 77def56), each read-only in a folder of their own, with their own scripts, against the build before and the build after. None of the claims above was refuted. Two of them rebuilt the example's ZIP, with an identical result. To see whether the new tests notice, one made three changes of its own to the slides and the styles, and another put back the old list, the old page, and the Slidev card alone at the top. The browser suites noticed every change they were run on. The unit tests missed one: a single rule moved back into one slide while its class kept other rules in `style.css`. The starter's `slides.md` may now hold no `<style>` block at all, and a unit test says so. They ran the two affected browser suites three times each without a failure, and one ran the steps of the Check workflow on a clean clone.
 
 What they found, and what was done:
 
@@ -39,14 +39,16 @@ What they found, and what was done:
 - `README.txt` inside the ZIP named `slides.md` and the components as the files to revise, not the styles. Corrected in the packager.
 - The verification record had no entry for this change. This section.
 - Two tests could be sturdier: one read a class name as a regular expression, and the browser step relied on the fourth slide being in the page without waiting for it. Both corrected.
-- Small grey text of the example's design is below a contrast of 4.5 to 1: the line at the foot of the cover at 3.75, the sentences in the cards and the notes at about 4.3. These are the colours of the original design, which now shows on every slide. Left as it is.
+- Small text of the example's design is below a contrast of 4.5 to 1: the line at the foot of the cover at 3.75 (its separator dots at 4.37), the sentences in the cards and the notes at about 4.3, and the question numbers on the last slide at 4.48. These are the colours of the original design, which now shows on every slide. Left as it is.
 - The lead of the Examples page named the two decks in the other order than the cards, and its description ended in "or present equations". Both reworded.
+
+These corrections (e3a069d, with the ZIP packed again) and this record were then checked by two more. A reviewer ran the steps of the Check workflow on a clean clone of the corrected tree, rebuilt the ZIP with an identical result, and ran the two suites three more times each without a failure. The reviewer also deleted the rule that draws the two cards: no test noticed, so the browser step now reads the cards' background too, and it fails when that rule is gone. A fact-checker went through this record sentence by sentence, found no false statement in it, and named sentences that said too little or were imprecise; they are corrected here.
 
 ### The instructions for AI assistants were tested and left as they are
 
-A teacher's own deck could get the same fault if an AI assistant kept a shared design in one slide. Eight role-played chat assistants (Claude models that had not seen this repository) received the Slidev instructions of **Create with AI** and one more sentence from the teacher that asked for one consistent look on all slides. Four received the instructions as they are. All four kept the look in a `style.css` beside `slides.md`, and none wrote a `<style>` block in `slides.md`. The other four received a copy with one added line about `style.css`; they did the same, but they do not count, because the test's own script garbled that copy (two of the four remarked on it). So the instructions were not changed.
+A teacher's own deck could get the same fault if an AI assistant kept a shared design in one slide. Eight role-played chat assistants (four Opus and four Sonnet agents, told to read no file and to use no tool) received the Slidev instructions of **Create with AI** and one more sentence from the teacher that asked for one consistent look on all slides. Four received the instructions as they are. All four kept the look in a `style.css` beside `slides.md`, and none wrote a `<style>` block in `slides.md`. The other four received a copy with one added line about `style.css`; they did the same, but they do not count, because the test's own script garbled that copy (two of the four remarked on it). So the instructions were not changed.
 
-Two of the eight projects were built as written and opened on the site as the ZIP that the instructions ask for. In both the look reaches all ten slides, and the site's check gave its one usual note. One of the two asked for Slidev 51, an older release than the two the site is checked with (52 and 53). Its build shows part of Slidev's own go-to list on every slide, on the site and also when its `dist/` folder is served alone, so the site does not cause it. The instructions name no Slidev release; that is left for a separate change.
+Two of the eight projects, one from each group, were built as written and opened on the site as the ZIP that the instructions ask for. In both the look reaches all ten slides, and the site's check gave its one usual note. One of the two asked for Slidev 51, an older release than the two the site is checked with (52 and 53). Its build shows part of Slidev's own go-to list on every slide and reports one error in the console ("Failed to patch FloatingVue"), on the site and also when its `dist/` folder is served alone, so the site does not cause it. The instructions name no Slidev release; that is left for a separate change.
 
 ### Automated checks
 
@@ -58,11 +60,11 @@ Two of the eight projects were built as written and opened on the site as the ZI
 | `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
 | `npm run test:browser` | Passed: 13 of 13 suites, 150 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
 
-New tests: the starter's styles reach the whole presentation, its `slides.md` holds no `<style>` block, and no label touches the text beside it (`slidev-starter`); the first example is a document and the documents come before the decks (`examples-order`); a step of the `presentations` suite reads the design of all four slides and the two cards; and a new suite, `examples`, opens the first card, the first choice of the dialog and a slide deck. Each of them fails on the tree before the change.
+New tests: the starter's styles reach the whole presentation, its `slides.md` holds no `<style>` block, and no label touches the text beside it (`slidev-starter`); the first example is a document and the documents come before the decks (`examples-order`); a step of the `presentations` suite reads the design of all four slides and of the two cards; and a new suite, `examples`, opens the first card, the first choice of the dialog and a slide deck. Each of them fails on the tree before the change.
 
 ### Not verified
 
-- **The Check workflow.** It runs for pull requests and for `main`; it has not run for these commits. Everything here was run in Chromium 158 on the development machine; the workflow uses Chromium 151.
+- **The Check workflow.** It runs for pull requests, for `main` and when it is started by hand. No pull request was open for these commits when this was written. Everything here was run in Chromium 158 on the development machine; the workflow uses Chromium 151.
 - **Browsers and devices.** Only full Chromium was used. Phone widths were emulated; no phone, touch input or screen reader was used.
 - **The deployed site.** These changes were not deployed.
 
