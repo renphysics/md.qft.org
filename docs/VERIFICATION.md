@@ -1,5 +1,71 @@
 # Verification history
 
+## The Slidev example's design and the order of the examples — 2026-11-28
+
+Two changes that the site's owner asked for after the release described in the next section.
+
+### "In phaseAt": the Slidev example had its design on one slide only
+
+On the second slide of the site's Slidev example the labels ran into their sentences: "In phaseAt φ = 0, the contributions reinforce." The player did not cause it. The example's source kept its whole design in one `<style>` block on its last slide, and Slidev applies the `<style>` block of a slide to that slide alone (it compiles the block as a scoped style). So only the last of the four slides had the design. The first three played with the plain default theme, in which the label and its sentence are two inline elements with nothing between them. The package had been like this since the first release (974fa5e).
+
+- The shared styles are in `tools/slidev/style.css`, which Slidev loads for the whole presentation. The starter's README says where shared styles belong.
+- In the markup a space separates each label from its text, so the words stay apart even where no style applies.
+- With the design on every slide, two rules of the default theme showed that the last slide had never met: the theme dims the paragraph after a title, and it sets the title of a cover slide large with a wide line spacing. Both are set for this design.
+- `public/slidev/interactive-physics.zip` is rebuilt from `tools/slidev` with its packager (15 files; `source/style.css` is new). A second build on another checkout gave the same ZIP, byte for byte.
+
+Measured in Chromium on the build before the change and on the build after it, at 1280 and at 390 pixels wide, in the dialog, in Present and in the downloaded standalone HTML:
+
+| | Before | After |
+| --- | --- | --- |
+| Slides with the design (paper background, serif title, coloured eyebrow) | 1 of 4 (the last) | 4 of 4 |
+| The two cards on the second slide | "In phaseAt φ = 0, the contributions reinforce." and "Out of phaseAt φ = π, they cancel at this detector." | Two cards, each label on a line of its own above its sentence |
+| Console errors, requests to other hosts | None | None |
+
+A visitor who opened the example before has the old package saved in the browser. Opening the example again from the Examples page or from the Presentations library plays the new package and saves it beside the old one; both rows then show the time of import, and the old one can be removed there. The site does not remove it by itself.
+
+### The first example is a Markdown document
+
+The list of built-in examples began with two slide decks, and the Examples page began with the compiled Slidev lesson and those two decks. The five Markdown documents now come first, in the same order among themselves as before, in the dialog "Start with an example" and on the Examples page; the two slide decks follow, and the Slidev lesson closes the page. The page's title, description and lead follow the same order. Each of the seven examples still opens with its own name and in its own view, from its card and from the dialog; the guide's links, the lesson button of the demonstration dialog and `?presentation=slidev-example` work as before.
+
+Not changed, and for the owner to decide: the guide page begins with the section on presentations and links the Slidev example first, as it has since the first release, and the starter of **Create with AI** opens as slides, which is its purpose.
+
+### Independent verification
+
+Three verifiers who had not written the change tried to refute it, each read-only in a folder of their own, with their own scripts, against the build before and the build after. None of the claims above was refuted. Two of them rebuilt the example's ZIP, with an identical result. Between them they made five changes of their own to the source and to the page, to see whether the new tests notice. The browser suites noticed every change they were run on. The unit tests missed one: a single rule moved back into one slide while its class kept other rules in `style.css`. The starter's `slides.md` may now hold no `<style>` block at all, and a unit test says so. They ran the two affected browser suites three times each without a failure, and one ran the steps of the Check workflow on a clean clone.
+
+What they found, and what was done:
+
+- A returning visitor keeps the old copy of the example beside the new one (described above). Left as it is.
+- `README.txt` inside the ZIP named `slides.md` and the components as the files to revise, not the styles. Corrected in the packager.
+- The verification record had no entry for this change. This section.
+- Two tests could be sturdier: one read a class name as a regular expression, and the browser step relied on the fourth slide being in the page without waiting for it. Both corrected.
+- Small grey text of the example's design is below a contrast of 4.5 to 1: the line at the foot of the cover at 3.75, the sentences in the cards and the notes at about 4.3. These are the colours of the original design, which now shows on every slide. Left as it is.
+- The lead of the Examples page named the two decks in the other order than the cards, and its description ended in "or present equations". Both reworded.
+
+### The instructions for AI assistants were tested and left as they are
+
+A teacher's own deck could get the same fault if an AI assistant kept a shared design in one slide. Eight role-played chat assistants (Claude models that had not seen this repository) received the Slidev instructions of **Create with AI** and one more sentence from the teacher that asked for one consistent look on all slides. Four received the instructions as they are. All four kept the look in a `style.css` beside `slides.md`, and none wrote a `<style>` block in `slides.md`. The other four received a copy with one added line about `style.css`; they did the same, but they do not count, because the test's own script garbled that copy (two of the four remarked on it). So the instructions were not changed.
+
+Two of the eight projects were built as written and opened on the site as the ZIP that the instructions ask for. In both the look reaches all ten slides, and the site's check gave its one usual note. One of the two asked for Slidev 51, an older release than the two the site is checked with (52 and 53). Its build shows part of Slidev's own go-to list on every slide, on the site and also when its `dist/` folder is served alone, so the site does not cause it. The instructions name no Slidev release; that is left for a separate change.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | Passed: 158 files, 0 errors, 0 warnings, 0 hints |
+| `npm test` | Passed: 870 tests in 105 suites; 868 passed, 2 skipped (`QFT_SLIDEV_BUILDS` and `QFT_SLIDEV_MONACO_BUILD` unset), 0 failures |
+| `npm test --prefix tools/slidev` | Passed: 11 tests |
+| `npm run build` | Passed: 6 pages. Vite still reports its large-chunk advisory |
+| `npm run test:browser` | Passed: 13 of 13 suites, 150 checks, 1 skipped (`QFT_SLIDEV_MONACO_BUILD` unset), in full Chromium |
+
+New tests: the starter's styles reach the whole presentation, its `slides.md` holds no `<style>` block, and no label touches the text beside it (`slidev-starter`); the first example is a document and the documents come before the decks (`examples-order`); a step of the `presentations` suite reads the design of all four slides and the two cards; and a new suite, `examples`, opens the first card, the first choice of the dialog and a slide deck. Each of them fails on the tree before the change.
+
+### Not verified
+
+- **The Check workflow.** It runs for pull requests and for `main`; it has not run for these commits. Everything here was run in Chromium 158 on the development machine; the workflow uses Chromium 151.
+- **Browsers and devices.** Only full Chromium was used. Phone widths were emulated; no phone, touch input or screen reader was used.
+- **The deployed site.** These changes were not deployed.
+
 ## Independent verification, three more fix rounds and the closing — 2026-11-27
 
 The fixes described in the next section were checked by verifiers who had not written them. What they found was fixed, and the fixes were checked again, seven times in all. Every verifier worked read-only in a folder of their own, with their own scripts and test presentations, and compared the build before a round with the build after it in the same Chromium, and with the same files served over plain HTTP where a reference was needed. A fix counted as confirmed only when the verifier's own run showed the defect before the round and not after it.
