@@ -775,12 +775,15 @@ function detectSlidevBuild(files: DeckFiles, page: PageScan, issues: IssueList):
   }
   let version: string | undefined;
   const declared = page.slidevVersion?.trim() ?? '';
-  if (/^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[\w.]{1,30})?$/.test(declared)) version = declared;
+  // The release comes from the deck's file and is quoted in a note: only a plain release spelling counts.
+  if (SLIDEV_RELEASE.test(declared)) version = declared;
   else {
     issues.add('slidev-version-unknown', 'warning',
       'This looks like a Slidev build, but it does not say which Slidev version made it. Builds from Slidev 0.49 or newer say so; older builds may not play.',
       page.path);
   }
+  const older = version === undefined ? undefined : slidevOlderNote(version);
+  if (older) issues.add('slidev-old-version', 'warning', older, page.path);
   if (flags.slidevHasMonaco) {
     issues.add('slidev-monaco', 'warning',
       'The build includes the Monaco code editor, which cannot run in the player. Code blocks that use it will not be editable or runnable.',
@@ -792,6 +795,29 @@ function detectSlidevBuild(files: DeckFiles, page: PageScan, issues: IssueList):
     kind: 'slidev-build', entry: page.path, engine: 'slidev', ...(version ? { engineVersion: version } : {}),
     ...titleOf(page), issues: issues.list(), flags,
   };
+}
+
+/** A release as Slidev writes it into the slidev:version meta: 51.8.2, or 52.0.0-beta.1. */
+const SLIDEV_RELEASE = /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[A-Za-z\d][A-Za-z\d.-]{0,29})?$/;
+
+/**
+ * The oldest Slidev release the player is checked with (52 and 53). A Slidev
+ * 51 build made with today's dependencies shows Slidev's own go-to list of
+ * slide titles at the top right of every slide (Slidev 51's Goto.vue lists
+ * every slide for an empty search and only moves the dialog out of view; 52
+ * fixed it). Older releases were not measured, so their note says less.
+ */
+const SLIDEV_OLDEST_CHECKED = 52;
+const SLIDEV_REMEDY = `ask your AI assistant to change "@slidev/cli" in package.json to "^${SLIDEV_OLDEST_CHECKED}.0.0" or newer, then run npm install and npx slidev build and send the new ZIP.`;
+
+/** The note for a build older than Slidev 52, or undefined; `version` matches SLIDEV_RELEASE. */
+function slidevOlderNote(version: string): string | undefined {
+  const major = Number(version.split('.')[0]);
+  if (major >= SLIDEV_OLDEST_CHECKED) return undefined;
+  if (major === 51) {
+    return `This presentation was built with Slidev ${version}. The player is checked with Slidev 52 and 53. A Slidev 51 build can show Slidev's own list of slides at the top right of every slide. If you see it, ${SLIDEV_REMEDY}`;
+  }
+  return `This presentation was built with Slidev ${version}, which is older than the releases the player is checked with (Slidev 52 and 53). If the slides look wrong, ${SLIDEV_REMEDY}`;
 }
 
 function slidevPackage(files: DeckFiles, path: string): boolean {

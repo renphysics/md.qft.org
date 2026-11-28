@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { until } from './harness.mjs';
 import { deckFrame } from './player-host.mjs';
 
@@ -90,6 +90,7 @@ export default async function run(t) {
     const prompt = await page.evaluate(() => navigator.clipboard.readText());
     assert.match(prompt, /Wave packets/);
     assert.match(prompt, /ordinary Slidev project/);
+    assert.match(prompt, /package\.json depends on @slidev\/cli 52 or newer/);
     assert.match(prompt, /npx slidev build/);
     assert.doesNotMatch(prompt, /ordinary dist ZIP/);
     await format.selectOption('qft');
@@ -228,6 +229,31 @@ export default async function run(t) {
     assert.match(await page.locator('[data-pres-problem]').textContent(), /Monaco code editor/);
     assert.equal(await page.locator('[data-pres-start-button]').isVisible(), false);
     assert.equal(await page.locator('[data-pres-host] iframe').count(), 0);
+    await page.locator('[data-pres-back]').click();
+    await page.locator('[data-pres-list]:not([aria-busy])').waitFor();
+  });
+
+  await t.step('A build made with Slidev 51 plays, with a note in the check and in the report that asks for Slidev 52 or newer', async () => {
+    // The fixture with the release its index.html names rewritten, as a Slidev 51.8.2 build names it.
+    const files = unzipSync(readFileSync(FIXTURE));
+    const meta = '<meta property="slidev:version" content="53.1.0">';
+    const index = strFromU8(files['dist/index.html']);
+    assert.ok(index.includes(meta));
+    files['dist/index.html'] = strToU8(index.replace(meta, '<meta property="slidev:version" content="51.8.2">'));
+    await page.locator('[data-pres-input]').setInputFiles({ name: 'slidev-51-dist.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(files)) });
+    await until(async () => /Saved in this browser/.test(await storage(page)), 'the converted deck to be saved', 60_000);
+    assert.equal(await page.locator('[data-pres-start-button]').isVisible(), true, 'it still plays');
+    const notes = page.locator('[data-pres-notes]');
+    if (!(await notes.evaluate((element) => element.open))) await notes.locator('summary').click();
+    const sentence = 'This presentation was built with Slidev 51.8.2. The player is checked with Slidev 52 and 53. A Slidev 51 build can show Slidev\'s own list of slides at the top right of every slide. If you see it, ask your AI assistant to change "@slidev/cli" in package.json to "^52.0.0" or newer, then run npm install and npx slidev build and send the new ZIP.';
+    assert.ok((await page.locator('[data-pres-notes-list]').textContent()).includes(sentence), 'the note in Notes from the check');
+    await page.locator('[data-pres-report]').click();
+    await until(async () => (await page.evaluate(() => navigator.clipboard.readText())).startsWith('qft-deck-check/1'), 'the report to be copied');
+    const report = await page.evaluate(() => navigator.clipboard.readText());
+    assert.match(report, /^engine: slidev 51\.8\.2$/m);
+    assert.match(report, /^result: plays, with notes$/m);
+    assert.ok(report.includes(`- warning slidev-old-version (index.html): ${sentence}`), report);
+    assert.match(report, /^Reply: fix the notes above in the Slidev project, run "npx slidev build" again/m);
     await page.locator('[data-pres-back]').click();
     await page.locator('[data-pres-list]:not([aria-busy])').waitFor();
   });

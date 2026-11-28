@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import vm from 'node:vm';
-import { strToU8 } from 'fflate';
+import { strToU8, zipSync } from 'fflate';
 import { readDeckArchive } from '../src/lib/deck-archive.ts';
 import { detectDeck } from '../src/lib/deck-detect.ts';
+import { buildPlayable, isPlayable, openDeck } from '../src/lib/deck-project.ts';
+import { formatDeckReport } from '../src/lib/deck-report.ts';
 import { scanModuleImports } from '../src/lib/deck-linker-modules.ts';
 import {
   SLIDEV_CONVERT_LIMITS, convertSlidevFiles, type SlidevBundleRequest, type SlidevBundler, type SlidevConvertStep,
 } from '../src/lib/slidev-convert.ts';
 import type { DeckFiles, DeckIssue } from '../src/lib/deck-types.ts';
 import {
-  filesFromFolder, nodeSlidevBundler, researchMonacoBuild, researchSlidevBuilds, slidevFixtureFile,
+  filesFromFolder, nodeSlidevBundler, nodeSlidevConverter, researchMonacoBuild, researchSlidevBuilds, slidevFixtureFile,
 } from './helpers/slidev-node.ts';
 
 const codes = (issues: DeckIssue[]) => issues.map((issue) => issue.code);
@@ -372,5 +374,67 @@ describe('each conversion step', () => {
 
     const wrongKind = await convertSlidevFiles(smallBuild(), { kind: 'reveal', entry: 'index.html', issues: [], flags: {} }, recorder().bundler);
     assert.deepEqual(codes(wrongKind.issues), ['slidev-entry-missing']);
+  });
+});
+
+describe('the Slidev release a build names', () => {
+  const LIST_51 = 'This presentation was built with Slidev 51.8.2. The player is checked with Slidev 52 and 53. A Slidev 51 build can show Slidev\'s own list of slides at the top right of every slide. If you see it, ask your AI assistant to change "@slidev/cli" in package.json to "^52.0.0" or newer, then run npm install and npx slidev build and send the new ZIP.';
+  const OLDER = 'This presentation was built with Slidev 0.50.0, which is older than the releases the player is checked with (Slidev 52 and 53). If the slides look wrong, ask your AI assistant to change "@slidev/cli" in package.json to "^52.0.0" or newer, then run npm install and npx slidev build and send the new ZIP.';
+
+  /** The fixture build (53.1.0) with its slidev:version meta rewritten, or removed for undefined. */
+  async function fixtureNaming(version?: string): Promise<DeckFiles> {
+    const { files } = await readDeckArchive(slidevFixtureFile());
+    const index = new TextDecoder().decode(files.get('index.html'));
+    const meta = '<meta property="slidev:version" content="53.1.0">';
+    assert.ok(index.includes(meta));
+    const rewritten = new Map(files);
+    rewritten.set('index.html', strToU8(index.replace(meta, version === undefined ? '' : `<meta property="slidev:version" content="${version}">`)));
+    return rewritten;
+  }
+  const notes = (files: DeckFiles) => detectDeck(files).issues.filter((issue) => issue.code === 'slidev-old-version');
+
+  it('notes a Slidev 51 build, with the go-to list that such a build can show', async () => {
+    const [note, ...more] = notes(await fixtureNaming('51.8.2'));
+    assert.deepEqual(more, []);
+    assert.equal(note.severity, 'warning', 'it still plays');
+    assert.equal(note.message, LIST_51);
+    assert.equal(note.where, 'index.html');
+  });
+
+  it('notes an older build without the sentence about the list, which was not measured', async () => {
+    const [note, ...more] = notes(await fixtureNaming('0.50.0'));
+    assert.deepEqual(more, []);
+    assert.equal(note.severity, 'warning');
+    assert.equal(note.message, OLDER);
+    assert.equal(notes(await fixtureNaming('51.0.0-beta.2')).length, 1, 'a pre-release of 51 is 51');
+  });
+
+  it('gives no note for Slidev 52 and newer, nor for a build that names no release', async () => {
+    for (const version of ['52.20.1', '53.1.0', '52.0.0-beta.1', undefined]) assert.deepEqual(notes(await fixtureNaming(version)), [], String(version));
+  });
+
+  it('ignores a malformed or hostile release, which never reaches any output', async () => {
+    for (const version of ['51<script>', `51.${'1'.repeat(5000)}.0`, '51.8.2‮', '51.8.2-x_y', '51.8', ' 51.8.2 x', '51.8.2-', '51.8.2-<b>']) {
+      const files = await fixtureNaming(version);
+      const detection = detectDeck(files);
+      assert.deepEqual(notes(files), [], version.slice(0, 40));
+      assert.equal(detection.engineVersion, undefined, version.slice(0, 40));
+      const report = formatDeckReport({ kind: 'slidev-build', engine: 'slidev', entry: 'index.html', issues: detection.issues });
+      for (const output of [JSON.stringify(detection), report]) assert.ok(!output.includes(version), version.slice(0, 40));
+    }
+  });
+
+  it('carries the note into the playable deck and the report for AI, and the deck still plays', async () => {
+    const files = await fixtureNaming('51.8.2');
+    const project = await openDeck(new File([new Uint8Array(zipSync(Object.fromEntries(files))).buffer], 'old.zip', { type: 'application/zip' }));
+    assert.ok(project);
+    const playable = await buildPlayable(project, { vendor: () => { throw new Error('a Slidev build needs no vendor files'); }, convertSlidev: nodeSlidevConverter() });
+    assert.ok(isPlayable(playable));
+    assert.deepEqual(playable.issues.filter((issue) => issue.code === 'slidev-old-version').map((issue) => issue.message), [LIST_51]);
+    const report = formatDeckReport({ kind: project.kind, engine: project.engine, engineVersion: project.detection.engineVersion, entry: project.entry, issues: playable.issues });
+    assert.match(report, /^engine: slidev 51\.8\.2$/m);
+    assert.match(report, /^result: plays, with notes$/m);
+    assert.ok(report.includes(`- warning slidev-old-version (index.html): ${LIST_51}`));
+    assert.match(report, /^Reply: fix the notes above in the Slidev project, run "npx slidev build" again/m);
   });
 });

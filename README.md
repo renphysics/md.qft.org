@@ -278,7 +278,9 @@ files, so a crafted file cannot freeze the page.
   saved, **Copy report for AI** is hidden ("Nothing to send to your AI
   assistant: reload the page and open the ZIP again."), and the report says
   there is nothing to change in the presentation. Conversion was checked on
-  builds from Slidev 53.1.0 and 52.11.5; older builds may not play.
+  builds from Slidev 53.1.0 and 52.11.5; older builds may not play. A build
+  older than Slidev 52 still plays, with a note that names the release it was
+  built with and asks for `@slidev/cli` 52 or newer in its `package.json`.
 
 ### While it plays
 
