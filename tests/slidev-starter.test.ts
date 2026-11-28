@@ -68,7 +68,7 @@ test('the list of example versions names the committed Starter ZIP as current, a
     + `then enter the new ZIP as CURRENT: { sha256: '${createHash('sha256').update(starterBytes).digest('hex')}', size: ${starterBytes.length} }`;
   assert.equal(CURRENT_SLIDEV_EXAMPLE.sha256, createHash('sha256').update(starterBytes).digest('hex'), regenerated);
   assert.equal(CURRENT_SLIDEV_EXAMPLE.size, starterBytes.length, regenerated);
-  assert.ok(EARLIER_SLIDEV_EXAMPLES.length >= 4, 'the four earlier versions in git history are listed');
+  assert.ok(EARLIER_SLIDEV_EXAMPLES.length >= 5, 'the five earlier versions in git history are listed');
   for (const version of EARLIER_SLIDEV_EXAMPLES) {
     assert.match(version.sha256, /^[0-9a-f]{64}$/, 'a SHA-256 in lowercase hexadecimal');
     assert.ok(Number.isSafeInteger(version.size) && version.size > 0, 'a size in bytes');

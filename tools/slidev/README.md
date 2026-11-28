@@ -10,15 +10,17 @@ browser.
 
 You do not need this packager to play Slidev on md.qft.org. The site's
 **Create with AI → Slidev** instructions ask an AI assistant that can run
-commands for an ordinary Slidev project and one ZIP of the project folder with
-the built `dist/` inside and without `node_modules`; a ZIP of the `dist`
-folder alone opens too. The site converts the build in the browser each time
+commands for an ordinary Slidev project that depends on `@slidev/cli` 52 or
+newer, and one ZIP of the project folder with the built `dist/` inside and
+without `node_modules`; a ZIP of the `dist` folder alone opens too. The site converts the build in the browser each time
 it is opened, leaves out remote resources such as Google Fonts, and plays it
 with a player profile that reports script errors as notes instead of
 stopping. Builds that use live code editors (Monaco code blocks) or Web
 Workers are refused, a picture or file that the build lacks is named in the
 notes, and conversion depends on the build output of recent Slidev releases
-(checked with 52 and 53).
+(checked with 52 and 53). A build older than Slidev 52 still plays, with a
+note that names the release it was built with and asks for `@slidev/cli` 52
+or newer in its `package.json`.
 
 Use this starter and packager when you want more than that: a package that
 carries its editable source, plays exactly the compiled HTML you checked
@@ -58,6 +60,12 @@ the package locally. It does not upload your slides or call an AI service.
 the title in the `pack` script, or use the explicit command above, for a new
 lesson. To regenerate the website's example, set `--out
 ../../public/slidev/interactive-physics.zip` from this repository directory.
+Then, in `src/lib/slidev-example-versions.ts`, move the
+`CURRENT_SLIDEV_EXAMPLE` entry to the start of `EARLIER_SLIDEV_EXAMPLES` and
+enter the new ZIP's SHA-256 and size as `CURRENT_SLIDEV_EXAMPLE` (the test in
+`tests/slidev-starter.test.ts` prints both when they are out of date). Copies
+of the old example that visitors saved in their browsers are then replaced
+when they open the new one.
 
 ## What the ZIP contains
 

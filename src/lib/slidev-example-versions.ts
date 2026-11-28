@@ -20,7 +20,7 @@ export interface SlidevExampleVersion {
 
 /** The example that the site ships now. */
 export const CURRENT_SLIDEV_EXAMPLE: SlidevExampleVersion = Object.freeze({
-  sha256: '6dca6c89d27ca6fa1dc626e74888dfede4e917b70e634efc53db8ce66e61eadc', size: 1676251,
+  sha256: '676810d3eed2f2959d37e435e3defd486f8ba5d2aa281b0afc76d9be7f2a4804', size: 1676521,
 });
 
 /**
@@ -29,6 +29,8 @@ export const CURRENT_SLIDEV_EXAMPLE: SlidevExampleVersion = Object.freeze({
  * costs nothing.
  */
 export const EARLIER_SLIDEV_EXAMPLES: readonly SlidevExampleVersion[] = Object.freeze([
+  // e3a069d: the styles named in the ZIP's README.txt; never deployed.
+  { sha256: '6dca6c89d27ca6fa1dc626e74888dfede4e917b70e634efc53db8ce66e61eadc', size: 1676251 },
   // 87a1b0c: every slide given its design; never deployed.
   { sha256: 'dd517a2022b37a7f4e1f8a89f5b75a7b3e9497d3276727a6360d35af6800aabf', size: 1676237 },
   // 7881c10: deployed until 2026-11-28; three slides without their design, "In phaseAt".
