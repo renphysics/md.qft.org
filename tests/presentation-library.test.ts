@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { PresentationProblemLog, STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, cleanReportedText, linkParts, visiblePath } from '../src/lib/presentation-messages';
-import { EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError } from '../src/lib/presentation-store';
+import { EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError, hashArchive } from '../src/lib/presentation-store';
 import { HOST_MARK, formatDeckReport, isSiteSideCode, namedAsOpened } from '../src/lib/deck-report';
 import { LOAD_FAILURE_TEXT, errorMessage, isLoadFailure } from '../src/lib/load-failure';
 
@@ -35,6 +35,10 @@ interface Dependencies {
   original?: (project: any) => Promise<{ blob: Blob; name: string }>;
   /** The Slidev converter (convertSlidevBuild). */
   convert?: (files: unknown, detection: unknown, options: any) => Promise<unknown>;
+  /** The page's fetch, for the site's own example. */
+  fetch?: (url: string, init: any) => Promise<unknown>;
+  /** Removing earlier copies of the example (removeEarlierCopies). */
+  removeEarlier?: (versions: unknown, keepId: string) => Promise<unknown>;
 }
 
 /** Chrome's text for a lazily loaded part of the site that is gone. */
@@ -55,6 +59,7 @@ function library(dependencies: Dependencies = {}) {
     delays: [] as number[], cleared: new Set<number>(), stopped: 0,
     /** The areas that got the fixed load-failure sentence with its Reload button. */
     loadFailures: [] as any[],
+    fetches: [] as { url: string; init: any }[], removals: [] as { versions: any; keepId: string }[],
   };
   const clock = { now: 1_000_000 };
   const controls = new Map<string, any>();
@@ -75,7 +80,11 @@ function library(dependencies: Dependencies = {}) {
   const isPlayable = (result: any) => !!result.html && !result.issues.some((issue: any) => issue.severity === 'error');
   const sandbox: Record<string, any> = {
     // The host realm's Error, so errors from the real store module are recognised.
-    exports, Error, AbortController, File, Blob, crypto, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
+    exports, Error, AbortController, AbortSignal, File, Blob, crypto,
+    fetch(url: string, init: any) {
+      calls.fetches.push({ url, init });
+      return dependencies.fetch?.(url, init) ?? Promise.resolve({ ok: true, blob: async () => new Blob(['current example']) });
+    }, CustomEvent, PresentationProblemLog, cleanReportedText, linkParts, visiblePath,
     STALL_BLANK_NEXT, STALL_BLANK_TEXT, STALL_RESCUED_TEXT, LOAD_FAILURE_TEXT, errorMessage, isLoadFailure, isSiteSideCode, namedAsOpened,
     // The real one builds elements with the page's document; here it records where the sentence and its Reload button went.
     reloadButton() { return { tag: 'button', textContent: 'Reload the page' }; },
@@ -136,6 +145,11 @@ function library(dependencies: Dependencies = {}) {
           getPresentation: async (id: string) => dependencies.get?.(id),
           listPresentationsDetailed: async () => dependencies.list?.() ?? { presentations: [], skipped: 0 },
           findSavedDeck: async (archive: Blob) => dependencies.find?.(archive),
+          hashArchive,
+          removeEarlierCopies(versions: unknown, keepId: string) {
+            calls.removals.push({ versions, keepId });
+            return dependencies.removeEarlier?.(versions, keepId) ?? Promise.resolve([]);
+          },
           EDITS_CHANGED_ELSEWHERE_TEXT, PresentationStorageError,
           updateDeckEdits(id: string, edits: Map<string, string>, options?: { basedOn?: number }) {
             calls.savedEdits.push({ id, edits: new Map(edits), ...(options?.basedOn !== undefined ? { basedOn: options.basedOn } : {}) });
@@ -1446,4 +1460,112 @@ test('the library’s copy of the converter start limit is the converter’s own
   const own = /export const SLIDEV_START_TIME_LIMIT = ([\d_]+);/.exec(converter)?.[1];
   assert.ok(copy && own);
   assert.equal(copy, own);
+});
+
+/** The site's own example as the library opens it, and the earlier versions its element names. */
+async function exampleLibrary(dependencies: Dependencies = {}, earlier?: string) {
+  const old = new Blob(['earlier example']);
+  const oldVersion = `${await hashArchive(old)}:${old.size}`;
+  const f = library({
+    open: async (file) => fixtureProject({ title: 'Quantum interference — Slidev', fileName: file.name, original: file }),
+    find: async () => ({ id: 'saved', title: 'Quantum interference — Slidev', engine: 'slidev' }),
+    removeEarlier: async () => [{ id: 'old', title: 'Quantum interference — Slidev', engine: 'slidev' }],
+    ...dependencies,
+  });
+  Object.assign(f.instance.dataset, { exampleUrl: '/slidev/interactive-physics.zip', exampleEarlier: earlier ?? oldVersion });
+  f.instance.records = [{ id: 'old', title: 'Quantum interference — Slidev', engine: 'slidev', fileName: 'quantum-interference-slidev.zip', archiveSize: old.size, createdAt: 1, updatedAt: 1 }];
+  return { ...f, oldVersion };
+}
+
+/** Let pending promises run until the condition holds. */
+async function until(condition: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 200 && !condition(); turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(condition(), 'the condition was met');
+}
+
+const REPLACED_ONE = 'The example was updated. It replaces the earlier copy in your library.';
+
+test('the site’s example is fetched afresh, and once it is saved an earlier copy of it in the library is replaced', async () => {
+  const f = await exampleLibrary();
+  await f.instance.openExample();
+  assert.equal(f.calls.fetches.length, 1);
+  assert.equal(f.calls.fetches[0].url, '/slidev/interactive-physics.zip');
+  assert.equal(f.calls.fetches[0].init.cache, 'no-cache', 'right after a deployment the browser must not hand out the earlier ZIP from its cache');
+  assert.equal(f.calls.save, 1);
+  assert.equal(f.calls.removals.length, 1);
+  assert.equal(f.calls.removals[0].keepId, 'saved', 'the copy just saved is never removed');
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.removals[0].versions)), [{ sha256: f.oldVersion.split(':')[0], size: Number(f.oldVersion.split(':')[1]) }]);
+  assert.equal(f.calls.notices.at(-1), REPLACED_ONE);
+  assert.deepEqual(Array.from(f.instance.records, (record: any) => record.id), ['saved'], 'the list no longer has the earlier copy');
+  assert.equal(f.control('[data-pres-count]').textContent, '1');
+  assert.equal(f.instance.active.project.title, 'Quantum interference — Slidev', 'the example stays open');
+});
+
+test('several earlier copies of the example are named in the plural', async () => {
+  const f = await exampleLibrary({ removeEarlier: async () => [{ id: 'old' }, { id: 'older' }] });
+  await f.instance.openExample();
+  assert.equal(f.calls.notices.at(-1), 'The example was updated. It replaces 2 earlier copies in your library.');
+});
+
+test('nothing is removed when the example could not be saved', async () => {
+  const f = await exampleLibrary({ save: async () => { throw new Error('Browser storage is full'); }, find: async () => undefined });
+  await f.instance.openExample();
+  assert.equal(f.calls.removals.length, 0);
+  assert.match(String(f.calls.notices.at(-1)), /storage is full/);
+  assert.deepEqual(Array.from(f.instance.records, (record: any) => record.id), ['old']);
+  assert.equal(f.instance.temporary.size, 1, 'the example plays from memory');
+});
+
+test('nothing is removed when the fetched example is itself an earlier version, from a stale server or cache', async () => {
+  const stale = new Blob(['current example']);
+  const f = await exampleLibrary({}, `${await hashArchive(stale)}:${stale.size}`);
+  await f.instance.openExample();
+  assert.equal(f.calls.removals.length, 0);
+  assert.notEqual(f.calls.notices.at(-1), REPLACED_ONE);
+});
+
+test('a second opening of the current example changes nothing and says nothing more', async () => {
+  const f = await exampleLibrary({
+    save: async (input) => ({ info: { id: 'saved', title: input.title, engine: 'slidev' }, existing: true }),
+    removeEarlier: async () => [],
+  });
+  await f.instance.openExample();
+  assert.equal(f.calls.removals.length, 1);
+  assert.match(String(f.calls.notices.at(-1)), /already in your library/);
+});
+
+test('entries of the earlier-versions attribute in any other form are ignored', async () => {
+  const valid = `${'a'.repeat(64)}:1675649`;
+  const f = await exampleLibrary({}, [
+    `${'A'.repeat(64)}:12`, `${'a'.repeat(63)}:12`, `${'a'.repeat(65)}:12`, `${'b'.repeat(64)}`, `${'b'.repeat(64)}:`, `${'b'.repeat(64)}:0`,
+    `${'b'.repeat(64)}:12abc`, `${'b'.repeat(64)}:-5`, `${'b'.repeat(64)}:1:2`, `${'b'.repeat(64)}:99999999999999999999`, `<b>${'c'.repeat(64)}:3</b>`, valid,
+  ].join('  \n '));
+  await f.instance.openExample();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.removals[0].versions)), [{ sha256: 'a'.repeat(64), size: 1675649 }]);
+
+  const none = await exampleLibrary({}, 'not-a-digest:12 ');
+  await none.instance.openExample();
+  assert.equal(none.calls.removals.length, 0, 'no valid entry, nothing to compare');
+});
+
+test('the notice does not cover a presentation opened while the earlier copies were removed', async () => {
+  const removal = deferred<unknown>();
+  const f = await exampleLibrary({ removeEarlier: () => removal.promise });
+  const opening = f.instance.openExample();
+  await until(() => f.calls.removals.length === 1);
+  f.instance.nextOperation();
+  f.instance.active = { project: revealProject(), playable: revealPlayable() };
+  removal.resolve([{ id: 'old' }]);
+  await opening;
+  assert.ok(!f.calls.notices.includes(REPLACED_ONE));
+  assert.deepEqual(Array.from(f.instance.records, (record: any) => record.id), ['saved'], 'the list is still right for when it is shown');
+});
+
+test('a clean-up that fails leaves the example open and the earlier copy listed', async () => {
+  const f = await exampleLibrary({ removeEarlier: async () => { throw new PresentationStorageError('Browser storage is full.'); } });
+  await f.instance.openExample();
+  assert.equal(f.instance.active.project.title, 'Quantum interference — Slidev');
+  assert.ok(!f.calls.notices.includes(REPLACED_ONE));
+  assert.deepEqual(Array.from(f.instance.records, (record: any) => record.id).sort(), ['old', 'saved']);
+  assert.match(f.control('[data-pres-storage]').textContent, /Saved in this browser/);
 });

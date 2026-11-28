@@ -85,6 +85,22 @@ function converterTooSlow(limit: number): Error {
   return converterUnavailable(`The Slidev converter was not ready after ${Math.round(limit / 1000)} seconds. Check the internet connection, reload the page, and open the ZIP again.`, `not ready after ${limit} ms`);
 }
 
+/**
+ * The earlier versions of the site's own example, from the element's
+ * data-example-earlier attribute: "sha256:size" entries separated by spaces
+ * (slidev-example-versions.ts writes them). An entry in any other form is
+ * ignored, so a mistake there can only leave a copy in place, never remove
+ * another one.
+ */
+function earlierExamples(attribute: string | undefined): { sha256: string; size: number }[] {
+  const versions: { sha256: string; size: number }[] = [];
+  for (const entry of (attribute ?? '').split(/\s+/)) {
+    const match = /^([0-9a-f]{64}):([1-9][0-9]{0,9})$/.exec(entry);
+    if (match) versions.push({ sha256: match[1]!, size: Number(match[2]) });
+  }
+  return versions;
+}
+
 /** The deck on show and what the player plays for it. */
 interface ActiveDeck {
   project: DeckProject;
@@ -1599,11 +1615,48 @@ export class PresentationLibrary extends HTMLElement {
     this.openDialog();
     this.notice('Opening the interactive Slidev example…');
     const operation = this.nextOperation();
-    const response = await fetch(this.dataset.exampleUrl!, { signal: AbortSignal.timeout(30_000) });
+    // For about ten minutes after a new version of the site is published the
+    // browser may still hold the earlier ZIP; no-cache makes it ask the server first.
+    const response = await fetch(this.dataset.exampleUrl!, { cache: 'no-cache', signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error('The example could not be downloaded. Try again when the website is available.');
     const archive = await response.blob();
     if (operation !== this.operation) return;
     await this.tryOpenFile(new File([archive], 'quantum-interference-slidev.zip', { type: 'application/zip' }));
+    await this.replaceEarlierExamples(archive);
+  }
+
+  /**
+   * A visitor who opened an earlier version of the example keeps that copy in
+   * the library, where it still plays the old slides. Once the current
+   * example is saved, copies of the earlier versions, known by their exact
+   * bytes, are removed. A package of the visitor's own is never touched, even
+   * with the same name and title, and neither is a copy with edits. When
+   * anything here fails, the example stays open and the old copies stay
+   * listed: this is a tidy-up, not part of opening.
+   */
+  private async replaceEarlierExamples(archive: Blob): Promise<void> {
+    const earlier = earlierExamples(this.dataset.exampleEarlier);
+    if (!earlier.length) return;
+    // The deck on show now, so that the notice is not put over another one opened meanwhile.
+    const shown = this.active?.project;
+    const operation = this.operation;
+    try {
+      const store = await import('../lib/presentation-store');
+      // A server or cache that still hands out an earlier version: that is what opened, so it stays.
+      const hash = await store.hashArchive(archive);
+      if (earlier.some((version) => version.sha256 === hash && version.size === archive.size)) return;
+      // Only once the current example is saved: if saving failed, the earlier copy is what the library still has.
+      const saved = await store.findSavedDeck(archive);
+      if (!saved) return;
+      const removed = await store.removeEarlierCopies(earlier, saved.id);
+      if (!removed.length) return;
+      const gone = new Set(removed.map((record) => record.id));
+      this.records = this.records.filter((record) => !gone.has(record.id));
+      this.renderLibrary();
+      if (operation !== this.operation || !shown || this.active?.project !== shown || shown.id !== saved.id) return;
+      this.notice(removed.length === 1 ? 'The example was updated. It replaces the earlier copy in your library.'
+        : `The example was updated. It replaces ${removed.length} earlier copies in your library.`);
+    } catch { /* The earlier copies stay; the library can still remove them one by one. */ }
   }
 }
 

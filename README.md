@@ -525,7 +525,10 @@ path, with their original files, and a presentation already in the library is
 not added twice. Library rows with the same title show the file name, and
 rows with the same title and file name also the time of import (for example
 "k2.zip · HTML · 6 KB · Imported Nov 27, 2:05 PM", in your browser's date
-format). Opening
+format). Opening the site's own Slidev example removes copies of its earlier
+versions from the library, matched by their exact bytes (the list is in
+`src/lib/slidev-example-versions.ts`); a package of your own stays, even with
+the same name and title, and so does a copy with edits. Opening
 a saved Slidev build converts it again, which takes a few seconds. If a
 presentation cannot be saved, it stays in the library until you leave the page
 (at most five, 120 MB together); keep your original file. After the site is

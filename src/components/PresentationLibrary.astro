@@ -1,9 +1,10 @@
 ---
 import Icon from './Icon.astro';
 import { withBase } from '../lib/site-path';
+import { earlierExamplesAttribute } from '../lib/slidev-example-versions';
 import '../styles/presentations.css';
 ---
-<qft-presentation-library data-sandbox-url={withBase('presentation-sandbox.html')} data-example-url={withBase('slidev/interactive-physics.zip')}>
+<qft-presentation-library data-sandbox-url={withBase('presentation-sandbox.html')} data-example-url={withBase('slidev/interactive-physics.zip')} data-example-earlier={earlierExamplesAttribute()}>
   <dialog class="app-dialog presentation-dialog" data-pres-dialog aria-labelledby="presentation-dialog-title">
     <header class="presentation-topbar">
       <button class="icon-button" data-pres-back aria-label="All presentations" title="All presentations" hidden><Icon name="previous" size={18} /></button>
