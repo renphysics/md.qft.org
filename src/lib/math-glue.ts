@@ -6,8 +6,9 @@
  * each box whatever character stands beside it, so a comma could start a line
  * and an opening bracket could end one. Only the white-space of a box's parent
  * decides that break. We therefore move the first and the last box into a
- * KaTeX span of their own and put each, with its neighbouring text, into a
- * span that does not wrap; the boxes between them can still wrap as before.
+ * KaTeX span of their own that does not wrap and put each, with its
+ * neighbouring text, into a span that does not wrap either; the boxes between
+ * them can still wrap as before. A formula of one box is kept whole.
  *
  * What stays with a formula: after it, closing punctuation, an apostrophe or a
  * hyphen and a directly attached run of Latin, Greek or Cyrillic letters or
@@ -76,6 +77,10 @@ function escapeText(text: string): string {
 
 const KEEP = '<span class="math-keep" style="white-space:nowrap">';
 const KATEX_OPEN = '<span class="katex">';
+// The site's style sheets reset text-wrap on .katex (to undo text-wrap:
+// pretty), and that also resets the inherited nowrap. A style on the KaTeX
+// span itself wins over any style sheet, so a kept box's parent never wraps.
+const KATEX_KEPT = '<span class="katex" style="white-space:nowrap">';
 const HTML_OPEN = '<span class="katex-html" aria-hidden="true">';
 const BOX_OPEN = '<span class="katex-base">';
 const TAG = /<(\/)?[A-Za-z][\w:-]*[^>]*?(\/)?>/g;
@@ -108,7 +113,7 @@ function splitBoxes(html: string): { before: string; boxes: string[]; after: str
 }
 
 /** One box drawn as a formula of its own; it carries no MathML, which stays once with the rest. */
-const alone = (box: string) => `${KATEX_OPEN}${HTML_OPEN}${box}</span></span>`;
+const alone = (box: string) => `${KATEX_KEPT}${HTML_OPEN}${box}</span></span>`;
 
 /**
  * The markup of a typeset inline formula with the text kept before and after
@@ -120,7 +125,7 @@ export function keepWithMath(leading: string, html: string, trailing: string): s
   if (!html.startsWith(KATEX_OPEN)) return `${escapeText(leading)}${html}${escapeText(trailing)}`;
   const split = splitBoxes(html);
   if (!split || split.boxes.length < 2 || !split.boxes.every((box) => box.startsWith(BOX_OPEN))) {
-    return `${KEEP}${escapeText(leading)}${html}${escapeText(trailing)}</span>`;
+    return `${KEEP}${escapeText(leading)}${KATEX_KEPT}${html.slice(KATEX_OPEN.length)}${escapeText(trailing)}</span>`;
   }
   const boxes = [...split.boxes];
   const first = leading ? boxes.shift()! : '';

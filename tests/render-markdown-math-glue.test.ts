@@ -46,7 +46,7 @@ function outsideFormulas(html: string): string {
       else if (tag && !voidTag) skipping += 1;
       continue;
     }
-    if (part === '<span class="katex">') {
+    if (part === '<span class="katex">' || part === '<span class="katex" style="white-space:nowrap">') {
       skipping = 1;
       if (!out.endsWith('\u0000')) out += '\u0000';
       continue;
@@ -73,15 +73,15 @@ const facts = ({ errors, headings, words, mathCount }: MarkdownResult) => ({ err
 
 test('the first example keeps the comma after r with the formula', () => {
   const html = renderMarkdown('If a quantity $N(t)$ grows at a constant proportional rate $r$, then').html;
-  assert.match(html, /<span class="math-keep" style="white-space:nowrap"><span class="katex">.*?<\/span>,<\/span> then<\/p>/);
+  assert.match(html, /<span class="math-keep" style="white-space:nowrap"><span class="katex" style="white-space:nowrap">.*?<\/span>,<\/span> then<\/p>/);
   assert.doesNotMatch(html, /<\/span>, then/, 'the comma is not left as ordinary text after the formula');
   const study = renderMarkdown(EXAMPLES.find((example) => example.id === 'study-notes')!.source).html;
-  assert.match(study, /rate <span class="math-keep" style="white-space:nowrap"><span class="katex">(?:(?!<\/p>).)*?<\/span>,<\/span> then<\/p>/);
+  assert.match(study, /rate <span class="math-keep" style="white-space:nowrap"><span class="katex" style="white-space:nowrap">(?:(?!<\/p>).)*?<\/span>,<\/span> then<\/p>/);
 });
 
 test('an opening bracket stays with the formula after it, and a closing one with the formula before it', () => {
   const html = renderMarkdown('every time ($T$ hours) or ($E=mc^2$).').html;
-  assert.match(html, /every time <span class="math-keep" style="white-space:nowrap">\(<span class="katex">/);
+  assert.match(html, /every time <span class="math-keep" style="white-space:nowrap">\(<span class="katex" style="white-space:nowrap">/);
   assert.match(html, /<\/span>\)\.<\/span><\/p>/);
   assert.equal((html.match(/class="math-keep"/g) ?? []).length, 3, 'one span for T, two for the formula of two boxes');
 });
@@ -126,7 +126,7 @@ test('text beside a formula that failed stays beside it, once', () => {
 
 test('text that is not plain text beside a formula is left as it was', () => {
   const html = renderMarkdown('*($x$)*, [$y$](#a), $z$[^1] and `($w$)`.\n\n[^1]: Note.').html;
-  assert.match(html, /<em><span class="math-keep"[^>]*>\(<span class="katex">/, 'inside the emphasis, the brackets are plain text');
+  assert.match(html, /<em><span class="math-keep"[^>]*>\(<span class="katex" style="white-space:nowrap">/, 'inside the emphasis, the brackets are plain text');
   assert.match(html, /<\/em>, <a href="#a"><span class="katex">/, 'the comma after the emphasis is not kept');
   assert.match(html, /<\/span><\/a>, /, 'nor the comma after the link');
   assert.match(html, /<code>\(\$w\$\)<\/code>/);
@@ -134,7 +134,7 @@ test('text that is not plain text beside a formula is left as it was', () => {
 
 test('kept text is escaped exactly like ordinary text', () => {
   const html = renderMarkdown('"$y$" and <$w$>&').html;
-  assert.match(html, /<span class="math-keep" style="white-space:nowrap">&quot;<span class="katex">/);
+  assert.match(html, /<span class="math-keep" style="white-space:nowrap">&quot;<span class="katex" style="white-space:nowrap">/);
   assert.match(html, /<\/span>&quot;<\/span> and &lt;<span class="katex">/, 'the angle bracket is not kept, and is escaped all the same');
   assert.match(html, /<\/span>&gt;&amp;<\/p>/);
 });
@@ -145,4 +145,10 @@ test('the table of contents of an exported document reads the same heading text'
   const kept = contents(renderMarkdown(source).html);
   assert.ok(kept?.includes('Growth of (a+b)’s size'), kept);
   assert.equal(kept, contents(renderMarkdown(source, { keepTextWithMath: false }).html));
+});
+
+test('a digit written against a formula stays with it; a dollar sign after a digit does not open a formula', () => {
+  const html = renderMarkdown(String.raw`an angle of 2\(\pi\) radians, not 2$\pi$`).html;
+  assert.match(html, /an angle of <span class="math-keep" style="white-space:nowrap">2<span class="katex" style="white-space:nowrap">/);
+  assert.match(html, /not 2\$\\pi\$<\/p>/);
 });
