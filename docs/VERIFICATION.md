@@ -39,10 +39,12 @@ What they found, and what was done:
 - `README.txt` inside the ZIP named `slides.md` and the components as the files to revise, not the styles. Corrected in the packager.
 - The verification record had no entry for this change. This section.
 - Two tests could be sturdier: one read a class name as a regular expression, and the browser step relied on the fourth slide being in the page without waiting for it. Both corrected.
-- Small text of the example's design is below a contrast of 4.5 to 1: the line at the foot of the cover at 3.75 (its separator dots at 4.37), the sentences in the cards and the notes at about 4.3, and the question numbers on the last slide at 4.48. These are the colours of the original design, which now shows on every slide. Left as it is.
+- Small text of the example's design is below a contrast of 4.5 to 1: the line at the foot of the cover at 3.75 (its separator dots at 4.37), the sentences in the cards and the notes at about 4.3, and the question numbers on the last slide at 4.48. These are the colours of the original design, which now shows on every slide. In the component on the third slide, which did not change, the label "Normalized intensity" is at 4.33. Left as it is.
 - The lead of the Examples page named the two decks in the other order than the cards, and its description ended in "or present equations". Both reworded.
 
-These corrections (e3a069d, with the ZIP packed again) and this record were then checked by two more. A reviewer ran the steps of the Check workflow on a clean clone of the corrected tree, rebuilt the ZIP with an identical result, and ran the two suites three more times each without a failure. The reviewer also deleted the rule that draws the two cards: no test noticed, so the browser step now reads the cards' background too, and it fails when that rule is gone. A fact-checker went through this record sentence by sentence, found no false statement in it, and named sentences that said too little or were imprecise; they are corrected here.
+These corrections (e3a069d, with the ZIP packed again) and this record were then checked by two more. A reviewer ran the steps of the Check workflow on a clean clone of the corrected tree, rebuilt the ZIP with an identical result, and ran the two suites three more times each without a failure. The reviewer also deleted the rule that draws the two cards: no test noticed, so the browser step now reads the cards' background too, and it fails when that rule is gone. The reviewer found two more things. The test of the compiled styles would not find a class such as `md:flex`, which a style sheet writes as `md\:flex`; corrected. And in the example that is now the first one offered, the preview can break a line between an inline formula and the comma after it ("rate r" at the end of one line, ", then" at the start of the next). It was so before this change, in every document; left for a separate change. A fact-checker went through this record sentence by sentence, found no false statement in it, and named sentences that said too little or were imprecise; they are corrected here.
+
+A last checker read the corrected record and repeated the deletion of the cards' rule: the unit tests pass without it, and the browser step fails. Its remarks are worked into this text: the label inside the component, the reviewer's two other findings, and this paragraph. Nobody else has read this last wording.
 
 ### The instructions for AI assistants were tested and left as they are
 
@@ -64,7 +66,7 @@ New tests: the starter's styles reach the whole presentation, its `slides.md` ho
 
 ### Not verified
 
-- **The Check workflow.** It runs for pull requests, for `main` and when it is started by hand. No pull request was open for these commits when this was written. Everything here was run in Chromium 158 on the development machine; the workflow uses Chromium 151.
+- **The Check workflow.** It runs for pull requests, for `main` and when it is started by hand. When this was written no pull request was open for these commits, and the workflow had not run for them. Everything here was run in Chromium 158 on the development machine; the workflow uses Chromium 151.
 - **Browsers and devices.** Only full Chromium was used. Phone widths were emulated; no phone, touch input or screen reader was used.
 - **The deployed site.** These changes were not deployed.
 

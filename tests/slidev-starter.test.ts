@@ -100,8 +100,9 @@ test('the Starter ZIP styles every class of its slides for the whole presentatio
   const compiled = compiledSelectors();
   assert.ok(compiled.length > 100, 'the compiled style sheets were read');
   for (const name of classes) {
-    // A style sheet writes a class such as md:flex or w-1/2 with a backslash before each such character.
-    const written = name.replace(/[^\w-]/g, (character) => `\\${character}`);
+    // A style sheet writes a class such as md:flex or w-1/2 with a backslash before the punctuation mark.
+    // (A name that begins with a digit is written in yet another way; the slides have none.)
+    const written = name.replace(/[^\w\u0080-\uffff-]/g, (character) => `\\${character}`);
     const uses = new RegExp(`\\.${literal(written)}(?![\\w-])`);
     const selectors = compiled.filter((selector) => uses.test(selector));
     assert.ok(selectors.length, `.${name} has a rule in the compiled presentation`);
