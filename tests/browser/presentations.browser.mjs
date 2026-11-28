@@ -109,6 +109,31 @@ export default async function run(t) {
     assert.equal(t.externalRequests.length, 0, 'Playback must not request external resources');
   });
 
+  await t.step('Every slide of the example has its design, and no label runs into the text beside it', async () => {
+    // The design lives in the project's style.css, which Slidev loads for the
+    // whole presentation. A <style> block in slides.md reaches only the slide
+    // it is written in: that is how the first three slides once played with
+    // the plain theme and showed "In phaseAt φ = 0". All four slides are in
+    // the page by now; the hidden ones have their styles too.
+    const designs = await frame.evaluate(() => [1, 2, 3, 4].map((number) => {
+      const layout = document.querySelector(`.slidev-page-${number} .slidev-layout`);
+      const style = (element, property) => element ? getComputedStyle(element)[property] : null;
+      return {
+        background: style(layout, 'backgroundColor'),
+        title: style(layout?.querySelector('h1'), 'fontFamily'),
+        eyebrow: style(layout?.querySelector('.eyebrow'), 'color'),
+      };
+    }));
+    assert.deepEqual(designs, Array.from({ length: 4 }, () => ({ background: 'rgb(250, 248, 244)', title: 'Georgia, serif', eyebrow: 'rgb(138, 70, 85)' })),
+      'Each of the four slides has the paper background, the serif title and the coloured eyebrow');
+    const cards = frame.locator('.slidev-page-2 .concept-grid > div');
+    assert.equal(await frame.locator('.slidev-page-2 .concept-grid').evaluate((grid) => getComputedStyle(grid).display), 'grid');
+    assert.deepEqual(await cards.locator('strong').evaluateAll((labels) => labels.map((label) => getComputedStyle(label).display)), ['block', 'block'],
+      'Each label is a line of its own');
+    assert.deepEqual(await cards.allTextContents(), ['In phase At φ = 0, the contributions reinforce.', 'Out of phase At φ = π, they cancel at this detector.'],
+      'The text itself keeps the label and its sentence apart');
+  });
+
   await t.step('Source remains accessible and read-only; Present keeps the live slide state and the keyboard', async () => {
     await page.locator('[data-pres-view="source"]').click();
     const source = page.locator('[data-pres-code] .cm-content');
@@ -134,6 +159,9 @@ export default async function run(t) {
     await deckHasFocus(frame);
     await page.keyboard.press('ArrowLeft');
     await heading(frame, 'Amplitudes add.');
+    assert.deepEqual(await frame.locator('.slidev-page-2 .concept-grid > div').allInnerTexts(),
+      ['In phase\nAt φ = 0, the contributions reinforce.', 'Out of phase\nAt φ = π, they cancel at this detector.'],
+      'On the slide a reader sees each label on its own line above its sentence');
     await page.keyboard.press('ArrowRight');
     await heading(frame, 'Change the relative phase.');
     await page.locator('[data-pres-exit-fullscreen]').click();

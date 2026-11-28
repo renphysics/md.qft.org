@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { unzipSync } from 'fflate';
+import { parse } from 'parse5';
 
 /**
  * The "Starter ZIP" that the site hands out (public/slidev/interactive-physics.zip)
@@ -53,6 +54,61 @@ test('the Starter ZIP has every file of tools/slidev, so a new file means regene
   for (const path of files.filter((name) => name !== '.gitignore')) {
     assert.ok(sources.has(path), `tools/slidev/${path} is not in the Starter ZIP: regenerate it (see this test's header)`);
   }
+});
+
+/**
+ * Every selector of the style sheets that the compiled presentation carries:
+ * the text before each "{". One pass over the text, because the sheets hold
+ * megabytes of embedded fonts.
+ */
+function compiledSelectors(): string[] {
+  const sheets: string[] = [];
+  const walk = (node: any): void => {
+    if (node.tagName === 'style') sheets.push((node.childNodes ?? []).map((child: any) => child.value ?? '').join(''));
+    for (const child of node.childNodes ?? []) walk(child);
+    if (node.content) walk(node.content);
+  };
+  walk(parse(Buffer.from(starter['presentation.html']).toString('utf8')));
+  const selectors: string[] = [];
+  for (const css of sheets) {
+    let start = 0;
+    for (let index = 0; index < css.length; index += 1) {
+      const code = css.charCodeAt(index);
+      if (code === 123) { selectors.push(css.slice(start, index)); start = index + 1; }
+      else if (code === 125) start = index + 1;
+    }
+  }
+  return selectors;
+}
+
+/**
+ * Slidev applies a <style> block written in slides.md to the one slide it is
+ * written in (it compiles the block as a scoped style). The starter once kept
+ * its whole design in such a block on the last slide, so the other slides
+ * played with the plain theme and a label ran into the text beside it
+ * ("In phaseAt φ = 0"). Styles that several slides share belong in style.css,
+ * which Slidev loads for the whole presentation.
+ */
+test('the Starter ZIP styles every class of its slides for the whole presentation, not for one slide', () => {
+  const slides = Buffer.from(starter['source/slides.md']).toString('utf8');
+  const classes = [...new Set([...slides.matchAll(/\bclass="([^"]+)"/g)].flatMap((match) => match[1].split(/\s+/)).filter(Boolean))];
+  for (const expected of ['eyebrow', 'lead', 'concept-grid', 'question-list', 'lesson-note']) assert.ok(classes.includes(expected), `the slides use .${expected}`);
+  const compiled = compiledSelectors();
+  assert.ok(compiled.length > 100, 'the compiled style sheets were read');
+  for (const name of classes) {
+    const uses = new RegExp(`\\.${name}(?![\\w-])`);
+    const selectors = compiled.filter((selector) => uses.test(selector));
+    assert.ok(selectors.length, `.${name} has a rule in the compiled presentation`);
+    assert.ok(selectors.some((selector) => !selector.includes('[data-v-')),
+      `.${name} is styled only inside one slide (a scoped rule): move its rules from the <style> block in slides.md to style.css`);
+  }
+});
+
+test('the Starter ZIP keeps a label apart from the text beside it even where no style sheet applies', () => {
+  const slides = Buffer.from(starter['source/slides.md']).toString('utf8');
+  const inline = '(?:strong|b|em|i|span|a|code|small|mark)';
+  const touching = slides.match(new RegExp(`[^\\s>]</${inline}><${inline}[\\s>][^<]*`, 'g')) ?? [];
+  assert.deepEqual(touching, [], 'two inline elements with text touch: without their styles a reader sees one run-together word');
 });
 
 test('the Starter ZIP asks for the Node.js that its Slidev needs', () => {

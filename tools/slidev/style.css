@@ -1,0 +1,27 @@
+/*
+ * Styles shared by every slide.
+ *
+ * Slidev loads style.css from the project folder for the whole presentation.
+ * A <style> block written in slides.md is different: Slidev applies it to the
+ * one slide it is written in, so a design kept there reaches no other slide.
+ */
+.slidev-layout { background: #faf8f4; color: #252a31; padding: 54px 62px; font-family: system-ui, sans-serif; }
+.slidev-layout h1 { font-family: Georgia, serif; font-size: 48px; font-weight: 500; line-height: 1.12; letter-spacing: -.035em; margin: 12px 0 26px; color: #252a31; }
+.slidev-layout.cover h1 { font-size: 64px; line-height: 1.06; }
+.slidev-layout p { max-width: 750px; line-height: 1.65; font-size: 22px; }
+/* The default theme dims the paragraph after a title. Here it is the slide's first sentence. */
+.slidev-layout h1 + p { margin-top: 0; opacity: 1; }
+.slidev-layout .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .18em; color: #8a4655; }
+.slidev-layout .lead { font-size: 26px; line-height: 1.5; color: #657079; margin-top: 20px; }
+.slidev-layout .lesson-meta { position: absolute; bottom: 60px; font-size: 11px; font-weight: 600; letter-spacing: .13em; color: #7c8084; }
+.lesson-meta span { margin: 0 12px; color: #a85f6f; }
+.concept-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 25px 0; }
+.concept-grid > div { background: #f0ebe5; border-radius: 12px; padding: 18px 22px; }
+.concept-grid strong { display: block; font-size: 19px; margin-bottom: 8px; }
+.concept-grid span { font-size: 16px; color: #657079; }
+.slidev-layout .lesson-note { font-size: 14px; line-height: 1.55; color: #72777c; margin-top: 22px; }
+.question-list > div { display: flex; gap: 22px; padding: 17px 0; border-bottom: 1px solid #e3ded8; font-size: 21px; line-height: 1.45; }
+.question-list b { color: #a1606f; font-size: 13px; line-height: 2.5; }
+.teacher-answer { margin-top: 22px; color: #874050; }
+.teacher-answer summary { cursor: pointer; font-size: 16px; font-weight: 600; }
+.slidev-layout .teacher-answer p { font-size: 16px; margin-top: 10px; color: #57646c; }

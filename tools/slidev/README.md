@@ -35,9 +35,14 @@ npm ci
 npm run dev
 ```
 
-Edit `slides.md` and `components/QuantumInterference.vue`, or add your own Vue
-components. Keep the portable configuration in the document headmatter and
-`vite.config.ts`.
+Edit `slides.md`, `style.css` and `components/QuantumInterference.vue`, or add
+your own Vue components. Keep the portable configuration in the document
+headmatter and `vite.config.ts`.
+
+Keep the styles that several slides share in `style.css`; Slidev loads that
+file for the whole presentation. A `<style>` block written in `slides.md`
+applies only to the slide it is written in, so a design kept there does not
+reach the other slides.
 
 Build the presentation, then package the build and editable source:
 
@@ -60,7 +65,7 @@ lesson. To regenerate the website's example, set `--out
 | --- | --- |
 | `qft-presentation.json` | Format, version, title, entry file, and source entry |
 | `presentation.html` | Compiled Slidev application, with JavaScript, CSS, images, and math fonts embedded |
-| `source/` | Editable Markdown, components, build configuration, package manifest, lockfile, and this packager |
+| `source/` | Editable Markdown, styles, components, build configuration, package manifest, lockfile, and this packager |
 | `README.txt` | Instructions for opening and revising the package |
 
 Editing `source/slides.md` does **not** change the compiled player. Rebuild and
@@ -119,7 +124,8 @@ md.qft.org website itself offline is a separate application-caching feature.
 For an ordinary build, use the instructions from **Create with AI → Slidev**
 on the site. For a portable package made with this starter, give these
 instructions instead: use this starter as the project template. Create the requested lesson in
-`slides.md` and use Vue components for interactive demonstrations. Keep the
+`slides.md`, keep the styles shared by several slides in `style.css`, and use
+Vue components for interactive demonstrations. Keep the
 portable playback profile. Include all required libraries and assets locally;
 do not use CDN links or runtime network calls. Preserve the package manifest
 and lockfile. Build with `npm run build`, package with `node pack.mjs --dist
