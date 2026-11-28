@@ -1,18 +1,25 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { unzipSync } from 'fflate';
 import { parse } from 'parse5';
+import { CURRENT_SLIDEV_EXAMPLE, EARLIER_SLIDEV_EXAMPLES, earlierExamplesAttribute } from '../src/lib/slidev-example-versions.ts';
 
 /**
  * The "Starter ZIP" that the site hands out (public/slidev/interactive-physics.zip)
  * is made from tools/slidev by its own packager. When tools/slidev changes,
  * regenerate it: npm ci --prefix tools/slidev, then in tools/slidev
  * npm run build and node pack.mjs --dist .build --source . --out ../../public/slidev/interactive-physics.zip --title 'Quantum interference — Slidev'.
+ * Then, in src/lib/slidev-example-versions.ts, move the CURRENT entry to the
+ * start of the earlier versions and enter the new ZIP's SHA-256 and size as
+ * CURRENT, so that copies of the old example saved in visitors' browsers are
+ * replaced when they open the new one.
  */
-const starter = unzipSync(new Uint8Array(readFileSync(new URL('../public/slidev/interactive-physics.zip', import.meta.url))));
+const starterBytes = readFileSync(new URL('../public/slidev/interactive-physics.zip', import.meta.url));
+const starter = unzipSync(new Uint8Array(starterBytes));
 const tool = (name: string) => readFileSync(new URL(`../tools/slidev/${name}`, import.meta.url));
 
 test('the Starter ZIP carries the current tools/slidev source', () => {
@@ -54,6 +61,22 @@ test('the Starter ZIP has every file of tools/slidev, so a new file means regene
   for (const path of files.filter((name) => name !== '.gitignore')) {
     assert.ok(sources.has(path), `tools/slidev/${path} is not in the Starter ZIP: regenerate it (see this test's header)`);
   }
+});
+
+test('the list of example versions names the committed Starter ZIP as current, and every earlier version once', () => {
+  const regenerated = 'public/slidev/interactive-physics.zip was regenerated: in src/lib/slidev-example-versions.ts move the CURRENT entry to the start of EARLIER_SLIDEV_EXAMPLES, '
+    + `then enter the new ZIP as CURRENT: { sha256: '${createHash('sha256').update(starterBytes).digest('hex')}', size: ${starterBytes.length} }`;
+  assert.equal(CURRENT_SLIDEV_EXAMPLE.sha256, createHash('sha256').update(starterBytes).digest('hex'), regenerated);
+  assert.equal(CURRENT_SLIDEV_EXAMPLE.size, starterBytes.length, regenerated);
+  assert.ok(EARLIER_SLIDEV_EXAMPLES.length >= 4, 'the four earlier versions in git history are listed');
+  for (const version of EARLIER_SLIDEV_EXAMPLES) {
+    assert.match(version.sha256, /^[0-9a-f]{64}$/, 'a SHA-256 in lowercase hexadecimal');
+    assert.ok(Number.isSafeInteger(version.size) && version.size > 0, 'a size in bytes');
+    assert.notEqual(version.sha256, CURRENT_SLIDEV_EXAMPLE.sha256, 'the current example is not an earlier version: a copy of it would be removed');
+  }
+  assert.equal(new Set(EARLIER_SLIDEV_EXAMPLES.map((version) => version.sha256)).size, EARLIER_SLIDEV_EXAMPLES.length, 'each earlier version once');
+  // The library element carries the list in an attribute that the page script reads strictly.
+  assert.match(earlierExamplesAttribute(), /^[0-9a-f]{64}:\d+( [0-9a-f]{64}:\d+)*$/);
 });
 
 /** A text as a regular expression that matches exactly that text. */
