@@ -498,6 +498,80 @@ export async function getPresentation(id: string): Promise<StoredPresentation | 
   });
 }
 
+/** One exact archive, by content: its SHA-256 (lowercase hex) and its size in bytes. */
+export interface ArchiveVersion {
+  sha256: string;
+  size: number;
+}
+
+/**
+ * Remove the saved records whose original archive is exactly one of the given
+ * versions, and return what was removed. This is for the site's own example,
+ * whose earlier versions are known by their bytes: a record matches by its
+ * stored hash, or, for a version 1 record without one, by its size and then
+ * by hashing its saved archive. Names and titles are never compared, so a
+ * package of the person's own with the example's name stays. A record with
+ * edits, and the record `keepId`, always stay. All removals commit together,
+ * or none does.
+ */
+export async function removeEarlierCopies(versions: readonly ArchiveVersion[], keepId: string): Promise<StoredPresentationInfo[]> {
+  const sizes = new Map<string, number>();
+  for (const version of versions) {
+    if (isHash(version?.sha256) && Number.isSafeInteger(version.size) && version.size > 0) sizes.set(version.sha256, version.size);
+  }
+  if (!sizes.size) return [];
+  const matches = (hash: string | undefined, size: number) => hash !== undefined && sizes.get(hash) === size;
+  const { presentations } = await listPresentationsDetailed();
+  // Each candidate with the hash it was matched by, checked again when it is removed.
+  const found: { info: StoredPresentationInfo; hash: string }[] = [];
+  for (const candidate of presentations) {
+    if (candidate.id === keepId || candidate.edited) continue;
+    if (candidate.hash !== undefined) {
+      if (matches(candidate.hash, candidate.archiveSize)) found.push({ info: candidate, hash: candidate.hash });
+      continue;
+    }
+    if (![...sizes.values()].includes(candidate.archiveSize)) continue;
+    let saved: StoredPresentation | undefined;
+    try { saved = await getPresentation(candidate.id); } catch { continue; }
+    if (!saved || saved.edits || saved.editsUnreadable) continue;
+    const hash = await hashArchive(saved.archive);
+    try { await recordHash(candidate.id, hash); } catch { /* The comparison holds without the cached hash. */ }
+    if (matches(hash, candidate.archiveSize)) found.push({ info: candidate, hash });
+  }
+  if (!found.length) return [];
+  return transaction<StoredPresentationInfo[]>('readwrite', (tx, result) => {
+    const metadata = tx.objectStore(METADATA_STORE);
+    const archives = tx.objectStore(ARCHIVE_STORE);
+    // Filled in as the records are read; the transaction resolves with it once it commits.
+    const removed: StoredPresentationInfo[] = [];
+    result(removed);
+    for (const { info, hash } of found) {
+      // Read again inside the write transaction: another tab may have edited
+      // or removed the record since it was compared.
+      const infoRequest = metadata.get(info.id);
+      const bytesRequest = archives.get(info.id);
+      let waiting = 2;
+      const complete = () => {
+        if (--waiting) return;
+        try {
+          const record = infoRequest.result;
+          const bytes = bytesRequest.result as { edits?: unknown } | undefined;
+          if (record !== undefined) {
+            const current = validateInfo(record);
+            if (!current.edited && bytes?.edits === undefined && (current.hash === undefined || current.hash === hash) && matches(hash, current.archiveSize)) {
+              metadata.delete(info.id);
+              archives.delete(info.id);
+              removed.push(current);
+            }
+          }
+        } catch { /* A record that cannot be read now is left as it is. */ }
+      };
+      infoRequest.onsuccess = complete;
+      bytesRequest.onsuccess = complete;
+    }
+  });
+}
+
 export async function deletePresentation(id: string): Promise<void> {
   return transaction('readwrite', (tx, result) => {
     tx.objectStore(METADATA_STORE).delete(id);

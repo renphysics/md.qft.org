@@ -7,7 +7,7 @@ import { inspectPresentationArchive } from '../src/lib/presentation-package.ts';
 import {
   listPresentations, listPresentationsDetailed, getPresentation, savePresentation, deletePresentation,
   saveDeck, updateDeckEdits, hashArchive, isEditableDeckKind, PresentationStorageError, DECK_EDIT_LIMITS,
-  findSavedDeck, STORAGE_OUTDATED_TEXT, EDITS_CHANGED_ELSEWHERE_TEXT,
+  findSavedDeck, STORAGE_OUTDATED_TEXT, EDITS_CHANGED_ELSEWHERE_TEXT, removeEarlierCopies,
 } from '../src/lib/presentation-store.ts';
 import { deckFromHtmlFile } from '../src/lib/deck-archive.ts';
 import { htmlFixture, zipFixture } from './helpers/deck-fixtures.ts';
@@ -355,5 +355,86 @@ describe('presentation storage version 2', { concurrency: false }, () => {
     assert.equal(saved?.edits, undefined);
     assert.equal(saved?.editsUnreadable, true);
     assert.deepEqual((await raw('archives', info.id)).edits, { 'index.html': 7 }, 'the unreadable overlay is preserved');
+  });
+});
+
+describe('removing earlier copies of the site\'s own example', { concurrency: false }, () => {
+  beforeEach(() => { globalThis.indexedDB = new IDBFactory(); });
+
+  /** A portable package of the example's name and title; `text` changes its bytes, not its size when the lengths agree. */
+  async function example(text: string) {
+    const manifest = { format: 'qft-presentation', version: 1, engine: 'slidev', title: 'Quantum interference — Slidev', entry: 'presentation.html' };
+    const zip = zipSync({
+      'qft-presentation.json': strToU8(JSON.stringify(manifest)),
+      'presentation.html': strToU8(`<html><body><h1>${text}</h1></body></html>`),
+    }, { level: 0, mtime: new Date('2026-01-01T00:00:00Z') });
+    return (await inspectPresentationArchive(new File([new Uint8Array(zip).buffer], 'quantum-interference-slidev.zip')))!;
+  }
+  const version = async (archive: Blob) => ({ sha256: await hashArchive(archive), size: archive.size });
+
+  it('removes a record whose stored hash is an earlier version and returns what it removed', async () => {
+    const old = await example('Version one');
+    const current = await example('Version two');
+    const oldInfo = await savePresentation(old);
+    const currentInfo = await savePresentation(current);
+    const removed = await removeEarlierCopies([await version(old.archive)], currentInfo.id);
+    assert.deepEqual(removed, [oldInfo]);
+    assert.equal(await getPresentation(oldInfo.id), undefined);
+    assert.equal(await raw('archives', oldInfo.id), undefined, 'the archive goes with its metadata');
+    assert.deepEqual((await listPresentations()).map((item) => item.id), [currentInfo.id]);
+  });
+
+  it('removes a record of the first release, which has no stored hash, when its bytes match', async () => {
+    const old = await example('Version one');
+    const info = { id: 'first', title: 'Quantum interference — Slidev', engine: 'slidev', fileName: 'quantum-interference-slidev.zip', archiveSize: old.archive.size, createdAt: 1, updatedAt: 2 };
+    await seedVersion1([{ info, archive: { id: 'first', archive: old.archive } }]);
+    const currentInfo = await savePresentation(await example('Version two'));
+    const removed = await removeEarlierCopies([await version(old.archive)], currentInfo.id);
+    assert.deepEqual(removed.map((item) => item.id), ['first']);
+    assert.equal(await raw('presentations', 'first'), undefined);
+    assert.equal(await raw('archives', 'first'), undefined);
+  });
+
+  it('keeps a package of the same name and title with other bytes, also of the same size and without a stored hash', async () => {
+    const old = await example('Version one');
+    const own = await example('Version 1!!');
+    assert.equal(own.archive.size, old.archive.size, 'the same size, other bytes');
+    const ownInfo = await savePresentation(own);
+    const unhashed = { id: 'mine', title: 'Quantum interference — Slidev', engine: 'slidev', fileName: 'quantum-interference-slidev.zip', archiveSize: own.archive.size, createdAt: 1, updatedAt: 2 };
+    const other = await example('Version 2!!');
+    await rawPut('presentations', unhashed);
+    await rawPut('archives', { id: 'mine', archive: other.archive });
+    const currentInfo = await savePresentation(await example('Version two'));
+    assert.deepEqual(await removeEarlierCopies([await version(old.archive)], currentInfo.id), []);
+    assert.deepEqual((await listPresentations()).map((item) => item.id).sort(), [currentInfo.id, ownInfo.id, 'mine'].sort());
+  });
+
+  it('keeps an edited record and the record to keep, even when their bytes are an earlier version', async () => {
+    const input = await revealDeck();
+    const edited = await saveDeck({ ...input, edits: { 'index.html': '<p>Mine</p>' } });
+    const kept = await savePresentation(await example('Version one'));
+    const removed = await removeEarlierCopies([await version(input.archive), { sha256: kept.hash!, size: kept.archiveSize }], kept.id);
+    assert.deepEqual(removed, []);
+    assert.equal((await listPresentations()).length, 2);
+    assert.deepEqual((await getPresentation(edited.info.id))?.edits, { 'index.html': '<p>Mine</p>' });
+  });
+
+  it('removes several earlier versions at once and keeps the rest', async () => {
+    const versions = [await example('Version one'), await example('Version two'), await example('Version three')];
+    const infos = [];
+    for (const pkg of versions) infos.push(await savePresentation(pkg));
+    const current = await savePresentation(await example('Version four'));
+    const removed = await removeEarlierCopies(await Promise.all(versions.slice(0, 2).map((pkg) => version(pkg.archive))), current.id);
+    assert.deepEqual(removed.map((item) => item.id).sort(), [infos[0].id, infos[1].id].sort());
+    assert.deepEqual((await listPresentations()).map((item) => item.id).sort(), [infos[2].id, current.id].sort());
+  });
+
+  it('matches by size as well as by digest, and ignores malformed versions', async () => {
+    const old = await example('Version one');
+    const info = await savePresentation(old);
+    const { sha256 } = await version(old.archive);
+    assert.deepEqual(await removeEarlierCopies([{ sha256, size: old.archive.size + 1 }, { sha256: sha256.toUpperCase(), size: old.archive.size }], 'other'), []);
+    assert.deepEqual(await removeEarlierCopies([], 'other'), []);
+    assert.ok(await getPresentation(info.id));
   });
 });
