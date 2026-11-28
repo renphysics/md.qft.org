@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { formatDeckReport, namedAsOpened } from '../src/lib/deck-report';
 import { describePresentationLimit } from '../src/lib/presentation-runtime';
+import { SLIDEV_PROMPT_RELEASE, generateSlidevPrompt } from '../src/lib/slidev-prompt';
 
 /** A documentation file with its line breaks and Markdown emphasis folded away, so a wrapped quotation reads as one line. */
 function doc(path: string): string {
@@ -38,4 +39,12 @@ test('the documentation quotes the advice for a single HTML file as the report w
   const advice = namedAsOpened(issue, 'index.html', 'lesson.html').message.replace('The presentation refers to pic.png, but that file is not in it.', '');
   assert.equal(advice, ' Ask your AI assistant to put it inside the HTML file (a picture as a data: URI or inline SVG, a script or style inline), or make a ZIP of the HTML file together with that file.');
   for (const path of ['README.md', 'docs/ARCHITECTURE.md']) assert.ok(doc(path).includes(advice.trim()), `${path} quotes the advice`);
+});
+
+test('the documentation names the Slidev release that the Slidev instructions ask for', () => {
+  const asked = `@slidev/cli ${SLIDEV_PROMPT_RELEASE} or newer`;
+  assert.ok(generateSlidevPrompt({ topic: '', audience: '', language: '', duration: 45, mathLevel: '', demos: '' }).includes(asked));
+  for (const path of ['README.md', 'src/pages/guide.astro', 'public/slidev/README.md']) {
+    assert.ok(doc(path).replace(/<\/?code>/g, '').replace(/`/g, '').includes(asked), `${path} names ${asked}`);
+  }
 });

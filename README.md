@@ -121,9 +121,9 @@ its own copy), with KaTeX math (`\lt` and `\gt` for `<` and `>` inside
 formulas), speaker notes, and demos written as inline scripts, and that keeps
 away from the class names Reveal.js uses for its own parts. No starter file is
 needed. **Create with AI → Slidev** asks an assistant that can run commands
-for an ordinary Slidev project and one ZIP of the project folder with the
-built `dist/` inside and without `node_modules`; the starter ZIP is an
-optional example.
+for an ordinary Slidev project that depends on `@slidev/cli` 52 or newer, and
+one ZIP of the project folder with the built `dist/` inside and without
+`node_modules`; the starter ZIP is an optional example.
 
 ZIPs made on Linux or macOS whose file names are UTF-8 without the ZIP's UTF-8
 flag (Info-ZIP's `zip`) keep their names, such as `Schrödinger.png`, and names

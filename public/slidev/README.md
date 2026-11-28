@@ -12,8 +12,8 @@ during playback.
 The ZIP is an optional example. To create a new lesson, you do not need it:
 choose **Create with AI → Slidev** on the site and give the instructions to an
 AI assistant that can run commands (or follow them on a computer with
-Node.js). It makes an ordinary Slidev project, builds it with
-`npx slidev build`, and returns one ZIP of the project folder with the built
+Node.js). It makes an ordinary Slidev project that depends on `@slidev/cli`
+52 or newer, builds it with `npx slidev build`, and returns one ZIP of the project folder with the built
 `dist/` inside and without `node_modules`; open that ZIP on the site. A ZIP of
 the `dist` folder alone also opens: the site converts it in the browser.
 

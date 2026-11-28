@@ -4,6 +4,14 @@ import type { LessonAIInput } from './ai-lesson';
 const SLIDEV_PROMPT_NODE = '22.22';
 
 /**
+ * The oldest Slidev release the instructions ask for. The player is checked
+ * with Slidev 52 and 53, and a Slidev 51 build made today shows Slidev's own
+ * go-to list of slides on every slide. Without a release named, two of eight
+ * assistants wrote "^51.0.0".
+ */
+export const SLIDEV_PROMPT_RELEASE = 52;
+
+/**
  * Instructions for an AI assistant that can run commands to make an ordinary
  * Slidev project and build it; the site plays the built dist folder. No
  * request is sent here.
@@ -27,7 +35,7 @@ One idea per slide, a worked example, a prediction question before each demo, an
 
 PROJECT
 - Make an ordinary Slidev project: slides.md, Vue components in components/, pictures and media in public/.
-- package.json depends on @slidev/cli and @slidev/theme-default (or the theme slides.md names). Keep Slidev's default base and router settings.
+- package.json depends on @slidev/cli ${SLIDEV_PROMPT_RELEASE} or newer and @slidev/theme-default (or the theme slides.md names). Keep Slidev's default base and router settings.
 - In the headmatter of slides.md set fonts: { provider: 'none' }. Use system fonts.
 - Use \`$...$\` and \`$$...$$\` for math (KaTeX is built in), v-click for steps, and Vue components with canvas or SVG for demos.
 

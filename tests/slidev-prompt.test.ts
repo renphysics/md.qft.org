@@ -10,10 +10,17 @@ test('Slidev instructions preserve the lesson brief and ask for an ordinary proj
     'ordinary Slidev project', 'slides.md', 'components/', 'public/', "fonts: { provider: 'none' }", 'No {monaco} code blocks and no Web Workers',
     'no CDN files, web fonts, remote pictures, remote APIs', 'Node.js 22.22 or newer', 'npx slidev build',
     'ONE ZIP of the project folder with the built dist/ folder inside and without node_modules', 'If you cannot run commands, say so plainly',
-    'the exact commands', 'package.json depends on @slidev/cli and @slidev/theme-default (or the theme slides.md names)',
+    'the exact commands', 'package.json depends on @slidev/cli 52 or newer and @slidev/theme-default (or the theme slides.md names).',
     "Keep Slidev's default base and router settings"]) {
     assert.ok(prompt.includes(expected), expected);
   }
+});
+
+test('Slidev instructions ask for a current Slidev release, once', () => {
+  const prompt = generateSlidevPrompt(brief);
+  // Two of eight assistants picked ^51.0.0 when no release was named; a Slidev 51 build made today shows its go-to list on every slide.
+  assert.equal(prompt.match(/@slidev\/cli 52 or newer/g)?.length, 1);
+  assert.doesNotMatch(prompt, /\b51\b/);
 });
 
 test('Slidev instructions no longer forbid an ordinary build or require the packaging tool', () => {
