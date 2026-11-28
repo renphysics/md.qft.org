@@ -8,127 +8,13 @@ export interface ExampleDocument {
   slideRatio?: '16:9' | '4:3';
 }
 
+/**
+ * The built-in examples, in the order of the Examples page and of "Start with
+ * an example". Markdown documents come first: a document is what the
+ * workspace opens and what most visitors write, so the first example shows
+ * that. The slide decks follow.
+ */
 export const EXAMPLES: ExampleDocument[] = [
-  {
-    id: 'interactive-physics',
-    title: 'Physics you can explore',
-    description: 'Four live teaching demos: a spreading wave packet, a Bloch sphere, a black-hole barrier, and wave interference.',
-    mode: 'slides',
-    slideTheme: 'paper',
-    slideRatio: '16:9',
-    source: [
-      '# Physics you can explore',
-      '',
-      'Change a parameter. Predict what will happen. Then test the prediction.',
-      '',
-      '- Wave packets and spreading',
-      '- Qubits on the Bloch sphere',
-      '- Black-hole potential barriers',
-      '- Interference and wave speeds',
-      '',
-      '**Choose Run demo on each slide.**',
-      '',
-      '---',
-      '',
-      '## A wave packet in free space',
-      '',
-      '~~~interactive wave-packet',
-      '~~~',
-      '',
-      '---',
-      '',
-      '## A pure qubit, made visible',
-      '',
-      '~~~interactive bloch-sphere',
-      '~~~',
-      '',
-      '---',
-      '',
-      '## A black-hole potential barrier',
-      '',
-      '~~~interactive effective-potential',
-      '~~~',
-      '',
-      '---',
-      '',
-      '## When the envelope overtakes the carrier',
-      '',
-      '~~~interactive interference',
-      '~~~',
-      '',
-    ].join('\n'),
-  },
-  {
-    id: 'quantum-slides',
-    title: 'Quantum phase, in five slides',
-    description: 'A ready-to-present physics deck with equations, an interference example, and a short calculation.',
-    mode: 'slides',
-    slideTheme: 'paper',
-    slideRatio: '16:9',
-    source: String.raw`# Quantum phase
-
-## From an invisible phase to a measurable signal
-
-Five slides on states, evolution, and interference.
-
----
-
-## One energy eigenstate
-
-For $\hat H|n\rangle=E_n|n\rangle$, time evolution gives
-
-$$
-|\psi(t)\rangle=e^{-iE_nt/\hbar}|n\rangle.
-$$
-
-- The state acquires a common phase.
-- Measurement probabilities stay unchanged.
-
----
-
-## Two states can interfere
-
-Take \(E_0=0\), \(E_1=\hbar\omega\), and prepare \(|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}\).
-
-\[
-|\psi(t)\rangle=\frac{|0\rangle+e^{-i\omega t}|1\rangle}{\sqrt{2}},
-\qquad
-P_+(t)=\cos^2\!\left(\frac{\omega t}{2}\right).
-\]
-
-A relative phase becomes a measurable probability.
-
----
-
-## Check the prediction
-
-Sample one period with \(\omega=1\):
-
-~~~python
-import math
-
-for t in (0, math.pi / 2, math.pi, 2 * math.pi):
-    probability = math.cos(t / 2) ** 2
-    print(round(probability, 3))
-~~~
-
-The probabilities are **1, 0.5, 0, 1**.
-
----
-
-## What to remember
-
-- A common phase leaves measurement probabilities unchanged.
-- Relative phases can change interference outcomes.
-- The energy difference sets the oscillation period:
-
-$$
-T=\frac{2\pi\hbar}{E_1-E_0}=\frac{2\pi}{\omega}.
-$$
-
-**Try it:** change the energy gap and predict the new period.
-`,
-  },
   {
     id: 'study-notes',
     title: 'Understanding exponential change',
@@ -418,5 +304,125 @@ Inline code such as @@BACKTICK@@$x$@@BACKTICK@@ stays literal, too.
 
 Your drafts are saved in this browser. Download a copy when you want to keep or share your work.
 `.replaceAll('@@BACKTICK@@', '`'),
+  },
+  {
+    id: 'interactive-physics',
+    title: 'Physics you can explore',
+    description: 'Four live teaching demos: a spreading wave packet, a Bloch sphere, a black-hole barrier, and wave interference.',
+    mode: 'slides',
+    slideTheme: 'paper',
+    slideRatio: '16:9',
+    source: [
+      '# Physics you can explore',
+      '',
+      'Change a parameter. Predict what will happen. Then test the prediction.',
+      '',
+      '- Wave packets and spreading',
+      '- Qubits on the Bloch sphere',
+      '- Black-hole potential barriers',
+      '- Interference and wave speeds',
+      '',
+      '**Choose Run demo on each slide.**',
+      '',
+      '---',
+      '',
+      '## A wave packet in free space',
+      '',
+      '~~~interactive wave-packet',
+      '~~~',
+      '',
+      '---',
+      '',
+      '## A pure qubit, made visible',
+      '',
+      '~~~interactive bloch-sphere',
+      '~~~',
+      '',
+      '---',
+      '',
+      '## A black-hole potential barrier',
+      '',
+      '~~~interactive effective-potential',
+      '~~~',
+      '',
+      '---',
+      '',
+      '## When the envelope overtakes the carrier',
+      '',
+      '~~~interactive interference',
+      '~~~',
+      '',
+    ].join('\n'),
+  },
+  {
+    id: 'quantum-slides',
+    title: 'Quantum phase, in five slides',
+    description: 'A ready-to-present physics deck with equations, an interference example, and a short calculation.',
+    mode: 'slides',
+    slideTheme: 'paper',
+    slideRatio: '16:9',
+    source: String.raw`# Quantum phase
+
+## From an invisible phase to a measurable signal
+
+Five slides on states, evolution, and interference.
+
+---
+
+## One energy eigenstate
+
+For $\hat H|n\rangle=E_n|n\rangle$, time evolution gives
+
+$$
+|\psi(t)\rangle=e^{-iE_nt/\hbar}|n\rangle.
+$$
+
+- The state acquires a common phase.
+- Measurement probabilities stay unchanged.
+
+---
+
+## Two states can interfere
+
+Take \(E_0=0\), \(E_1=\hbar\omega\), and prepare \(|+\rangle=(|0\rangle+|1\rangle)/\sqrt{2}\).
+
+\[
+|\psi(t)\rangle=\frac{|0\rangle+e^{-i\omega t}|1\rangle}{\sqrt{2}},
+\qquad
+P_+(t)=\cos^2\!\left(\frac{\omega t}{2}\right).
+\]
+
+A relative phase becomes a measurable probability.
+
+---
+
+## Check the prediction
+
+Sample one period with \(\omega=1\):
+
+~~~python
+import math
+
+for t in (0, math.pi / 2, math.pi, 2 * math.pi):
+    probability = math.cos(t / 2) ** 2
+    print(round(probability, 3))
+~~~
+
+The probabilities are **1, 0.5, 0, 1**.
+
+---
+
+## What to remember
+
+- A common phase leaves measurement probabilities unchanged.
+- Relative phases can change interference outcomes.
+- The energy difference sets the oscillation period:
+
+$$
+T=\frac{2\pi\hbar}{E_1-E_0}=\frac{2\pi}{\omega}.
+$$
+
+**Try it:** change the energy gap and predict the new period.
+`,
   },
 ];

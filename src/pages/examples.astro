@@ -6,18 +6,13 @@ import SiteFooter from '../components/SiteFooter.astro';
 import { siteConfig } from '../config/site';
 import { withBase } from '../lib/site-path';
 ---
-<BaseLayout title={`Markdown examples: slides, notes & equations — ${siteConfig.name}`} active="examples" description="Open editable Markdown slides, study notes, a project report, quantum mechanics, and a syntax guide. Present equations or export a PDF and portable HTML.">
+<BaseLayout title={`Markdown examples: notes, equations & slides — ${siteConfig.name}`} active="examples" description="Open editable study notes, a project report, quantum mechanics, a syntax guide, and Markdown slides. Export a PDF and portable HTML, or present equations.">
   <main id="main-content" class="content-page">
     <span class="page-kicker">A starting point for your next document</span>
     <h1>Markdown examples to make your own.</h1>
-    <p class="page-lead">Teach with interactive physics demonstrations, explore a quantum phase presentation, or start from study notes and mathematical derivations. Open an example as a new local draft, make it your own, and try Present, Save PDF, or a portable HTML download.</p>
+    <p class="page-lead">Start from study notes, a project report, or a mathematical derivation; then explore a quantum phase presentation or teach with interactive physics demonstrations. Open an example as a new local draft, make it your own, and try Save PDF, a portable HTML download, or Present.</p>
+    {/* Markdown documents first (the order of EXAMPLES), then the slide decks, then the compiled Slidev lesson. */}
     <div class="example-grid">
-      <article class="example-card">
-        <span class="example-number">SLIDEV</span>
-        <h2>Quantum interference</h2>
-        <p>A compiled Slidev lesson with equations and a live Vue demonstration. Adjust relative phase, predict the intensity, and explore constructive and destructive interference. Source is included for revision.</p>
-        <a class="button-secondary" href={withBase('?presentation=slidev-example')}>Open Slidev presentation <Icon name="arrow" size={16} /></a>
-      </article>
       {EXAMPLES.map((example, index) => (
         <article class="example-card">
           <span class="example-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
@@ -26,6 +21,12 @@ import { withBase } from '../lib/site-path';
           <a class="button-secondary" href={withBase(`?example=${encodeURIComponent(example.id)}`)} aria-label={`Open ${example.title}`}>{example.mode === 'slides' ? 'Open slide deck' : 'Open example'} <Icon name="arrow" size={16} /></a>
         </article>
       ))}
+      <article class="example-card">
+        <span class="example-number">SLIDEV</span>
+        <h2>Quantum interference</h2>
+        <p>A compiled Slidev lesson with equations and a live Vue demonstration. Adjust relative phase, predict the intensity, and explore constructive and destructive interference. Source is included for revision.</p>
+        <a class="button-secondary" href={withBase('?presentation=slidev-example')}>Open Slidev presentation <Icon name="arrow" size={16} /></a>
+      </article>
     </div>
     <section class="about-callout">
       <h2>Bring an idea of your own</h2>
